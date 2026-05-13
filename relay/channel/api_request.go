@@ -276,13 +276,20 @@ func ResolveHeaderOverride(info *common.RelayInfo, c *gin.Context) (map[string]s
 }
 
 func injectNewAPIUserSessionHeader(info *common.RelayInfo, headers map[string]string) {
-	if info == nil || info.IsChannelTest || info.UserId <= 0 || headers == nil {
+	if info == nil || info.IsChannelTest || headers == nil {
 		return
 	}
 	if strings.TrimSpace(headers["x-session-id"]) != "" || strings.TrimSpace(headers["session_id"]) != "" {
 		return
 	}
-	headers["x-session-id"] = fmt.Sprintf("newapi-user-%d", info.UserId)
+	sessionID := strings.TrimSpace(info.Username)
+	if sessionID == "" && info.UserId > 0 {
+		sessionID = fmt.Sprintf("newapi-user-%d", info.UserId)
+	}
+	if sessionID == "" {
+		return
+	}
+	headers["x-session-id"] = sessionID
 }
 
 func applyHeaderOverrideToRequest(req *http.Request, headerOverride map[string]string) {

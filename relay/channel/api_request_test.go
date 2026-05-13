@@ -10,7 +10,29 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestProcessHeaderOverride_AddsNewAPISessionIDFromUserID(t *testing.T) {
+func TestProcessHeaderOverride_AddsNewAPISessionIDFromUsername(t *testing.T) {
+	t.Parallel()
+
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+
+	info := &relaycommon.RelayInfo{
+		IsChannelTest: false,
+		UserId:        42,
+		Username:      "alice",
+		ChannelMeta: &relaycommon.ChannelMeta{
+			HeadersOverride: map[string]any{},
+		},
+	}
+
+	headers, err := processHeaderOverride(info, ctx)
+	require.NoError(t, err)
+	require.Equal(t, "alice", headers["x-session-id"])
+}
+
+func TestProcessHeaderOverride_FallsBackToUserIDWhenUsernameMissing(t *testing.T) {
 	t.Parallel()
 
 	gin.SetMode(gin.TestMode)
@@ -42,6 +64,7 @@ func TestProcessHeaderOverride_DoesNotOverrideExistingSessionHeader(t *testing.T
 	info := &relaycommon.RelayInfo{
 		IsChannelTest: false,
 		UserId:        42,
+		Username:      "alice",
 		ChannelMeta: &relaycommon.ChannelMeta{
 			HeadersOverride: map[string]any{
 				"X-Session-ID": "client-session",
