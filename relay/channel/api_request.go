@@ -267,11 +267,22 @@ func processHeaderOverride(info *common.RelayInfo, c *gin.Context) (map[string]s
 
 		headerOverride[key] = value
 	}
+	injectNewAPIUserSessionHeader(info, headerOverride)
 	return headerOverride, nil
 }
 
 func ResolveHeaderOverride(info *common.RelayInfo, c *gin.Context) (map[string]string, error) {
 	return processHeaderOverride(info, c)
+}
+
+func injectNewAPIUserSessionHeader(info *common.RelayInfo, headers map[string]string) {
+	if info == nil || info.IsChannelTest || info.UserId <= 0 || headers == nil {
+		return
+	}
+	if strings.TrimSpace(headers["x-session-id"]) != "" || strings.TrimSpace(headers["session_id"]) != "" {
+		return
+	}
+	headers["x-session-id"] = fmt.Sprintf("newapi-user-%d", info.UserId)
 }
 
 func applyHeaderOverrideToRequest(req *http.Request, headerOverride map[string]string) {
