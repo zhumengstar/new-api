@@ -281,7 +281,7 @@ func mergeIncomingSessionHeaders(info *common.RelayInfo, c *gin.Context, headers
 		return
 	}
 
-	sessionID, source := extractIncomingSessionID(c, headers)
+	sessionID, _ := extractIncomingSessionID(c, headers)
 	if sessionID == "" {
 		return
 	}
