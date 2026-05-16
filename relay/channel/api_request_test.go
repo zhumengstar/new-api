@@ -77,6 +77,81 @@ func TestProcessHeaderOverride_DoesNotOverrideExistingSessionHeader(t *testing.T
 	require.Equal(t, "client-session", headers["x-session-id"])
 }
 
+func TestProcessHeaderOverride_ForwardsClientSessionHeaderFromRequest(t *testing.T) {
+	t.Parallel()
+
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	ctx.Request.Header.Set("Session-Id", "codex-session")
+
+	info := &relaycommon.RelayInfo{
+		IsChannelTest: false,
+		UserId:        42,
+		Username:      "alice",
+		ChannelMeta: &relaycommon.ChannelMeta{
+			HeadersOverride: map[string]any{},
+		},
+	}
+
+	headers, err := processHeaderOverride(info, ctx)
+	require.NoError(t, err)
+	require.Equal(t, "codex-session", headers["x-session-id"])
+	require.Equal(t, "codex-session", headers["session-id"])
+}
+
+func TestProcessHeaderOverride_ForwardsCodexTurnMetadataSessionID(t *testing.T) {
+	t.Parallel()
+
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	ctx.Request.Header.Set("X-Codex-Turn-Metadata", `{"session_id":"metadata-session","thread_id":"thread-1","turn_id":"turn-1"}`)
+
+	info := &relaycommon.RelayInfo{
+		IsChannelTest: false,
+		UserId:        42,
+		Username:      "alice",
+		ChannelMeta: &relaycommon.ChannelMeta{
+			HeadersOverride: map[string]any{},
+		},
+	}
+
+	headers, err := processHeaderOverride(info, ctx)
+	require.NoError(t, err)
+	require.Equal(t, "metadata-session", headers["x-session-id"])
+	require.Equal(t, `{"session_id":"metadata-session","thread_id":"thread-1","turn_id":"turn-1"}`, headers["x-codex-turn-metadata"])
+}
+
+func TestProcessHeaderOverride_ClientSessionIDWinsOverCodexMetadata(t *testing.T) {
+	t.Parallel()
+
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	ctx.Request.Header.Set("Session-Id", "explicit-session")
+	ctx.Request.Header.Set("X-Codex-Turn-Metadata", `{"session_id":"metadata-session"}`)
+
+	info := &relaycommon.RelayInfo{
+		IsChannelTest: false,
+		UserId:        42,
+		Username:      "alice",
+		ChannelMeta: &relaycommon.ChannelMeta{
+			HeadersOverride: map[string]any{},
+		},
+	}
+
+	headers, err := processHeaderOverride(info, ctx)
+	require.NoError(t, err)
+	require.Equal(t, "explicit-session", headers["x-session-id"])
+	require.Equal(t, "explicit-session", headers["session_id"])
+	require.Equal(t, "explicit-session", headers["session-id"])
+	require.Equal(t, `{"session_id":"metadata-session"}`, headers["x-codex-turn-metadata"])
+}
+
 func TestProcessHeaderOverride_ChannelTestSkipsPassthroughRules(t *testing.T) {
 	t.Parallel()
 
