@@ -126,6 +126,29 @@ func DeleteRedemption(c *gin.Context) {
 	return
 }
 
+type deleteRedemptionsRequest struct {
+	Ids []int `json:"ids"`
+}
+
+func DeleteRedemptions(c *gin.Context) {
+	var req deleteRedemptionsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	rows, err := model.DeleteRedemptionsByIds(req.Ids)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+		"data":    rows,
+	})
+	return
+}
+
 func UpdateRedemption(c *gin.Context) {
 	statusOnly := c.Query("status_only")
 	redemption := model.Redemption{}
