@@ -929,7 +929,12 @@ func testAllChannels(notify bool) error {
 
 			// enable channel
 			if !isChannelEnabled && service.ShouldEnableChannel(newAPIError, channel.Status) {
+				service.ClearChannelConsecutiveErrors(channel.Id)
 				service.EnableChannel(channel.Id, common.GetContextKeyString(result.context, constant.ContextKeyChannelKey), channel.Name)
+			}
+
+			if newAPIError == nil {
+				service.ClearChannelConsecutiveErrors(channel.Id)
 			}
 
 			channel.UpdateResponseTime(milliseconds)
