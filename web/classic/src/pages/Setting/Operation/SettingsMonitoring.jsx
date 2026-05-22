@@ -43,7 +43,7 @@ export default function SettingsMonitoring(props) {
     AutomaticRetryStatusCodes:
       '100-199,300-399,401-407,409-499,500-503,505-523,525-599',
     'monitor_setting.auto_test_channel_enabled': false,
-    'monitor_setting.auto_test_channel_minutes': 5,
+    'monitor_setting.auto_test_channel_minutes': 1,
   });
   const refForm = useRef();
   const [inputsRow, setInputsRow] = useState(inputs);

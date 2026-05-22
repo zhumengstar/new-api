@@ -104,6 +104,10 @@ func getChannelQuery(group string, model string, retry int) (*gorm.DB, error) {
 }
 
 func GetChannel(group string, model string, retry int) (*Channel, error) {
+	return GetChannelExcluding(group, model, retry, nil)
+}
+
+func GetChannelExcluding(group string, model string, retry int, triedChannelIds map[int]bool) (*Channel, error) {
 	var abilities []Ability
 
 	var err error = nil
@@ -124,11 +128,20 @@ func GetChannel(group string, model string, retry int) (*Channel, error) {
 		// Randomly choose one
 		weightSum := uint(0)
 		for _, ability_ := range abilities {
+			if triedChannelIds[ability_.ChannelId] {
+				continue
+			}
 			weightSum += ability_.Weight + 10
+		}
+		if weightSum == 0 {
+			return nil, nil
 		}
 		// Randomly choose one
 		weight := common.GetRandomInt(int(weightSum))
 		for _, ability_ := range abilities {
+			if triedChannelIds[ability_.ChannelId] {
+				continue
+			}
 			weight -= int(ability_.Weight) + 10
 			//log.Printf("weight: %d, ability weight: %d", weight, *ability_.Weight)
 			if weight <= 0 {

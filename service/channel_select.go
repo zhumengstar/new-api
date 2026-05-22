@@ -2,21 +2,25 @@ package service
 
 import (
 	"errors"
+	"sort"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
 )
 
 type RetryParam struct {
-	Ctx          *gin.Context
-	TokenGroup   string
-	ModelName    string
-	Retry        *int
-	resetNextTry bool
+	Ctx               *gin.Context
+	TokenGroup        string
+	ModelName         string
+	Retry             *int
+	TriedChannelIds   map[int]bool
+	ExhaustedPriority map[int]bool
+	resetNextTry      bool
 }
 
 func (p *RetryParam) GetRetry() int {
@@ -115,7 +119,14 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 			}
 			logger.LogDebug(param.Ctx, "Auto selecting group: %s, priorityRetry: %d", autoGroup, priorityRetry)
 
-			channel, _ = model.GetRandomSatisfiedChannel(autoGroup, param.ModelName, priorityRetry)
+			channel, _ = getRandomSatisfiedChannelWithExclusion(autoGroup, param.ModelName, &RetryParam{
+				Ctx:               param.Ctx,
+				TokenGroup:        autoGroup,
+				ModelName:         param.ModelName,
+				Retry:             common.GetPointer(priorityRetry),
+				TriedChannelIds:   param.TriedChannelIds,
+				ExhaustedPriority: param.ExhaustedPriority,
+			})
 			if channel == nil {
 				// Current group has no available channel for this model, try next group
 				// 当前分组没有该模型的可用渠道，尝试下一个分组
@@ -153,10 +164,110 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 			break
 		}
 	} else {
-		channel, err = model.GetRandomSatisfiedChannel(param.TokenGroup, param.ModelName, param.GetRetry())
+		channel, err = getRandomSatisfiedChannelWithExclusion(param.TokenGroup, param.ModelName, param)
 		if err != nil {
 			return nil, param.TokenGroup, err
 		}
 	}
 	return channel, selectGroup, nil
+}
+
+func getRandomSatisfiedChannelWithExclusion(group string, modelName string, param *RetryParam) (*model.Channel, error) {
+	if param == nil {
+		return model.GetRandomSatisfiedChannel(group, modelName, 0)
+	}
+	if len(param.TriedChannelIds) == 0 {
+		return model.GetRandomSatisfiedChannel(group, modelName, param.GetRetry())
+	}
+
+	abilities, err := getSatisfiedAbilitiesByPriority(group, modelName)
+	if err != nil {
+		return nil, err
+	}
+	if len(abilities) == 0 {
+		return nil, nil
+	}
+
+	priorities := make([]int, 0, len(abilities))
+	byPriority := make(map[int][]model.Ability)
+	seenPriority := make(map[int]bool)
+	for _, ability := range abilities {
+		priority := int64(0)
+		if ability.Priority != nil {
+			priority = *ability.Priority
+		}
+		priorityInt := int(priority)
+		byPriority[priorityInt] = append(byPriority[priorityInt], ability)
+		if !seenPriority[priorityInt] {
+			seenPriority[priorityInt] = true
+			priorities = append(priorities, priorityInt)
+		}
+	}
+	sort.Slice(priorities, func(i, j int) bool { return priorities[i] > priorities[j] })
+
+	for priorityIndex := 0; priorityIndex < len(priorities); priorityIndex++ {
+		priority := priorities[priorityIndex]
+		candidates := make([]model.Ability, 0, len(byPriority[priority]))
+		for _, ability := range byPriority[priority] {
+			if !param.TriedChannelIds[ability.ChannelId] {
+				candidates = append(candidates, ability)
+			}
+		}
+		if len(candidates) == 0 {
+			if param.ExhaustedPriority != nil {
+				param.ExhaustedPriority[priority] = true
+			}
+			continue
+		}
+		param.SetRetry(priorityIndex)
+		return getChannelByWeightedAbility(candidates)
+	}
+
+	return nil, nil
+}
+
+func getSatisfiedAbilitiesByPriority(group string, modelName string) ([]model.Ability, error) {
+	abilities, err := findSatisfiedAbilitiesByPriority(group, modelName)
+	if err != nil || len(abilities) > 0 {
+		return abilities, err
+	}
+	normalizedModel := ratio_setting.FormatMatchingModelName(modelName)
+	if normalizedModel == modelName {
+		return abilities, nil
+	}
+	return findSatisfiedAbilitiesByPriority(group, normalizedModel)
+}
+
+func findSatisfiedAbilitiesByPriority(group string, modelName string) ([]model.Ability, error) {
+	var abilities []model.Ability
+	err := model.DB.Model(&model.Ability{}).
+		Where(&model.Ability{Group: group, Model: modelName, Enabled: true}).
+		Order("priority DESC").
+		Order("weight DESC").
+		Find(&abilities).Error
+	return abilities, err
+}
+
+func getChannelByWeightedAbility(abilities []model.Ability) (*model.Channel, error) {
+	if len(abilities) == 0 {
+		return nil, nil
+	}
+	weightSum := uint(0)
+	for _, ability := range abilities {
+		weightSum += ability.Weight + 10
+	}
+	weight := common.GetRandomInt(int(weightSum))
+	selected := abilities[len(abilities)-1]
+	for _, ability := range abilities {
+		weight -= int(ability.Weight) + 10
+		if weight <= 0 {
+			selected = ability
+			break
+		}
+	}
+	channel := model.Channel{}
+	if err := model.DB.First(&channel, "id = ?", selected.ChannelId).Error; err != nil {
+		return nil, err
+	}
+	return &channel, nil
 }

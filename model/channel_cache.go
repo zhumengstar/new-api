@@ -94,9 +94,16 @@ func SyncChannelCache(frequency int) {
 }
 
 func GetRandomSatisfiedChannel(group string, model string, retry int) (*Channel, error) {
+	return GetRandomSatisfiedChannelExcluding(group, model, retry, nil)
+}
+
+func GetRandomSatisfiedChannelExcluding(group string, model string, retry int, triedChannelIds map[int]bool) (*Channel, error) {
 	// if memory cache is disabled, get channel directly from database
 	if !common.MemoryCacheEnabled {
-		return GetChannel(group, model, retry)
+		if len(triedChannelIds) == 0 {
+			return GetChannel(group, model, retry)
+		}
+		return GetChannelExcluding(group, model, retry, triedChannelIds)
 	}
 
 	channelSyncLock.RLock()
@@ -145,6 +152,9 @@ func GetRandomSatisfiedChannel(group string, model string, retry int) (*Channel,
 	var sumWeight = 0
 	var targetChannels []*Channel
 	for _, channelId := range channels {
+		if triedChannelIds[channelId] {
+			continue
+		}
 		if channel, ok := channelsIDM[channelId]; ok {
 			if channel.GetPriority() == targetPriority {
 				sumWeight += channel.GetWeight()
@@ -228,23 +238,66 @@ func CacheUpdateChannelStatus(id int, status int) {
 	}
 	channelSyncLock.Lock()
 	defer channelSyncLock.Unlock()
-	if channel, ok := channelsIDM[id]; ok {
-		channel.Status = status
+	channel, ok := channelsIDM[id]
+	if !ok {
+		return
 	}
-	if status != common.ChannelStatusEnabled {
-		// delete the channel from group2model2channels
-		for group, model2channels := range group2model2channels {
-			for model, channels := range model2channels {
-				for i, channelId := range channels {
-					if channelId == id {
-						// remove the channel from the slice
-						group2model2channels[group][model] = append(channels[:i], channels[i+1:]...)
-						break
-					}
+	channel.Status = status
+
+	if status == common.ChannelStatusEnabled {
+		for _, group := range splitCommaList(channel.Group) {
+			if _, ok := group2model2channels[group]; !ok {
+				group2model2channels[group] = make(map[string][]int)
+			}
+			for _, model := range splitCommaList(channel.Models) {
+				group2model2channels[group][model] = appendChannelIdSortedByPriority(group2model2channels[group][model], id)
+			}
+		}
+		return
+	}
+
+	// delete the channel from group2model2channels
+	for group, model2channels := range group2model2channels {
+		for model, channels := range model2channels {
+			for i, channelId := range channels {
+				if channelId == id {
+					// remove the channel from the slice
+					group2model2channels[group][model] = append(channels[:i], channels[i+1:]...)
+					break
 				}
 			}
 		}
 	}
+}
+
+func splitCommaList(value string) []string {
+	parts := strings.Split(value, ",")
+	items := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			items = append(items, part)
+		}
+	}
+	return items
+}
+
+func appendChannelIdSortedByPriority(channels []int, id int) []int {
+	for _, channelId := range channels {
+		if channelId == id {
+			return channels
+		}
+	}
+	channels = append(channels, id)
+	sort.SliceStable(channels, func(i, j int) bool {
+		left, leftOk := channelsIDM[channels[i]]
+		right, rightOk := channelsIDM[channels[j]]
+		if !leftOk || !rightOk {
+			return leftOk
+		}
+		return left.GetPriority() > right.GetPriority()
+	})
+	return channels
 }
 
 func CacheUpdateChannel(channel *Channel) {
