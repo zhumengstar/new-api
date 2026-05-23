@@ -169,28 +169,6 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 		logger.LogError(c, fmt.Sprintf("error handling last response: %s, lastStreamData: [%s]", err.Error(), lastStreamData))
 	}
 
-	// 兜底：部分上游会把 usage 放到非最后一个 chunk（例如 Claude 经 OpenAI 兼容层时
-	// 倒数第二条 chunk 才带 usage，最后一条是 [DONE] / 空 choices）。
-	// 仅在 handleLastResponse 没拿到 usage 时，从后往前扫描 streamItems，
-	// 找到第一条 ValidUsage 的 chunk。这样不会改变已经在最后一条带 usage 的上游行为。
-	if !containStreamUsage && len(streamItems) > 0 {
-		for i := len(streamItems) - 1; i >= 0; i-- {
-			item := streamItems[i]
-			if item == "" || !service.SundaySearch(item, "usage") {
-				continue
-			}
-			var probe dto.ChatCompletionsStreamResponse
-			if err := common.Unmarshal(common.StringToByteSlice(item), &probe); err != nil {
-				continue
-			}
-			if service.ValidUsage(probe.Usage) {
-				usage = probe.Usage
-				containStreamUsage = true
-				break
-			}
-		}
-	}
-
 	if info.RelayFormat == types.RelayFormatOpenAI {
 		if shouldSendLastResp {
 			_ = sendStreamData(c, info, lastStreamData, info.ChannelSetting.ForceFormat, info.ChannelSetting.ThinkingToContent)
