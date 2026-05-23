@@ -19,7 +19,7 @@ func formatNotifyType(channelId int, status int) string {
 const (
 	channelConsecutiveErrorCountKey = "consecutive_error_count"
 	channelConsecutiveErrorLastKey  = "consecutive_error_last"
-	channelConsecutiveErrorLimit    = 10
+	channelConsecutiveErrorLimit    = 3
 )
 
 func getChannelConsecutiveErrorCount(otherInfo map[string]interface{}) int {

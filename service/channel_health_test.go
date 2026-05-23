@@ -63,7 +63,7 @@ func reloadHealthChannel(t *testing.T) *model.Channel {
 	return channel
 }
 
-func TestChannelFailureRecorderDisablesOnlyAfterTenConsecutiveErrors(t *testing.T) {
+func TestChannelFailureRecorderDisablesOnlyAfterThreeConsecutiveErrors(t *testing.T) {
 	setupChannelHealthTestDB(t)
 	seedHealthChannel(t, common.ChannelStatusEnabled)
 
@@ -74,17 +74,17 @@ func TestChannelFailureRecorderDisablesOnlyAfterTenConsecutiveErrors(t *testing.
 	channelError := *types.NewChannelError(1, 1, "health-test-channel", false, "sk-test", true)
 	apiErr := types.NewError(fmt.Errorf("channel unavailable"), types.ErrorCodeChannelNoAvailableKey)
 
-	for i := 1; i <= 9; i++ {
+	for i := 1; i <= 2; i++ {
 		assert.False(t, RecordChannelFailureAndMaybeDisable(channelError, apiErr), "attempt %d should not disable", i)
 		channel := reloadHealthChannel(t)
 		assert.Equal(t, common.ChannelStatusEnabled, channel.Status)
 		assert.EqualValues(t, i, channel.GetOtherInfo()["consecutive_error_count"])
 	}
 
-	assert.True(t, RecordChannelFailureAndMaybeDisable(channelError, apiErr), "10th consecutive error should disable")
+	assert.True(t, RecordChannelFailureAndMaybeDisable(channelError, apiErr), "3rd consecutive error should disable")
 	channel := reloadHealthChannel(t)
 	assert.Equal(t, common.ChannelStatusAutoDisabled, channel.Status)
-	assert.EqualValues(t, 10, channel.GetOtherInfo()["consecutive_error_count"])
+	assert.EqualValues(t, 3, channel.GetOtherInfo()["consecutive_error_count"])
 }
 
 func TestChannelFailureRecorderClearsCountOnSuccess(t *testing.T) {
@@ -98,7 +98,7 @@ func TestChannelFailureRecorderClearsCountOnSuccess(t *testing.T) {
 	channelError := *types.NewChannelError(1, 1, "health-test-channel", false, "sk-test", true)
 	apiErr := types.NewError(fmt.Errorf("channel unavailable"), types.ErrorCodeChannelNoAvailableKey)
 
-	for i := 0; i < 3; i++ {
+	for i := 0; i < 2; i++ {
 		RecordChannelFailureAndMaybeDisable(channelError, apiErr)
 	}
 	ClearChannelConsecutiveErrors(1)

@@ -880,6 +880,18 @@ func testAllChannels(notify bool) error {
 	}
 	testAllChannelsRunning = true
 	testAllChannelsLock.Unlock()
+
+	// AUTO_DISABLED_CHANNEL_RECOVERY_V1: make sure the running flag is released even
+	// when channel discovery fails before the async worker is started.
+	defer func() {
+		if !testAllChannelsRunning {
+			return
+		}
+		testAllChannelsLock.Lock()
+		testAllChannelsRunning = false
+		testAllChannelsLock.Unlock()
+	}()
+
 	channels, getChannelErr := model.GetAllChannels(0, 0, true, false)
 	if getChannelErr != nil {
 		return getChannelErr
@@ -913,8 +925,9 @@ func testAllChannels(notify bool) error {
 				shouldBanChannel = service.ShouldDisableChannel(result.newAPIError)
 			}
 
-			// 当错误检查通过，才检查响应时间
-			if common.AutomaticDisableChannelEnabled && !shouldBanChannel {
+			// 只有启用中的渠道才使用响应时间阈值触发自动禁用。
+			// 自动禁用渠道的恢复测试不应因为响应慢而失败：只要请求成功，就允许自动恢复。
+			if common.AutomaticDisableChannelEnabled && isChannelEnabled && !shouldBanChannel {
 				if milliseconds > disableThreshold {
 					err := fmt.Errorf("响应时间 %.2fs 超过阈值 %.2fs", float64(milliseconds)/1000.0, float64(disableThreshold)/1000.0)
 					newAPIError = types.NewOpenAIError(err, types.ErrorCodeChannelResponseTimeExceeded, http.StatusRequestTimeout)
@@ -948,6 +961,58 @@ func testAllChannels(notify bool) error {
 	return nil
 }
 
+var testAutoDisabledChannelsLock sync.Mutex
+var testAutoDisabledChannelsRunning bool = false
+
+func testAutoDisabledChannels() error {
+	if !common.AutomaticEnableChannelEnabled {
+		return nil
+	}
+
+	testAutoDisabledChannelsLock.Lock()
+	if testAutoDisabledChannelsRunning {
+		testAutoDisabledChannelsLock.Unlock()
+		return errors.New("自动禁用通道恢复测试已在运行中")
+	}
+	testAutoDisabledChannelsRunning = true
+	testAutoDisabledChannelsLock.Unlock()
+	defer func() {
+		testAutoDisabledChannelsLock.Lock()
+		testAutoDisabledChannelsRunning = false
+		testAutoDisabledChannelsLock.Unlock()
+	}()
+
+	channels, getChannelErr := model.GetAllChannels(0, 0, true, false)
+	if getChannelErr != nil {
+		return getChannelErr
+	}
+
+	testedCount := 0
+	enabledCount := 0
+	for _, channel := range channels {
+		if channel.Status != common.ChannelStatusAutoDisabled {
+			continue
+		}
+		testedCount++
+		result := testChannel(channel, "", "", shouldUseStreamForAutomaticChannelTest(channel))
+		if service.ShouldEnableChannel(result.newAPIError, channel.Status) {
+			service.ClearChannelConsecutiveErrors(channel.Id)
+			service.EnableChannel(channel.Id, common.GetContextKeyString(result.context, constant.ContextKeyChannelKey), channel.Name)
+			enabledCount++
+			common.SysLog(fmt.Sprintf("AUTO_DISABLED_CHANNEL_RECOVERY_V1 AUTO_DISABLED_CHANNEL_RECOVERY_NO_THRESHOLD_V1: channel #%d auto-disabled recovery test succeeded, channel enabled", channel.Id))
+			continue
+		}
+		if result.newAPIError == nil {
+			service.ClearChannelConsecutiveErrors(channel.Id)
+		}
+		time.Sleep(common.RequestInterval)
+	}
+	if testedCount > 0 {
+		common.SysLog(fmt.Sprintf("AUTO_DISABLED_CHANNEL_RECOVERY_V1: tested %d auto-disabled channels, enabled %d", testedCount, enabledCount))
+	}
+	return nil
+}
+
 func TestAllChannels(c *gin.Context) {
 	err := testAllChannels(true)
 	if err != nil {
@@ -975,14 +1040,24 @@ func AutomaticallyTestChannels() {
 			}
 			for {
 				frequency := operation_setting.GetMonitorSetting().AutoTestChannelMinutes
-				time.Sleep(time.Duration(int(math.Round(frequency))) * time.Minute)
+				sleepMinutes := int(math.Round(frequency))
+				if sleepMinutes < 1 {
+					sleepMinutes = 1
+				}
+				nextFullTestAt := time.Now().Add(time.Duration(sleepMinutes) * time.Minute)
+				for operation_setting.GetMonitorSetting().AutoTestChannelEnabled && time.Now().Before(nextFullTestAt) {
+					time.Sleep(1 * time.Minute)
+					if err := testAutoDisabledChannels(); err != nil {
+						common.SysError(fmt.Sprintf("AUTO_DISABLED_CHANNEL_RECOVERY_V1: failed to test auto-disabled channels: %v", err))
+					}
+				}
+				if !operation_setting.GetMonitorSetting().AutoTestChannelEnabled {
+					break
+				}
 				common.SysLog(fmt.Sprintf("automatically test channels with interval %f minutes", frequency))
 				common.SysLog("automatically testing all channels")
 				_ = testAllChannels(false)
 				common.SysLog("automatically channel test finished")
-				if !operation_setting.GetMonitorSetting().AutoTestChannelEnabled {
-					break
-				}
 			}
 		}
 	})
