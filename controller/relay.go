@@ -112,7 +112,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		if common.IsRequestBodyTooLargeError(err) || errors.Is(err, common.ErrRequestBodyTooLarge) {
 			newAPIError = types.NewErrorWithStatusCode(err, types.ErrorCodeReadRequestBodyFailed, http.StatusRequestEntityTooLarge, types.ErrOptionWithSkipRetry())
 		} else {
-			newAPIError = types.NewError(err, types.ErrorCodeInvalidRequest)
+			newAPIError = types.NewError(err, types.ErrorCodeInvalidRequest, types.ErrOptionWithSkipRetry())
 		}
 		return
 	}
@@ -137,7 +137,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		contains, words := service.CheckSensitiveText(meta.CombineText)
 		if contains {
 			logger.LogWarn(c, fmt.Sprintf("user sensitive words detected: %s", strings.Join(words, ", ")))
-			newAPIError = types.NewError(err, types.ErrorCodeSensitiveWordsDetected)
+			newAPIError = types.NewError(err, types.ErrorCodeSensitiveWordsDetected, types.ErrOptionWithSkipRetry())
 			return
 		}
 	}
@@ -332,9 +332,6 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) b
 	if service.ShouldSkipRetryAfterChannelAffinityFailure(c) {
 		return false
 	}
-	if types.IsChannelError(openaiErr) {
-		return true
-	}
 	if types.IsSkipRetryError(openaiErr) {
 		return false
 	}
@@ -343,6 +340,12 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) b
 	}
 	if _, ok := c.Get("specific_channel_id"); ok {
 		return false
+	}
+	if isUserSideNonRetryableError(openaiErr) {
+		return false
+	}
+	if types.IsChannelError(openaiErr) {
+		return true
 	}
 	code := openaiErr.StatusCode
 	if code >= 200 && code < 300 {
@@ -355,6 +358,27 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) b
 		return false
 	}
 	return operation_setting.ShouldRetryByStatusCode(code)
+}
+
+func isUserSideNonRetryableError(openaiErr *types.NewAPIError) bool {
+	if openaiErr == nil {
+		return false
+	}
+	switch openaiErr.GetErrorCode() {
+	case types.ErrorCodeInvalidRequest,
+		types.ErrorCodeSensitiveWordsDetected,
+		types.ErrorCodeViolationFeeGrokCSAM,
+		types.ErrorCodeReadRequestBodyFailed,
+		types.ErrorCodeConvertRequestFailed,
+		types.ErrorCodeAccessDenied,
+		types.ErrorCodeBadRequestBody,
+		types.ErrorCodeModelNotFound,
+		types.ErrorCodePromptBlocked,
+		types.ErrorCodeInsufficientUserQuota,
+		types.ErrorCodePreConsumeTokenQuotaFailed:
+		return true
+	}
+	return false
 }
 
 func processChannelError(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError) {
