@@ -38,8 +38,14 @@ import type {
 export async function getUsers(
   params: GetUsersParams = {}
 ): Promise<GetUsersResponse> {
-  const { p = 1, page_size = 10 } = params
-  const res = await api.get(`/api/user/?p=${p}&page_size=${page_size}`)
+  const { p = 1, page_size = 10, sort_by, sort_order } = params
+  const searchParams = new URLSearchParams({
+    p: String(p),
+    page_size: String(page_size),
+  })
+  if (sort_by) searchParams.set('sort_by', sort_by)
+  if (sort_order) searchParams.set('sort_order', sort_order)
+  const res = await api.get(`/api/user/?${searchParams.toString()}`)
   return res.data
 }
 
@@ -49,10 +55,17 @@ export async function getUsers(
 export async function searchUsers(
   params: SearchUsersParams
 ): Promise<GetUsersResponse> {
-  const { keyword = '', group = '', p = 1, page_size = 10 } = params
-  const res = await api.get(
-    `/api/user/search?keyword=${keyword}&group=${group}&p=${p}&page_size=${page_size}`
-  )
+  const { keyword = '', group = '', p = 1, page_size = 10, sort_by, sort_order } =
+    params
+  const searchParams = new URLSearchParams({
+    keyword,
+    group,
+    p: String(p),
+    page_size: String(page_size),
+  })
+  if (sort_by) searchParams.set('sort_by', sort_by)
+  if (sort_order) searchParams.set('sort_order', sort_order)
+  const res = await api.get(`/api/user/search?${searchParams.toString()}`)
   return res.data
 }
 
