@@ -455,6 +455,15 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 		// prompt/cache fields here, otherwise old upstream payloads may be double-counted.
 		other["input_tokens_total"] = usage.InputTokens
 	}
+	if usage != nil && usage.PromptUndercountUpstream > 0 {
+		// upstream reported an implausibly small prompt_tokens compared to local
+		// estimate (typical of upstream prompt truncation/stub responses); we
+		// already overrode usage.PromptTokens with the local estimate, here we
+		// surface both the override flag and the original upstream value for
+		// audit/debugging from the usage log UI.
+		other["prompt_tokens_undercount"] = true
+		other["upstream_prompt_tokens"] = usage.PromptUndercountUpstream
+	}
 	if tieredBillingApplied {
 		InjectTieredBillingInfo(other, relayInfo, tieredResult)
 	}

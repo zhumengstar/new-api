@@ -633,6 +633,47 @@ func applyUsagePostProcessing(info *relaycommon.RelayInfo, usage *dto.Usage, res
 			}
 		}
 	}
+
+	// 防御：上游 prompt_tokens 与本地估算严重不符时（通常意味着上游对超大
+	// prompt 做了静默截断/stub），用本地估算覆盖，避免按 6 token 计费 200k 输入。
+	// 仅当上游确实返回了一个明显偏小的 PromptTokens 时才触发，不影响正常上游。
+	guardPromptUndercount(info, usage)
+}
+
+// guardPromptUndercount overrides usage.PromptTokens with the local pre-request
+// tokenizer estimate when the upstream-reported value is suspiciously small.
+// It records the original value into usage.UsageSource style fields are kept
+// untouched; the caller side records audit info via other map at log time.
+func guardPromptUndercount(info *relaycommon.RelayInfo, usage *dto.Usage) {
+	if info == nil || usage == nil {
+		return
+	}
+	estimate := info.GetEstimatePromptTokens()
+	if estimate <= 0 {
+		return
+	}
+	upstream := usage.PromptTokens
+	// require all of: upstream>0, estimate>=1000 (only guard against large-prompt
+	// truncation), upstream<30% of estimate, absolute gap>500 tokens.
+	if upstream <= 0 {
+		return
+	}
+	if estimate < 1000 {
+		return
+	}
+	if upstream*10 >= estimate*3 { // upstream/estimate >= 0.3
+		return
+	}
+	if estimate-upstream <= 500 {
+		return
+	}
+	// override prompt tokens & input tokens with the local estimate; cache and
+	// completion fields are left alone (those still reflect upstream truth).
+	usage.PromptUndercountUpstream = upstream
+	usage.PromptTokens = estimate
+	if usage.InputTokens > 0 {
+		usage.InputTokens = estimate
+	}
 }
 
 func extractCachedTokensFromBody(body []byte) (int, bool) {
