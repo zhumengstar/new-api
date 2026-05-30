@@ -16,7 +16,7 @@ version: '3.4' # For compatibility with older Docker versions
 
 services:
   new-api:
-    image: calciumion/new-api:latest
+    image: local/new-api:20260530-074814
     container_name: new-api
     restart: always
     command: --log-dir /app/logs
@@ -26,7 +26,7 @@ services:
       - ./data:/data
       - ./logs:/app/logs
     environment:
-      - SQL_DSN=postgresql://root:123456@postgres:5432/new-api # ⚠️ IMPORTANT: Change the password in production!
+      - SQL_DSN=postgresql://postgres.uvjfjfipsqzhlplihopw:Gh%40l9g7%401201@aws-1-us-west-1.pooler.supabase.com:5432/postgres?sslmode=require
 #      - SQL_DSN=root:123456@tcp(mysql:3306)/new-api  # Point to the mysql service, uncomment if using MySQL
       - REDIS_CONN_STRING=redis://:123456@redis:6379 # ⚠️ IMPORTANT: Change the password in production!
       - TZ=Asia/Shanghai
