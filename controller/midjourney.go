@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -265,15 +266,24 @@ func GetAllMidjourney(c *gin.Context) {
 		EndTimestamp:   c.Query("end_timestamp"),
 	}
 
-	items := model.GetAllTasks(pageInfo.GetStartIdx(), pageInfo.GetPageSize(), queryParams)
+	fetchSize := pageInfo.GetEndIdx()
+	items := model.GetAllTasks(0, fetchSize, queryParams)
 	total := model.CountAllTasks(queryParams)
+	generatedImageLogs, generatedImageTotal := model.GetAllGeneratedImageLogs(0, fetchSize, queryParams)
+	items = append(items, generatedImageLogsToMidjourney(generatedImageLogs)...)
+	total += generatedImageTotal
 
 	if setting.MjForwardUrlEnabled {
 		for i, midjourney := range items {
+			if midjourney.MjId != "" && len(midjourney.MjId) > 16 && midjourney.MjId[:16] == "generated-image-" {
+				continue
+			}
 			midjourney.ImageUrl = system_setting.ServerAddress + "/mj/image/" + midjourney.MjId
 			items[i] = midjourney
 		}
 	}
+	sortMidjourneyBySubmitTime(items)
+	items = sliceMidjourneyPage(items, pageInfo.GetStartIdx(), pageInfo.GetPageSize())
 	pageInfo.SetTotal(int(total))
 	pageInfo.SetItems(items)
 	common.ApiSuccess(c, pageInfo)
@@ -290,16 +300,91 @@ func GetUserMidjourney(c *gin.Context) {
 		EndTimestamp:   c.Query("end_timestamp"),
 	}
 
-	items := model.GetAllUserTask(userId, pageInfo.GetStartIdx(), pageInfo.GetPageSize(), queryParams)
+	fetchSize := pageInfo.GetEndIdx()
+	items := model.GetAllUserTask(userId, 0, fetchSize, queryParams)
 	total := model.CountAllUserTask(userId, queryParams)
+	generatedImageLogs, generatedImageTotal := model.GetAllUserGeneratedImageLogs(userId, 0, fetchSize, queryParams)
+	items = append(items, generatedImageLogsToMidjourney(generatedImageLogs)...)
+	total += generatedImageTotal
 
 	if setting.MjForwardUrlEnabled {
 		for i, midjourney := range items {
+			if midjourney.MjId != "" && len(midjourney.MjId) > 16 && midjourney.MjId[:16] == "generated-image-" {
+				continue
+			}
 			midjourney.ImageUrl = system_setting.ServerAddress + "/mj/image/" + midjourney.MjId
 			items[i] = midjourney
 		}
 	}
+	sortMidjourneyBySubmitTime(items)
+	items = sliceMidjourneyPage(items, pageInfo.GetStartIdx(), pageInfo.GetPageSize())
 	pageInfo.SetTotal(int(total))
 	pageInfo.SetItems(items)
 	common.ApiSuccess(c, pageInfo)
+}
+
+func generatedImageLogsToMidjourney(logs []*model.GeneratedImageLog) []*model.Midjourney {
+	items := make([]*model.Midjourney, 0, len(logs))
+	for _, log := range logs {
+		if log == nil {
+			continue
+		}
+		imageURL := firstGeneratedImageURL(log.Other)
+		items = append(items, &model.Midjourney{
+			Id:         log.Id,
+			Code:       1,
+			UserId:     log.UserId,
+			Action:     "IMAGE_GENERATION",
+			MjId:       fmt.Sprintf("generated-image-%d", log.Id),
+			Prompt:     log.Prompt,
+			PromptEn:   log.ModelName,
+			SubmitTime: log.CreatedAt * 1000,
+			StartTime:  log.CreatedAt * 1000,
+			FinishTime: log.CreatedAt * 1000,
+			ImageUrl:   imageURL,
+			Status:     "SUCCESS",
+			Progress:   "100%",
+			ChannelId:  log.ChannelId,
+			Quota:      log.Quota,
+		})
+	}
+	return items
+}
+
+func firstGeneratedImageURL(other string) string {
+	otherMap, _ := common.StrToMap(other)
+	images, ok := otherMap["generated_images"].([]interface{})
+	if !ok {
+		return ""
+	}
+	for _, image := range images {
+		imageMap, ok := image.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if url, ok := imageMap["url"].(string); ok && url != "" {
+			return url
+		}
+	}
+	return ""
+}
+
+func sortMidjourneyBySubmitTime(items []*model.Midjourney) {
+	sort.SliceStable(items, func(i, j int) bool {
+		if items[i].SubmitTime == items[j].SubmitTime {
+			return items[i].Id > items[j].Id
+		}
+		return items[i].SubmitTime > items[j].SubmitTime
+	})
+}
+
+func sliceMidjourneyPage(items []*model.Midjourney, startIdx int, pageSize int) []*model.Midjourney {
+	if startIdx >= len(items) {
+		return []*model.Midjourney{}
+	}
+	endIdx := startIdx + pageSize
+	if endIdx > len(items) {
+		endIdx = len(items)
+	}
+	return items[startIdx:endIdx]
 }

@@ -52,7 +52,7 @@ const MjLogsActions = ({
               ? t(
                   '当前未开启Midjourney回调，部分项目可能无法获得绘图结果，可在运营设置中开启。',
                 )
-              : t('Midjourney 任务记录')}
+              : t('绘图任务与图片生成记录')}
           </Text>
         </div>
       </Skeleton>

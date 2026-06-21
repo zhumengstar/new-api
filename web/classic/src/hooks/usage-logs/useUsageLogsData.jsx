@@ -43,7 +43,7 @@ import { ITEMS_PER_PAGE } from '../../constants';
 import { useTableCompactMode } from '../common/useTableCompactMode';
 import ParamOverrideEntry from '../../components/table/usage-logs/components/ParamOverrideEntry';
 
-const renderGeneratedImages = (images, t) => {
+const renderGeneratedImages = (images, t, openGeneratedImagePreview) => {
   const validImages = Array.isArray(images)
     ? images.filter((image) => image?.url)
     : [];
@@ -56,12 +56,17 @@ const renderGeneratedImages = (images, t) => {
         const downloadUrl = `${image.url}${image.url.includes('?') ? '&' : '?'}download=1`;
         return (
           <div key={`${image.url}-${index}`} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-            <a
-              href={image.url}
-              target='_blank'
-              rel='noreferrer'
+            <button
+              type='button'
+              onClick={() => openGeneratedImagePreview(image.url)}
               title={image.expires_at ? `${t('有效期至')} ${timestamp2string(image.expires_at)}` : t('查看图片')}
-              style={{ display: 'block' }}
+              style={{
+                display: 'block',
+                border: 0,
+                padding: 0,
+                background: 'transparent',
+                cursor: 'pointer',
+              }}
             >
               <img
                 src={image.url}
@@ -75,7 +80,7 @@ const renderGeneratedImages = (images, t) => {
                   background: 'var(--semi-color-fill-0)',
                 }}
               />
-            </a>
+            </button>
             <a
               href={downloadUrl}
               download
@@ -126,6 +131,8 @@ export const useLogsData = () => {
   const [logCount, setLogCount] = useState(0);
   const [pageSize, setPageSize] = useState(ITEMS_PER_PAGE);
   const [logType, setLogType] = useState(0);
+  const [isGeneratedImagePreviewOpen, setIsGeneratedImagePreviewOpen] = useState(false);
+  const [generatedImagePreviewUrl, setGeneratedImagePreviewUrl] = useState('');
 
   // User and admin
   const isAdminUser = isAdmin();
@@ -224,6 +231,11 @@ export const useLogsData = () => {
 
   // Compact mode
   const [compactMode, setCompactMode] = useTableCompactMode('logs');
+
+  const openGeneratedImagePreview = (imageUrl) => {
+    setGeneratedImagePreviewUrl(imageUrl);
+    setIsGeneratedImagePreviewOpen(true);
+  };
 
   // User info modal state
   const [showUserInfo, setShowUserInfoModal] = useState(false);
@@ -582,7 +594,7 @@ export const useLogsData = () => {
       if (Array.isArray(other?.generated_images) && other.generated_images.length > 0) {
         expandDataLocal.push({
           key: t('生成图片'),
-          value: renderGeneratedImages(other.generated_images, t),
+          value: renderGeneratedImages(other.generated_images, t, openGeneratedImagePreview),
         });
       }
       if (other?.request_path) {
@@ -903,6 +915,9 @@ export const useLogsData = () => {
     logType,
     stat,
     isAdminUser,
+    isGeneratedImagePreviewOpen,
+    setIsGeneratedImagePreviewOpen,
+    generatedImagePreviewUrl,
 
     // Form state
     formApi,

@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React from 'react';
-import { Button, Progress, Tag, Typography } from '@douyinfe/semi-ui';
+import { Progress, Tag, Typography } from '@douyinfe/semi-ui';
 import {
   Palette,
   ZoomIn,
@@ -84,6 +84,12 @@ function renderType(type, t) {
       return (
         <Tag color='orange' shape='circle' prefixIcon={<Video size={14} />}>
           {t('视频')}
+        </Tag>
+      );
+    case 'IMAGE_GENERATION':
+      return (
+        <Tag color='green' shape='circle' prefixIcon={<Palette size={14} />}>
+          {t('图像生成')}
         </Tag>
       );
     case 'EDITS':
@@ -429,14 +435,43 @@ export const getMjLogsColumns = ({
           return t('无');
         }
         return (
-          <Button
-            size='small'
-            onClick={() => {
-              openImageModal(text);
-            }}
-          >
-            {t('查看图片')}
-          </Button>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4, width: 96 }}>
+            <button
+              type='button'
+              onClick={() => {
+                openImageModal(text);
+              }}
+              title={t('查看图片')}
+              style={{
+                width: 96,
+                height: 96,
+                border: '1px solid var(--semi-color-border)',
+                borderRadius: 6,
+                padding: 0,
+                overflow: 'hidden',
+                background: 'var(--semi-color-fill-0)',
+                cursor: 'pointer',
+              }}
+            >
+              <img
+                src={text}
+                alt={t('结果图片')}
+                style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+              />
+            </button>
+            <a
+              href={`${text}${text.includes('?') ? '&' : '?'}download=1`}
+              download
+              style={{
+                fontSize: 12,
+                color: 'var(--semi-color-primary)',
+                textAlign: 'center',
+                lineHeight: '18px',
+              }}
+            >
+              {t('下载原图')}
+            </a>
+          </div>
         );
       },
     },
