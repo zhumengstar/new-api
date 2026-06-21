@@ -43,6 +43,42 @@ import { ITEMS_PER_PAGE } from '../../constants';
 import { useTableCompactMode } from '../common/useTableCompactMode';
 import ParamOverrideEntry from '../../components/table/usage-logs/components/ParamOverrideEntry';
 
+const renderGeneratedImages = (images, t) => {
+  const validImages = Array.isArray(images)
+    ? images.filter((image) => image?.url)
+    : [];
+  if (!validImages.length) {
+    return null;
+  }
+  return (
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, maxWidth: 640 }}>
+      {validImages.map((image, index) => (
+        <a
+          key={`${image.url}-${index}`}
+          href={image.url}
+          target='_blank'
+          rel='noreferrer'
+          title={image.expires_at ? `${t('有效期至')} ${timestamp2string(image.expires_at)}` : t('查看图片')}
+          style={{ display: 'block' }}
+        >
+          <img
+            src={image.url}
+            alt={t('生成图片')}
+            style={{
+              width: 120,
+              height: 120,
+              objectFit: 'cover',
+              borderRadius: 6,
+              border: '1px solid var(--semi-color-border)',
+              background: 'var(--semi-color-fill-0)',
+            }}
+          />
+        </a>
+      ))}
+    </div>
+  );
+};
+
 export const useLogsData = () => {
   const { t } = useTranslation();
 
@@ -526,6 +562,12 @@ export const useLogsData = () => {
             ),
           });
         }
+      }
+      if (Array.isArray(other?.generated_images) && other.generated_images.length > 0) {
+        expandDataLocal.push({
+          key: t('生成图片'),
+          value: renderGeneratedImages(other.generated_images, t),
+        });
       }
       if (other?.request_path) {
         expandDataLocal.push({

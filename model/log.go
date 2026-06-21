@@ -82,6 +82,22 @@ func formatUserLogs(logs []*Log, startIdx int) {
 	}
 }
 
+func CanAccessGeneratedImageAsset(userId int, isAdmin bool, assetURL string) bool {
+	if strings.TrimSpace(assetURL) == "" {
+		return false
+	}
+	tx := LOG_DB.Model(&Log{}).Where("other LIKE ?", "%"+assetURL+"%")
+	if !isAdmin {
+		tx = tx.Where("user_id = ?", userId)
+	}
+	var count int64
+	if err := tx.Count(&count).Error; err != nil {
+		common.SysLog("failed to check generated image asset access: " + err.Error())
+		return false
+	}
+	return count > 0
+}
+
 func GetLogByTokenId(tokenId int) (logs []*Log, err error) {
 	err = LOG_DB.Model(&Log{}).Where("token_id = ?", tokenId).Order("id desc").Limit(common.MaxRecentItems).Find(&logs).Error
 	formatUserLogs(logs, 0)

@@ -599,6 +599,7 @@ func GeminiImageChatCompatibilityHandler(c *gin.Context, info *relaycommon.Relay
 		logger.LogError(c, fmt.Sprintf("gemini image chat compatibility response has no images: %s", string(responseBody)))
 		return nil, types.NewOpenAIError(fmt.Errorf("no images generated"), types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
 	}
+	service.AttachGeneratedImageLogAssets(c, imageResponse.Data)
 
 	jsonResponse, err := common.Marshal(imageResponse)
 	if err != nil {
@@ -631,6 +632,8 @@ func OpenaiHandlerWithUsage(c *gin.Context, info *relaycommon.RelayInfo, resp *h
 	if err != nil {
 		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
 	}
+
+	service.AttachGeneratedImageLogAssetsFromResponse(c, responseBody)
 
 	// 写入新的 response body
 	service.IOCopyBytesGracefully(c, resp, responseBody)

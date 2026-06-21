@@ -2,13 +2,55 @@ package controller
 
 import (
 	"net/http"
+	"os"
+	"regexp"
 	"strconv"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service"
 
+	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
 )
+
+var generatedImageDatePattern = regexp.MustCompile(`^\d{8}$`)
+var generatedImageFilenamePattern = regexp.MustCompile(`^[0-9]+-[0-9]{2}-[a-f0-9]+\.(jpg|jpeg|png|webp|gif|bin)$`)
+
+func GetGeneratedImageAsset(c *gin.Context) {
+	date := c.Param("date")
+	filename := c.Param("filename")
+	if !generatedImageDatePattern.MatchString(date) || !generatedImageFilenamePattern.MatchString(filename) {
+		c.Status(http.StatusNotFound)
+		return
+	}
+
+	session := sessions.Default(c)
+	userId, ok := session.Get("id").(int)
+	if !ok || userId <= 0 {
+		c.Status(http.StatusUnauthorized)
+		return
+	}
+	status, ok := session.Get("status").(int)
+	if !ok || status != common.UserStatusEnabled {
+		c.Status(http.StatusUnauthorized)
+		return
+	}
+	role, _ := session.Get("role").(int)
+
+	assetURL := service.GeneratedImageAssetURL(date, filename)
+	isAdmin := role >= common.RoleAdminUser
+	if !model.CanAccessGeneratedImageAsset(userId, isAdmin, assetURL) {
+		c.Status(http.StatusNotFound)
+		return
+	}
+	path := service.GeneratedImageAssetFilePath(date, filename)
+	if _, err := os.Stat(path); err != nil {
+		c.Status(http.StatusGone)
+		return
+	}
+	c.File(path)
+}
 
 func GetAllLogs(c *gin.Context) {
 	pageInfo := common.GetPageQuery(c)
