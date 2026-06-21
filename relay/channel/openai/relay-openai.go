@@ -552,6 +552,72 @@ func preConsumeUsage(ctx *gin.Context, info *relaycommon.RelayInfo, usage *dto.R
 	return err
 }
 
+func GeminiImageChatCompatibilityHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NewAPIError) {
+	defer service.CloseResponseBodyGracefully(resp)
+
+	responseBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, types.NewOpenAIError(err, types.ErrorCodeReadResponseBodyFailed, http.StatusInternalServerError)
+	}
+
+	var chatResp struct {
+		Choices []struct {
+			Message struct {
+				Images []struct {
+					ImageURL struct {
+						URL string `json:"url"`
+					} `json:"image_url"`
+				} `json:"images"`
+			} `json:"message"`
+		} `json:"choices"`
+		Usage dto.Usage `json:"usage"`
+	}
+	if err := common.Unmarshal(responseBody, &chatResp); err != nil {
+		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
+	}
+
+	imageResponse := dto.ImageResponse{
+		Created: common.GetTimestamp(),
+		Data:    make([]dto.ImageData, 0),
+	}
+	for _, choice := range chatResp.Choices {
+		for _, image := range choice.Message.Images {
+			url := strings.TrimSpace(image.ImageURL.URL)
+			if url == "" {
+				continue
+			}
+			if strings.HasPrefix(url, "data:") {
+				if comma := strings.Index(url, ","); comma >= 0 && comma+1 < len(url) {
+					imageResponse.Data = append(imageResponse.Data, dto.ImageData{B64Json: url[comma+1:]})
+					continue
+				}
+			}
+			imageResponse.Data = append(imageResponse.Data, dto.ImageData{Url: url})
+		}
+	}
+	if len(imageResponse.Data) == 0 {
+		logger.LogError(c, fmt.Sprintf("gemini image chat compatibility response has no images: %s", string(responseBody)))
+		return nil, types.NewOpenAIError(fmt.Errorf("no images generated"), types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
+	}
+
+	jsonResponse, err := common.Marshal(imageResponse)
+	if err != nil {
+		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
+	}
+	c.Writer.Header().Set("Content-Type", "application/json")
+	c.Writer.WriteHeader(resp.StatusCode)
+	_, _ = c.Writer.Write(jsonResponse)
+
+	usage := chatResp.Usage
+	if usage.TotalTokens == 0 {
+		const imageTokens = 258
+		usage.PromptTokens = imageTokens * len(imageResponse.Data)
+		usage.TotalTokens = usage.PromptTokens
+	}
+	applyUsagePostProcessing(info, &usage, responseBody)
+	return &usage, nil
+}
+
 func OpenaiHandlerWithUsage(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NewAPIError) {
 	defer service.CloseResponseBodyGracefully(resp)
 

@@ -95,6 +95,9 @@ func (a *Adaptor) Init(info *relaycommon.RelayInfo) {
 }
 
 func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
+	if shouldUseGeminiImageChatCompatibility(info) {
+		return fmt.Sprintf("%s/v1/chat/completions", info.ChannelBaseUrl), nil
+	}
 	if info.RelayMode == relayconstant.RelayModeRealtime {
 		if strings.HasPrefix(info.ChannelBaseUrl, "https://") {
 			baseUrl := strings.TrimPrefix(info.ChannelBaseUrl, "https://")
@@ -423,7 +426,49 @@ func (a *Adaptor) ConvertAudioRequest(c *gin.Context, info *relaycommon.RelayInf
 	}
 }
 
+func shouldUseGeminiImageChatCompatibility(info *relaycommon.RelayInfo) bool {
+	if info == nil || info.ChannelType != constant.ChannelTypeOpenAI {
+		return false
+	}
+	if info.RelayMode != relayconstant.RelayModeImagesGenerations && info.RelayMode != relayconstant.RelayModeImagesEdits {
+		return false
+	}
+	model := strings.ToLower(strings.TrimSpace(info.UpstreamModelName))
+	return strings.HasPrefix(model, "gemini-") && strings.Contains(model, "image")
+}
+
+func convertImageRequestToGeminiImageChat(request dto.ImageRequest, info *relaycommon.RelayInfo) dto.GeneralOpenAIRequest {
+	n := uint(1)
+	if request.N != nil && *request.N > 0 {
+		n = *request.N
+	}
+
+	prompt := request.Prompt
+	if n > 1 {
+		prompt = fmt.Sprintf("%s\n\nGenerate %d images.", prompt, n)
+	}
+	if request.Size != "" {
+		prompt = fmt.Sprintf("%s\n\nTarget image size: %s.", prompt, request.Size)
+	}
+	if request.Quality != "" {
+		prompt = fmt.Sprintf("%s\n\nTarget image quality: %s.", prompt, request.Quality)
+	}
+
+	return dto.GeneralOpenAIRequest{
+		Model: info.UpstreamModelName,
+		Messages: []dto.Message{
+			{
+				Role:    "user",
+				Content: prompt,
+			},
+		},
+	}
+}
+
 func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.ImageRequest) (any, error) {
+	if shouldUseGeminiImageChatCompatibility(info) {
+		return convertImageRequestToGeminiImageChat(request, info), nil
+	}
 	switch info.RelayMode {
 	case relayconstant.RelayModeImagesEdits:
 		if isJSONRequest(c) {
@@ -623,7 +668,11 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 	case relayconstant.RelayModeAudioTranscription:
 		err, usage = OpenaiSTTHandler(c, resp, info, a.ResponseFormat)
 	case relayconstant.RelayModeImagesGenerations, relayconstant.RelayModeImagesEdits:
-		usage, err = OpenaiHandlerWithUsage(c, info, resp)
+		if shouldUseGeminiImageChatCompatibility(info) {
+			usage, err = GeminiImageChatCompatibilityHandler(c, info, resp)
+		} else {
+			usage, err = OpenaiHandlerWithUsage(c, info, resp)
+		}
 	case relayconstant.RelayModeRerank:
 		usage, err = common_handler.RerankHandler(c, info, resp)
 	case relayconstant.RelayModeResponses:
