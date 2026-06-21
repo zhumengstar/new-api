@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -330,18 +331,23 @@ func generatedImageLogsToMidjourney(logs []*model.GeneratedImageLog) []*model.Mi
 			continue
 		}
 		imageURL := firstGeneratedImageURL(log.Other)
+		startTime := log.CreatedAt - int64(log.UseTime)
+		if startTime <= 0 || startTime > log.CreatedAt {
+			startTime = log.CreatedAt
+		}
 		items = append(items, &model.Midjourney{
 			Id:         log.Id,
 			Code:       1,
 			UserId:     log.UserId,
 			Action:     "IMAGE_GENERATION",
 			MjId:       fmt.Sprintf("generated-image-%d", log.Id),
-			Prompt:     log.Prompt,
+			Prompt:     generatedImagePrompt(log.Other, log.Prompt),
 			PromptEn:   log.ModelName,
 			SubmitTime: log.CreatedAt * 1000,
-			StartTime:  log.CreatedAt * 1000,
+			StartTime:  startTime * 1000,
 			FinishTime: log.CreatedAt * 1000,
 			ImageUrl:   imageURL,
+			ImageSize:  generatedImageSize(log.Other, log.Prompt),
 			Status:     "SUCCESS",
 			Progress:   "100%",
 			ChannelId:  log.ChannelId,
@@ -349,6 +355,80 @@ func generatedImageLogsToMidjourney(logs []*model.GeneratedImageLog) []*model.Mi
 		})
 	}
 	return items
+}
+
+func generatedImagePrompt(other string, fallback string) string {
+	otherMap, _ := common.StrToMap(other)
+	if prompt, ok := otherMap["prompt"].(string); ok && strings.TrimSpace(prompt) != "" {
+		return prompt
+	}
+	if prompt, ok := otherMap["image_prompt"].(string); ok && strings.TrimSpace(prompt) != "" {
+		return prompt
+	}
+	return fallback
+}
+
+func generatedImageSize(other string, content string) string {
+	otherMap, _ := common.StrToMap(other)
+	parts := make([]string, 0, 2)
+
+	if size, ok := otherMap["image_size"].(string); ok && strings.TrimSpace(size) != "" {
+		parts = append(parts, strings.TrimSpace(size))
+	} else if size := extractImageSizeFromContent(content); size != "" {
+		parts = append(parts, size)
+	}
+
+	if images, ok := otherMap["generated_images"].([]interface{}); ok {
+		for _, image := range images {
+			imageMap, ok := image.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			if fileSize := generatedImageFileSize(imageMap["size"]); fileSize != "" {
+				parts = append(parts, fileSize)
+				break
+			}
+		}
+	}
+
+	return strings.Join(parts, " / ")
+}
+
+func extractImageSizeFromContent(content string) string {
+	fields := strings.Fields(strings.ReplaceAll(content, ",", " "))
+	for i, field := range fields {
+		if strings.TrimSpace(field) == "大小" && i+1 < len(fields) {
+			return strings.TrimSpace(fields[i+1])
+		}
+	}
+	return ""
+}
+
+func generatedImageFileSize(value interface{}) string {
+	var size float64
+	switch v := value.(type) {
+	case float64:
+		size = v
+	case int:
+		size = float64(v)
+	case int64:
+		size = float64(v)
+	case json.Number:
+		parsed, err := v.Float64()
+		if err == nil {
+			size = parsed
+		}
+	}
+	if size <= 0 {
+		return ""
+	}
+	if size >= 1024*1024 {
+		return fmt.Sprintf("%.1f MB", size/(1024*1024))
+	}
+	if size >= 1024 {
+		return fmt.Sprintf("%.1f KB", size/1024)
+	}
+	return fmt.Sprintf("%.0f B", size)
 }
 
 func firstGeneratedImageURL(other string) string {

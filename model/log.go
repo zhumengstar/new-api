@@ -63,6 +63,7 @@ type GeneratedImageLog struct {
 	Prompt    string `json:"prompt"`
 	ChannelId int    `json:"channel_id"`
 	Quota     int    `json:"quota"`
+	UseTime   int    `json:"use_time"`
 	Other     string `json:"other"`
 }
 
@@ -112,7 +113,7 @@ func CanAccessGeneratedImageAsset(userId int, isAdmin bool, assetURL string) boo
 func GetAllGeneratedImageLogs(startIdx int, num int, queryParams TaskQueryParams) ([]*GeneratedImageLog, int64) {
 	var logs []*GeneratedImageLog
 	query := LOG_DB.Model(&Log{}).
-		Select("id, user_id, created_at, model_name, content as prompt, channel_id, quota, other").
+		Select("id, user_id, created_at, model_name, content as prompt, channel_id, quota, use_time, other").
 		Where("type = ? AND other LIKE ?", LogTypeConsume, "%generated_images%")
 
 	if queryParams.ChannelID != "" {
@@ -143,7 +144,7 @@ func GetAllGeneratedImageLogs(startIdx int, num int, queryParams TaskQueryParams
 func GetAllUserGeneratedImageLogs(userId int, startIdx int, num int, queryParams TaskQueryParams) ([]*GeneratedImageLog, int64) {
 	var logs []*GeneratedImageLog
 	query := LOG_DB.Model(&Log{}).
-		Select("id, user_id, created_at, model_name, content as prompt, channel_id, quota, other").
+		Select("id, user_id, created_at, model_name, content as prompt, channel_id, quota, use_time, other").
 		Where("user_id = ? AND type = ? AND other LIKE ?", userId, LogTypeConsume, "%generated_images%")
 
 	if queryParams.MjID != "" {

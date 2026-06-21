@@ -319,6 +319,23 @@ func usageSemanticFromUsage(relayInfo *relaycommon.RelayInfo, usage *dto.Usage) 
 	return "openai"
 }
 
+func injectImageRequestLogInfo(other map[string]interface{}, request dto.Request) {
+	imageRequest, ok := request.(*dto.ImageRequest)
+	if !ok || imageRequest == nil {
+		return
+	}
+
+	if prompt := strings.TrimSpace(imageRequest.Prompt); prompt != "" {
+		other["prompt"] = prompt
+	}
+	if size := strings.TrimSpace(imageRequest.Size); size != "" {
+		other["image_size"] = size
+	}
+	if quality := strings.TrimSpace(imageRequest.Quality); quality != "" {
+		other["image_quality"] = quality
+	}
+}
+
 func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage *dto.Usage, extraContent []string) {
 	originUsage := usage
 	if usage == nil {
@@ -460,6 +477,7 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 	}
 	if generatedImages := GetGeneratedImageLogAssets(ctx); len(generatedImages) > 0 {
 		other["generated_images"] = generatedImages
+		injectImageRequestLogInfo(other, relayInfo.Request)
 	}
 
 	model.RecordConsumeLog(ctx, relayInfo.UserId, model.RecordConsumeLogParams{

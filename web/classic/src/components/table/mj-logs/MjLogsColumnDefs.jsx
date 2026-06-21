@@ -343,7 +343,7 @@ export const getMjLogsColumns = ({
       title: t('花费时间'),
       dataIndex: 'finish_time',
       render: (finish, record) => {
-        return renderDuration(record.submit_time, finish, t);
+        return renderDuration(record.start_time || record.submit_time, finish, t);
       },
     },
     {
@@ -419,7 +419,7 @@ export const getMjLogsColumns = ({
                 percent={text ? parseInt(text.replace('%', '')) : 0}
                 showInfo={true}
                 aria-label='drawing progress'
-                style={{ minWidth: '160px' }}
+                style={{ width: 104, minWidth: 104 }}
               />
             }
           </div>
@@ -476,6 +476,21 @@ export const getMjLogsColumns = ({
       },
     },
     {
+      key: COLUMN_KEYS.IMAGE_SIZE,
+      title: t('图片大小'),
+      dataIndex: 'image_size',
+      render: (text, record, index) => {
+        if (!text) {
+          return t('无');
+        }
+        return (
+          <Tag color='blue' shape='circle'>
+            {text}
+          </Tag>
+        );
+      },
+    },
+    {
       key: COLUMN_KEYS.PROMPT,
       title: 'Prompt',
       dataIndex: 'prompt',
@@ -487,7 +502,7 @@ export const getMjLogsColumns = ({
         return (
           <Typography.Text
             ellipsis={{ showTooltip: true }}
-            style={{ width: 100 }}
+            style={{ width: 180 }}
             onClick={() => {
               openContentModal(text);
             }}
