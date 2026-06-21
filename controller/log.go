@@ -49,6 +49,10 @@ func GetGeneratedImageAsset(c *gin.Context) {
 		c.Status(http.StatusGone)
 		return
 	}
+	if c.Query("download") == "1" || c.Query("download") == "true" {
+		c.FileAttachment(path, filename)
+		return
+	}
 	c.File(path)
 }
 

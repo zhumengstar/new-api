@@ -52,29 +52,45 @@ const renderGeneratedImages = (images, t) => {
   }
   return (
     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, maxWidth: 640 }}>
-      {validImages.map((image, index) => (
-        <a
-          key={`${image.url}-${index}`}
-          href={image.url}
-          target='_blank'
-          rel='noreferrer'
-          title={image.expires_at ? `${t('有效期至')} ${timestamp2string(image.expires_at)}` : t('查看图片')}
-          style={{ display: 'block' }}
-        >
-          <img
-            src={image.url}
-            alt={t('生成图片')}
-            style={{
-              width: 120,
-              height: 120,
-              objectFit: 'cover',
-              borderRadius: 6,
-              border: '1px solid var(--semi-color-border)',
-              background: 'var(--semi-color-fill-0)',
-            }}
-          />
-        </a>
-      ))}
+      {validImages.map((image, index) => {
+        const downloadUrl = `${image.url}${image.url.includes('?') ? '&' : '?'}download=1`;
+        return (
+          <div key={`${image.url}-${index}`} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <a
+              href={image.url}
+              target='_blank'
+              rel='noreferrer'
+              title={image.expires_at ? `${t('有效期至')} ${timestamp2string(image.expires_at)}` : t('查看图片')}
+              style={{ display: 'block' }}
+            >
+              <img
+                src={image.url}
+                alt={t('生成图片')}
+                style={{
+                  width: 120,
+                  height: 120,
+                  objectFit: 'cover',
+                  borderRadius: 6,
+                  border: '1px solid var(--semi-color-border)',
+                  background: 'var(--semi-color-fill-0)',
+                }}
+              />
+            </a>
+            <a
+              href={downloadUrl}
+              download
+              style={{
+                fontSize: 12,
+                color: 'var(--semi-color-primary)',
+                textAlign: 'center',
+                lineHeight: '18px',
+              }}
+            >
+              {t('下载原图')}
+            </a>
+          </div>
+        );
+      })}
     </div>
   );
 };
