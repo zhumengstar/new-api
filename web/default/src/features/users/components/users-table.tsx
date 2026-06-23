@@ -20,6 +20,7 @@ import { useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { getRouteApi } from '@tanstack/react-router'
 import {
+  type OnChangeFn,
   type SortingState,
   type VisibilityState,
   getCoreRowModel,
@@ -62,8 +63,13 @@ export function UsersTable() {
   const columns = useUsersColumns()
   const { refreshTrigger } = useUsers()
   const isMobile = useMediaQuery('(max-width: 640px)')
+  const search = route.useSearch()
+  const navigate = route.useNavigate()
   const [rowSelection, setRowSelection] = useState({})
-  const [sorting, setSorting] = useState<SortingState>([])
+  const [sorting, setSorting] = useState<SortingState>(() => {
+    if (!search.sortBy || !search.sortOrder) return []
+    return [{ id: search.sortBy, desc: search.sortOrder === 'desc' }]
+  })
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({})
 
   const {
@@ -75,8 +81,8 @@ export function UsersTable() {
     onPaginationChange,
     ensurePageInRange,
   } = useTableUrlState({
-    search: route.useSearch(),
-    navigate: route.useNavigate(),
+    search,
+    navigate,
     pagination: { defaultPage: 1, defaultPageSize: isMobile ? 10 : 20 },
     globalFilter: { enabled: true, key: 'filter' },
     columnFilters: [
@@ -97,6 +103,38 @@ export function UsersTable() {
     (columnFilters.find((filter) => filter.id === 'group')?.value as string) ??
     ''
 
+  useEffect(() => {
+    const nextSorting: SortingState =
+      search.sortBy && search.sortOrder
+        ? [{ id: search.sortBy, desc: search.sortOrder === 'desc' }]
+        : []
+    const current = sorting[0]
+    const next = nextSorting[0]
+    if (current?.id === next?.id && current?.desc === next?.desc) return
+    setSorting(nextSorting)
+  }, [search.sortBy, search.sortOrder, sorting])
+
+  const onSortingChange: OnChangeFn<SortingState> = (updater) => {
+    const next = typeof updater === 'function' ? updater(sorting) : updater
+    const primary = next[0]
+    const sortBy =
+      primary?.id === 'created_at' || primary?.id === 'last_login_at'
+        ? primary.id
+        : undefined
+    const sortOrder = sortBy ? (primary.desc ? 'desc' : 'asc') : undefined
+    const nextSorting = sortBy ? [{ id: sortBy, desc: sortOrder === 'desc' }] : []
+
+    setSorting(nextSorting)
+    navigate({
+      search: (prev) => ({
+        ...prev,
+        page: undefined,
+        sortBy,
+        sortOrder,
+      }),
+    })
+  }
+
   // Fetch data with React Query
   const { data, isLoading, isFetching } = useQuery({
     queryKey: [
@@ -107,15 +145,23 @@ export function UsersTable() {
       statusFilter,
       roleFilter,
       groupFilter,
+      sorting,
       refreshTrigger,
     ],
     queryFn: async () => {
       const hasFilter = globalFilter?.trim()
       const hasColumnFilter =
         statusFilter.length > 0 || roleFilter.length > 0 || Boolean(groupFilter)
+      const primarySort = sorting[0]
+      const sortBy =
+        primarySort?.id === 'created_at' || primarySort?.id === 'last_login_at'
+          ? primarySort.id
+          : undefined
       const params = {
         p: pagination.pageIndex + 1,
         page_size: pagination.pageSize,
+        sort_by: sortBy,
+        sort_order: sortBy ? (primarySort.desc ? 'desc' : 'asc') : undefined,
       }
 
       const result =
@@ -159,7 +205,7 @@ export function UsersTable() {
     },
     enableRowSelection: true,
     onRowSelectionChange: setRowSelection,
-    onSortingChange: setSorting,
+    onSortingChange,
     onColumnVisibilityChange: setColumnVisibility,
     globalFilterFn: (row, _columnId, filterValue) => {
       const searchValue = String(filterValue).toLowerCase()
@@ -183,6 +229,7 @@ export function UsersTable() {
     onPaginationChange,
     onGlobalFilterChange,
     onColumnFiltersChange,
+    manualSorting: true,
     manualPagination: true,
     pageCount: Math.ceil((data?.total || 0) / pagination.pageSize),
   })
