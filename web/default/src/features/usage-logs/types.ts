@@ -158,6 +158,12 @@ export interface LogOtherData {
   audio_input_price?: number
   image_generation_call?: boolean
   image_generation_call_price?: number
+  generated_images?: Array<{
+    url: string
+    size?: number
+    mime_type?: string
+    expires_at?: number
+  }>
   is_system_prompt_overwritten?: boolean
   po?: string[]
   billing_source?: string

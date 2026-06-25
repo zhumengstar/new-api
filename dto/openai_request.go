@@ -277,6 +277,7 @@ func (r *GeneralOpenAIRequest) ParseInput() []string {
 type Message struct {
 	Role             string          `json:"role"`
 	Content          any             `json:"content"`
+	Images           []MessageImage  `json:"images,omitempty"`
 	Name             *string         `json:"name,omitempty"`
 	Prefix           *bool           `json:"prefix,omitempty"`
 	ReasoningContent *string         `json:"reasoning_content,omitempty"`
@@ -401,6 +402,12 @@ type MessageImageUrl struct {
 	Url      string `json:"url"`
 	Detail   string `json:"detail,omitempty"`
 	MimeType string
+}
+
+type MessageImage struct {
+	Type     string          `json:"type"`
+	ImageUrl MessageImageUrl `json:"image_url"`
+	Index    int             `json:"index,omitempty"`
 }
 
 func (m *MessageImageUrl) IsRemoteImage() bool {

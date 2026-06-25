@@ -119,6 +119,7 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 	var responseTextBuilder strings.Builder
 	var toolCount int
 	var usage = &dto.Usage{}
+	var streamItems []string // store stream items
 	var lastStreamData string
 	var secondLastStreamData string // 存储倒数第二个stream data，用于音频模型
 
@@ -139,10 +140,7 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 			}
 
 			lastStreamData = data
-			if err := processTokenData(info.RelayMode, data, &responseTextBuilder, &toolCount); err != nil {
-				logger.LogError(c, "error processing stream token data: "+err.Error())
-				sr.Error(err)
-			}
+			streamItems = append(streamItems, data)
 		}
 	})
 
@@ -157,9 +155,9 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 			containStreamUsage = true
 
 			if common.DebugEnabled {
-				logger.LogDebug(c, "Audio model usage extracted from second last SSE: PromptTokens=%d, CompletionTokens=%d, TotalTokens=%d, InputTokens=%d, OutputTokens=%d",
+				logger.LogDebug(c, fmt.Sprintf("Audio model usage extracted from second last SSE: PromptTokens=%d, CompletionTokens=%d, TotalTokens=%d, InputTokens=%d, OutputTokens=%d",
 					usage.PromptTokens, usage.CompletionTokens, usage.TotalTokens,
-					usage.InputTokens, usage.OutputTokens)
+					usage.InputTokens, usage.OutputTokens))
 			}
 		}
 	}
@@ -175,6 +173,11 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 		if shouldSendLastResp {
 			_ = sendStreamData(c, info, lastStreamData, info.ChannelSetting.ForceFormat, info.ChannelSetting.ThinkingToContent)
 		}
+	}
+
+	// 处理token计算
+	if err := processTokenData(info.RelayMode, strings.Join(streamItems, "\n"), &responseTextBuilder, &toolCount); err != nil {
+		logger.LogError(c, "error processing tokens: "+err.Error())
 	}
 
 	if !containStreamUsage {
@@ -197,7 +200,9 @@ func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Respo
 	if err != nil {
 		return nil, types.NewOpenAIError(err, types.ErrorCodeReadResponseBodyFailed, http.StatusInternalServerError)
 	}
-	logger.LogDebug(c, "upstream response body: %s", responseBody)
+	if common.DebugEnabled {
+		println("upstream response body:", string(responseBody))
+	}
 	// Unmarshal to simpleResponse
 	if info.ChannelType == constant.ChannelTypeOpenRouter && info.ChannelOtherSettings.IsOpenRouterEnterprise() {
 		// 尝试解析为 openrouter enterprise
@@ -253,6 +258,7 @@ func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Respo
 	}
 
 	applyUsagePostProcessing(info, &simpleResponse.Usage, responseBody)
+	recordOpenAIChatGeneratedImages(c, info, &simpleResponse)
 
 	switch info.RelayFormat {
 	case types.RelayFormatOpenAI:
@@ -292,6 +298,23 @@ func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Respo
 	service.IOCopyBytesGracefully(c, resp, responseBody)
 
 	return &simpleResponse.Usage, nil
+}
+
+func recordOpenAIChatGeneratedImages(c *gin.Context, info *relaycommon.RelayInfo, response *dto.OpenAITextResponse) {
+	if response == nil {
+		return
+	}
+	images := make([]dto.ImageData, 0)
+	for _, choice := range response.Choices {
+		for _, image := range choice.Message.Images {
+			url := image.ImageUrl.Url
+			if !strings.HasPrefix(url, "data:image/") {
+				continue
+			}
+			images = append(images, dto.ImageData{B64Json: url})
+		}
+	}
+	service.RecordGeneratedImages(c, info, images, &response.Usage)
 }
 
 func streamTTSResponse(c *gin.Context, resp *http.Response) {
@@ -552,73 +575,6 @@ func preConsumeUsage(ctx *gin.Context, info *relaycommon.RelayInfo, usage *dto.R
 	return err
 }
 
-func GeminiImageChatCompatibilityHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NewAPIError) {
-	defer service.CloseResponseBodyGracefully(resp)
-
-	responseBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, types.NewOpenAIError(err, types.ErrorCodeReadResponseBodyFailed, http.StatusInternalServerError)
-	}
-
-	var chatResp struct {
-		Choices []struct {
-			Message struct {
-				Images []struct {
-					ImageURL struct {
-						URL string `json:"url"`
-					} `json:"image_url"`
-				} `json:"images"`
-			} `json:"message"`
-		} `json:"choices"`
-		Usage dto.Usage `json:"usage"`
-	}
-	if err := common.Unmarshal(responseBody, &chatResp); err != nil {
-		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
-	}
-
-	imageResponse := dto.ImageResponse{
-		Created: common.GetTimestamp(),
-		Data:    make([]dto.ImageData, 0),
-	}
-	for _, choice := range chatResp.Choices {
-		for _, image := range choice.Message.Images {
-			url := strings.TrimSpace(image.ImageURL.URL)
-			if url == "" {
-				continue
-			}
-			if strings.HasPrefix(url, "data:") {
-				if comma := strings.Index(url, ","); comma >= 0 && comma+1 < len(url) {
-					imageResponse.Data = append(imageResponse.Data, dto.ImageData{B64Json: url[comma+1:]})
-					continue
-				}
-			}
-			imageResponse.Data = append(imageResponse.Data, dto.ImageData{Url: url})
-		}
-	}
-	if len(imageResponse.Data) == 0 {
-		logger.LogError(c, fmt.Sprintf("gemini image chat compatibility response has no images: %s", string(responseBody)))
-		return nil, types.NewOpenAIError(fmt.Errorf("no images generated"), types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
-	}
-	service.AttachGeneratedImageLogAssets(c, imageResponse.Data)
-
-	jsonResponse, err := common.Marshal(imageResponse)
-	if err != nil {
-		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
-	}
-	c.Writer.Header().Set("Content-Type", "application/json")
-	c.Writer.WriteHeader(resp.StatusCode)
-	_, _ = c.Writer.Write(jsonResponse)
-
-	usage := chatResp.Usage
-	if usage.TotalTokens == 0 {
-		const imageTokens = 258
-		usage.PromptTokens = imageTokens * len(imageResponse.Data)
-		usage.TotalTokens = usage.PromptTokens
-	}
-	applyUsagePostProcessing(info, &usage, responseBody)
-	return &usage, nil
-}
-
 func OpenaiHandlerWithUsage(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NewAPIError) {
 	defer service.CloseResponseBodyGracefully(resp)
 
@@ -632,8 +588,6 @@ func OpenaiHandlerWithUsage(c *gin.Context, info *relaycommon.RelayInfo, resp *h
 	if err != nil {
 		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
 	}
-
-	service.AttachGeneratedImageLogAssetsFromResponse(c, responseBody)
 
 	// 写入新的 response body
 	service.IOCopyBytesGracefully(c, resp, responseBody)
@@ -696,6 +650,47 @@ func applyUsagePostProcessing(info *relaycommon.RelayInfo, usage *dto.Usage, res
 				usage.PromptTokensDetails.CachedTokens = cachedTokens
 			}
 		}
+	}
+
+	// 防御：上游 prompt_tokens 与本地估算严重不符时（通常意味着上游对超大
+	// prompt 做了静默截断/stub），用本地估算覆盖，避免按 6 token 计费 200k 输入。
+	// 仅当上游确实返回了一个明显偏小的 PromptTokens 时才触发，不影响正常上游。
+	guardPromptUndercount(info, usage)
+}
+
+// guardPromptUndercount overrides usage.PromptTokens with the local pre-request
+// tokenizer estimate when the upstream-reported value is suspiciously small.
+// It records the original value into usage.UsageSource style fields are kept
+// untouched; the caller side records audit info via other map at log time.
+func guardPromptUndercount(info *relaycommon.RelayInfo, usage *dto.Usage) {
+	if info == nil || usage == nil {
+		return
+	}
+	estimate := info.GetEstimatePromptTokens()
+	if estimate <= 0 {
+		return
+	}
+	upstream := usage.PromptTokens
+	// require all of: upstream>0, estimate>=1000 (only guard against large-prompt
+	// truncation), upstream<30% of estimate, absolute gap>500 tokens.
+	if upstream <= 0 {
+		return
+	}
+	if estimate < 1000 {
+		return
+	}
+	if upstream*10 >= estimate*3 { // upstream/estimate >= 0.3
+		return
+	}
+	if estimate-upstream <= 500 {
+		return
+	}
+	// override prompt tokens & input tokens with the local estimate; cache and
+	// completion fields are left alone (those still reflect upstream truth).
+	usage.PromptUndercountUpstream = upstream
+	usage.PromptTokens = estimate
+	if usage.InputTokens > 0 {
+		usage.InputTokens = estimate
 	}
 }
 

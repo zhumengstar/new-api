@@ -391,6 +391,49 @@ function TokenBreakdown(props: { log: UsageLog; other: LogOtherData }) {
   )
 }
 
+function GeneratedImagesSection(props: { other: LogOtherData }) {
+  const { t } = useTranslation()
+  const images = props.other.generated_images?.filter((image) => image.url)
+
+  if (!images || images.length === 0) return null
+
+  return (
+    <DetailSection label={t('Generated Images')}>
+      <div className='grid grid-cols-2 gap-2 sm:grid-cols-3'>
+        {images.map((image, idx) => (
+          <a
+            key={`${image.url}-${idx}`}
+            href={image.url}
+            target='_blank'
+            rel='noreferrer'
+            className='bg-muted/50 group block overflow-hidden rounded-md border'
+            title={image.url}
+          >
+            <div className='aspect-video overflow-hidden'>
+              <img
+                src={image.url}
+                alt={t('Generated image')}
+                className='h-full w-full object-cover transition-transform group-hover:scale-105'
+                loading='lazy'
+              />
+            </div>
+            <div className='space-y-0.5 p-1.5'>
+              <div className='text-foreground truncate text-xs'>
+                {t('Image')} {idx + 1}
+              </div>
+              {image.mime_type && (
+                <div className='text-muted-foreground truncate text-[10px]'>
+                  {image.mime_type}
+                </div>
+              )}
+            </div>
+          </a>
+        ))}
+      </div>
+    </DetailSection>
+  )
+}
+
 interface DetailsDialogProps {
   log: UsageLog
   isAdmin: boolean
@@ -845,6 +888,10 @@ export function DetailsDialog(props: DetailsDialogProps) {
               </DetailSection>
             )}
 
+            {other?.generated_images && (
+              <GeneratedImagesSection other={other} />
+            )}
+
             {/* Token breakdown (for consume/error types with token data) */}
             {isDisplayableType(props.log.type) && other && (
               <TokenBreakdown log={props.log} other={other} />
@@ -985,34 +1032,37 @@ export function DetailsDialog(props: DetailsDialogProps) {
               </DetailSection>
             )}
 
-            {/* Param override */}
-            {other?.po && Array.isArray(other.po) && other.po.length > 0 && (
-              <DetailSection
-                icon={<Settings2 className='size-3.5' aria-hidden='true' />}
-                label={`${t('Param Override')} (${other.po.length})`}
-              >
-                {other.po.filter(Boolean).map((line, idx) => {
-                  const parsed = parseAuditLine(line)
-                  if (!parsed) return null
-                  return (
-                    <div
-                      key={idx}
-                      className='bg-background/60 flex min-w-0 flex-col gap-1.5 rounded border p-2 sm:flex-row sm:items-start sm:gap-2'
-                    >
-                      <StatusBadge
-                        variant='neutral'
-                        label={getParamOverrideActionLabel(parsed.action, t)}
-                        className='shrink-0 font-medium'
-                        copyable={false}
-                      />
-                      <span className='min-w-0 font-mono text-[11px] leading-relaxed break-all sm:break-words'>
-                        {parsed.content}
-                      </span>
-                    </div>
-                  )
-                })}
-              </DetailSection>
-            )}
+            {/* Param override (admin only) */}
+            {props.isAdmin &&
+              other?.po &&
+              Array.isArray(other.po) &&
+              other.po.length > 0 && (
+                <DetailSection
+                  icon={<Settings2 className='size-3.5' aria-hidden='true' />}
+                  label={`${t('Param Override')} (${other.po.length})`}
+                >
+                  {other.po.filter(Boolean).map((line, idx) => {
+                    const parsed = parseAuditLine(line)
+                    if (!parsed) return null
+                    return (
+                      <div
+                        key={idx}
+                        className='bg-background/60 flex min-w-0 flex-col gap-1.5 rounded border p-2 sm:flex-row sm:items-start sm:gap-2'
+                      >
+                        <StatusBadge
+                          variant='neutral'
+                          label={getParamOverrideActionLabel(parsed.action, t)}
+                          className='shrink-0 font-medium'
+                          copyable={false}
+                        />
+                        <span className='min-w-0 font-mono text-[11px] leading-relaxed break-all sm:break-words'>
+                          {parsed.content}
+                        </span>
+                      </div>
+                    )
+                  })}
+                </DetailSection>
+              )}
 
             {/* Content */}
             {details && (

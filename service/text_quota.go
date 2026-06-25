@@ -30,6 +30,8 @@ type textQuotaSummary struct {
 	CacheCreationTokens5m    int
 	CacheCreationTokens1h    int
 	ImageTokens              int
+	ImageInputTokens         int
+	ImageOutputTokens        int
 	AudioTokens              int
 	ModelName                string
 	TokenName                string
@@ -189,7 +191,9 @@ func calculateTextQuotaSummary(ctx *gin.Context, relayInfo *relaycommon.RelayInf
 	summary.CacheCreationTokens = usage.PromptTokensDetails.CachedCreationTokens
 	summary.CacheCreationTokens5m = usage.ClaudeCacheCreation5mTokens
 	summary.CacheCreationTokens1h = usage.ClaudeCacheCreation1hTokens
-	summary.ImageTokens = usage.PromptTokensDetails.ImageTokens
+	summary.ImageInputTokens = usage.PromptTokensDetails.ImageTokens
+	summary.ImageOutputTokens = usage.CompletionTokenDetails.ImageTokens
+	summary.ImageTokens = summary.ImageInputTokens + summary.ImageOutputTokens
 	summary.AudioTokens = usage.PromptTokensDetails.AudioTokens
 	legacyClaudeDerived := isLegacyClaudeDerivedOpenAIUsage(relayInfo, usage)
 	isOpenRouterClaudeBilling := relayInfo.ChannelMeta != nil &&
@@ -210,7 +214,7 @@ func calculateTextQuotaSummary(ctx *gin.Context, relayInfo *relaycommon.RelayInf
 
 	dPromptTokens := decimal.NewFromInt(int64(summary.PromptTokens))
 	dCacheTokens := decimal.NewFromInt(int64(summary.CacheTokens))
-	dImageTokens := decimal.NewFromInt(int64(summary.ImageTokens))
+	dImageTokens := decimal.NewFromInt(int64(summary.ImageInputTokens))
 	dAudioTokens := decimal.NewFromInt(int64(summary.AudioTokens))
 	dCompletionTokens := decimal.NewFromInt(int64(summary.CompletionTokens))
 	dCachedCreationTokens := decimal.NewFromInt(int64(summary.CacheCreationTokens))
@@ -319,23 +323,6 @@ func usageSemanticFromUsage(relayInfo *relaycommon.RelayInfo, usage *dto.Usage) 
 	return "openai"
 }
 
-func injectImageRequestLogInfo(other map[string]interface{}, request dto.Request) {
-	imageRequest, ok := request.(*dto.ImageRequest)
-	if !ok || imageRequest == nil {
-		return
-	}
-
-	if prompt := strings.TrimSpace(imageRequest.Prompt); prompt != "" {
-		other["prompt"] = prompt
-	}
-	if size := strings.TrimSpace(imageRequest.Size); size != "" {
-		other["image_size"] = size
-	}
-	if quality := strings.TrimSpace(imageRequest.Quality); quality != "" {
-		other["image_quality"] = quality
-	}
-}
-
 func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage *dto.Usage, extraContent []string) {
 	originUsage := usage
 	if usage == nil {
@@ -421,7 +408,8 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 	if summary.ImageTokens != 0 {
 		other["image"] = true
 		other["image_ratio"] = summary.ImageRatio
-		other["image_output"] = summary.ImageTokens
+		other["image_input"] = summary.ImageInputTokens
+		other["image_output"] = summary.ImageOutputTokens
 	}
 	if summary.WebSearchCallCount > 0 {
 		other["web_search"] = true
@@ -445,6 +433,9 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 	if summary.ImageGenerationCallPrice > 0 {
 		other["image_generation_call"] = true
 		other["image_generation_call_price"] = summary.ImageGenerationCallPrice
+	}
+	if generatedImages, exists := ctx.Get("generated_images"); exists {
+		other["generated_images"] = generatedImages
 	}
 	if summary.CacheCreationTokens > 0 {
 		other["cache_creation_tokens"] = summary.CacheCreationTokens
@@ -472,12 +463,17 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 		// prompt/cache fields here, otherwise old upstream payloads may be double-counted.
 		other["input_tokens_total"] = usage.InputTokens
 	}
+	if usage != nil && usage.PromptUndercountUpstream > 0 {
+		// upstream reported an implausibly small prompt_tokens compared to local
+		// estimate (typical of upstream prompt truncation/stub responses); we
+		// already overrode usage.PromptTokens with the local estimate, here we
+		// surface both the override flag and the original upstream value for
+		// audit/debugging from the usage log UI.
+		other["prompt_tokens_undercount"] = true
+		other["upstream_prompt_tokens"] = usage.PromptUndercountUpstream
+	}
 	if tieredBillingApplied {
 		InjectTieredBillingInfo(other, relayInfo, tieredResult)
-	}
-	if generatedImages := GetGeneratedImageLogAssets(ctx); len(generatedImages) > 0 {
-		other["generated_images"] = generatedImages
-		injectImageRequestLogInfo(other, relayInfo.Request)
 	}
 
 	model.RecordConsumeLog(ctx, relayInfo.UserId, model.RecordConsumeLogParams{
