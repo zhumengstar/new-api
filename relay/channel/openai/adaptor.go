@@ -164,6 +164,9 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 		url = strings.Replace(url, "{model}", info.UpstreamModelName, -1)
 		return url, nil
 	default:
+		if shouldUseGeminiImageChatCompatibility(info) {
+			return fmt.Sprintf("%s/v1/chat/completions", info.ChannelBaseUrl), nil
+		}
 		if (info.RelayFormat == types.RelayFormatClaude || info.RelayFormat == types.RelayFormatGemini) &&
 			info.RelayMode != relayconstant.RelayModeResponses &&
 			info.RelayMode != relayconstant.RelayModeResponsesCompact {
@@ -501,6 +504,19 @@ func (a *Adaptor) ConvertAudioRequest(c *gin.Context, info *relaycommon.RelayInf
 }
 
 func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.ImageRequest) (any, error) {
+	if shouldUseGeminiImageChatCompatibility(info) {
+		stream := false
+		return &dto.GeneralOpenAIRequest{
+			Model: request.Model,
+			Messages: []dto.Message{
+				{
+					Role:    "user",
+					Content: request.Prompt,
+				},
+			},
+			Stream: &stream,
+		}, nil
+	}
 	switch info.RelayMode {
 	case relayconstant.RelayModeImagesEdits:
 		if isJSONRequest(c) {
@@ -703,7 +719,9 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 	case relayconstant.RelayModeAudioTranscription:
 		err, usage = OpenaiSTTHandler(c, resp, info, a.ResponseFormat)
 	case relayconstant.RelayModeImagesGenerations, relayconstant.RelayModeImagesEdits:
-		if info.IsStream {
+		if shouldUseGeminiImageChatCompatibility(info) {
+			usage, err = GeminiImageChatCompatibilityHandler(c, info, resp)
+		} else if info.IsStream {
 			usage, err = OpenaiImageStreamHandler(c, info, resp)
 		} else {
 			usage, err = OpenaiImageHandler(c, info, resp)
@@ -726,6 +744,20 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 		}
 	}
 	return
+}
+
+func shouldUseGeminiImageChatCompatibility(info *relaycommon.RelayInfo) bool {
+	if info == nil || info.ChannelMeta == nil || info.ChannelType != constant.ChannelTypeOpenAI {
+		return false
+	}
+	if info.RelayMode != relayconstant.RelayModeImagesGenerations && info.RelayMode != relayconstant.RelayModeImagesEdits {
+		return false
+	}
+	modelName := strings.ToLower(info.UpstreamModelName)
+	if modelName == "" {
+		modelName = strings.ToLower(info.OriginModelName)
+	}
+	return strings.HasPrefix(modelName, "gemini") && strings.Contains(modelName, "image")
 }
 
 func (a *Adaptor) GetModelList() []string {

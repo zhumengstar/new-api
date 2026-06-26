@@ -7,6 +7,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 )
 
 func TestConvertOpenAIRequestSanitizesOpenAICompatibleGeminiExtras(t *testing.T) {
@@ -110,6 +111,45 @@ func TestConvertOpenAIRequestDoesNotSanitizeNonGeminiCompatibleModel(t *testing.
 	}
 	if got.ToolChoice != "auto" {
 		t.Fatalf("ToolChoice should be preserved for non-Gemini models")
+	}
+}
+
+func TestGeminiImageCompatibilityUsesChatCompletions(t *testing.T) {
+	info := &relaycommon.RelayInfo{
+		RelayMode: relayconstant.RelayModeImagesGenerations,
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ChannelType:       constant.ChannelTypeOpenAI,
+			ChannelBaseUrl:    "http://example.test",
+			UpstreamModelName: "gemini-3.1-flash-image-4k",
+		},
+	}
+	adaptor := &Adaptor{}
+
+	url, err := adaptor.GetRequestURL(info)
+	if err != nil {
+		t.Fatalf("GetRequestURL returned error: %v", err)
+	}
+	if url != "http://example.test/v1/chat/completions" {
+		t.Fatalf("url = %q, want chat completions", url)
+	}
+
+	converted, err := adaptor.ConvertImageRequest(nil, info, dto.ImageRequest{
+		Model:  "gemini-3.1-flash-image-4k",
+		Prompt: "draw a cat",
+		Size:   "1024x1024",
+	})
+	if err != nil {
+		t.Fatalf("ConvertImageRequest returned error: %v", err)
+	}
+	chatReq := converted.(*dto.GeneralOpenAIRequest)
+	if chatReq.Model != "gemini-3.1-flash-image-4k" {
+		t.Fatalf("model = %q", chatReq.Model)
+	}
+	if len(chatReq.Messages) != 1 || chatReq.Messages[0].Role != "user" || chatReq.Messages[0].Content != "draw a cat" {
+		t.Fatalf("unexpected messages: %#v", chatReq.Messages)
+	}
+	if chatReq.Stream == nil || *chatReq.Stream {
+		t.Fatalf("stream should be explicitly false")
 	}
 }
 
