@@ -348,8 +348,82 @@ func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayIn
 			}
 		}
 	}
+	sanitizeOpenAICompatibleGeminiRequest(info, request)
 
 	return request, nil
+}
+
+func sanitizeOpenAICompatibleGeminiRequest(info *relaycommon.RelayInfo, request *dto.GeneralOpenAIRequest) {
+	if info == nil || request == nil || info.ChannelType != constant.ChannelTypeOpenAI {
+		return
+	}
+	modelName := strings.ToLower(info.UpstreamModelName)
+	if modelName == "" {
+		modelName = strings.ToLower(request.Model)
+	}
+	if !strings.HasPrefix(modelName, "gemini") {
+		return
+	}
+
+	// Some OpenAI-compatible Gemini proxies reject newer OpenAI-only extension
+	// fields with "Request contains an invalid argument". Keep the common chat
+	// parameters and drop fields that are not part of the Gemini-compatible
+	// chat surface.
+	request.ResponseFormat = nil
+	request.ParallelTooCalls = nil
+	request.ToolChoice = nil
+	request.FunctionCall = nil
+	request.ServiceTier = nil
+	request.LogProbs = nil
+	request.TopLogProbs = nil
+	request.Modalities = nil
+	request.Audio = nil
+	request.SafetyIdentifier = nil
+	request.Store = nil
+	request.PromptCacheKey = ""
+	request.PromptCacheRetention = nil
+	request.Metadata = nil
+	request.Prediction = nil
+	request.SearchParameters = nil
+	request.WebSearchOptions = nil
+	request.Usage = nil
+	request.Reasoning = nil
+	request.ReasoningEffort = ""
+	request.THINKING = nil
+	for i := range request.Messages {
+		request.Messages[i].Name = nil
+		request.Messages[i].Prefix = nil
+		request.Messages[i].ReasoningContent = nil
+		request.Messages[i].Reasoning = nil
+		request.Messages[i].Content = sanitizeGeminiMessageContent(request.Messages[i].Content)
+	}
+}
+
+func sanitizeGeminiMessageContent(content any) any {
+	switch value := content.(type) {
+	case []any:
+		for i := range value {
+			value[i] = sanitizeGeminiMessageContent(value[i])
+		}
+		return value
+	case []dto.MediaContent:
+		for i := range value {
+			value[i].CacheControl = nil
+		}
+		return value
+	case map[string]any:
+		delete(value, "cache_control")
+		delete(value, "reasoning")
+		delete(value, "reasoning_content")
+		delete(value, "thinking")
+		delete(value, "refusal")
+		for key, item := range value {
+			value[key] = sanitizeGeminiMessageContent(item)
+		}
+		return value
+	default:
+		return content
+	}
 }
 
 func (a *Adaptor) ConvertRerankRequest(c *gin.Context, relayMode int, request dto.RerankRequest) (any, error) {
