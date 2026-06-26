@@ -76,6 +76,8 @@ export interface ApiResponse<T = unknown> {
 export interface GetUsersParams {
   p?: number
   page_size?: number
+  sort_by?: string
+  sort_order?: string
 }
 
 export interface GetUsersResponse {
@@ -96,6 +98,8 @@ export interface SearchUsersParams {
   status?: string
   p?: number
   page_size?: number
+  sort_by?: string
+  sort_order?: string
 }
 
 export interface UserFormData {

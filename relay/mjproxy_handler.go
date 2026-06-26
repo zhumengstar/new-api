@@ -4,9 +4,14 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"image"
+	"image/jpeg"
+	_ "image/png"
 	"io"
 	"log"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -22,9 +27,98 @@ import (
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/system_setting"
+	xdraw "golang.org/x/image/draw"
 
 	"github.com/gin-gonic/gin"
 )
+
+const generatedImageThumbnailDefaultWidth = 1024
+const generatedImageThumbnailMaxWidth = 1024
+
+func RelayGeneratedImageThumbnail(c *gin.Context) {
+	relativePath := strings.TrimPrefix(c.Param("path"), "/")
+	cleanPath := filepath.Clean(relativePath)
+	if cleanPath == "." || strings.HasPrefix(cleanPath, "..") || filepath.IsAbs(cleanPath) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_image_path"})
+		return
+	}
+
+	width := common.String2Int(c.DefaultQuery("w", strconv.Itoa(generatedImageThumbnailDefaultWidth)))
+	if width <= 0 {
+		width = generatedImageThumbnailDefaultWidth
+	}
+	if width > generatedImageThumbnailMaxWidth {
+		width = generatedImageThumbnailMaxWidth
+	}
+
+	sourcePath := filepath.Join("/data/generated-images", cleanPath)
+	sourceInfo, err := os.Stat(sourcePath)
+	if err != nil || sourceInfo.IsDir() {
+		c.JSON(http.StatusNotFound, gin.H{"error": "generated_image_not_found"})
+		return
+	}
+
+	cachePath := filepath.Join("/data/generated-image-thumbnails", strconv.Itoa(width), cleanPath+".jpg")
+	if cacheInfo, err := os.Stat(cachePath); err == nil && !cacheInfo.IsDir() && cacheInfo.ModTime().After(sourceInfo.ModTime()) {
+		serveGeneratedImageThumbnail(c, cachePath)
+		return
+	}
+
+	if err := os.MkdirAll(filepath.Dir(cachePath), 0o755); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "thumbnail_cache_create_failed"})
+		return
+	}
+
+	sourceFile, err := os.Open(sourcePath)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "generated_image_open_failed"})
+		return
+	}
+	defer sourceFile.Close()
+
+	src, _, err := image.Decode(sourceFile)
+	if err != nil {
+		c.JSON(http.StatusUnsupportedMediaType, gin.H{"error": "generated_image_decode_failed"})
+		return
+	}
+	bounds := src.Bounds()
+	srcWidth := bounds.Dx()
+	srcHeight := bounds.Dy()
+	if srcWidth <= 0 || srcHeight <= 0 {
+		c.JSON(http.StatusUnsupportedMediaType, gin.H{"error": "generated_image_invalid_size"})
+		return
+	}
+	if width >= srcWidth {
+		serveGeneratedImageThumbnail(c, sourcePath)
+		return
+	}
+	height := int(float64(srcHeight) * float64(width) / float64(srcWidth))
+	if height <= 0 {
+		height = 1
+	}
+
+	dst := image.NewRGBA(image.Rect(0, 0, width, height))
+	xdraw.ApproxBiLinear.Scale(dst, dst.Bounds(), src, bounds, xdraw.Over, nil)
+
+	cacheFile, err := os.Create(cachePath)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "thumbnail_cache_write_failed"})
+		return
+	}
+	encodeErr := jpeg.Encode(cacheFile, dst, &jpeg.Options{Quality: 78})
+	closeErr := cacheFile.Close()
+	if encodeErr != nil || closeErr != nil {
+		_ = os.Remove(cachePath)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "thumbnail_encode_failed"})
+		return
+	}
+	serveGeneratedImageThumbnail(c, cachePath)
+}
+
+func serveGeneratedImageThumbnail(c *gin.Context, path string) {
+	c.Header("Cache-Control", "public, max-age=31536000, immutable")
+	c.File(path)
+}
 
 func RelayMidjourneyImage(c *gin.Context) {
 	taskId := c.Param("id")
@@ -33,6 +127,17 @@ func RelayMidjourneyImage(c *gin.Context) {
 		c.JSON(400, gin.H{
 			"error": "midjourney_task_not_found",
 		})
+		return
+	}
+	if strings.HasPrefix(midjourneyTask.ImageUrl, "/generated-images/") {
+		localPath := filepath.Join("/data", strings.TrimPrefix(midjourneyTask.ImageUrl, "/"))
+		if _, err := os.Stat(localPath); err != nil {
+			c.JSON(http.StatusNotFound, gin.H{
+				"error": "generated_image_not_found",
+			})
+			return
+		}
+		c.File(localPath)
 		return
 	}
 	var httpClient *http.Client
@@ -141,7 +246,11 @@ func coverMidjourneyTaskDto(c *gin.Context, originTask *model.Midjourney) (midjo
 	midjourneyTask.FinishTime = originTask.FinishTime
 	midjourneyTask.ImageUrl = ""
 	if originTask.ImageUrl != "" && setting.MjForwardUrlEnabled {
-		midjourneyTask.ImageUrl = system_setting.ServerAddress + "/mj/image/" + originTask.MjId
+		if strings.HasPrefix(originTask.ImageUrl, "/generated-images/") {
+			midjourneyTask.ImageUrl = originTask.ImageUrl
+		} else {
+			midjourneyTask.ImageUrl = system_setting.ServerAddress + "/mj/image/" + originTask.MjId
+		}
 		if originTask.Status != "SUCCESS" {
 			midjourneyTask.ImageUrl += "?rand=" + strconv.FormatInt(time.Now().UnixNano(), 10)
 		}

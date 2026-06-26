@@ -35,6 +35,8 @@ const usersSearchSchema = z.object({
     .optional()
     .catch([]),
   group: z.string().optional().catch(''),
+  sortBy: z.enum(['created_at', 'last_login_at']).optional().catch(undefined),
+  sortOrder: z.enum(['asc', 'desc']).optional().catch(undefined),
 })
 
 export const Route = createFileRoute('/_authenticated/users/')({

@@ -1,12 +1,18 @@
 package gemini
 
 import (
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
+	"math"
+	"mime/multipart"
 	"net/http"
+	"path/filepath"
+	"strconv"
 	"strings"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/relay/channel/openai"
@@ -58,6 +64,13 @@ func (a *Adaptor) ConvertAudioRequest(c *gin.Context, info *relaycommon.RelayInf
 }
 
 func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.ImageRequest) (any, error) {
+	if info.RelayMode == constant.RelayModeImagesGenerations && model_setting.IsGeminiModelSupportImagine(info.UpstreamModelName) {
+		return a.convertImageGenerationRequest(c, info, request)
+	}
+	if info.RelayMode == constant.RelayModeImagesEdits && model_setting.IsGeminiModelSupportImagine(info.UpstreamModelName) {
+		return a.convertImageEditRequest(c, info, request)
+	}
+
 	if !strings.HasPrefix(info.UpstreamModelName, "imagen") {
 		return nil, errors.New("not supported model for image generation, only imagen models are supported")
 	}
@@ -98,29 +111,330 @@ func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInf
 		},
 	}
 
-	// Set imageSize when quality parameter is specified
-	// Map quality parameter to imageSize (only supported by Standard and Ultra models)
-	// quality values: auto, high, medium, low (for gpt-image-1), hd, standard (for dall-e-3)
-	// imageSize values: 1K (default), 2K
-	// https://ai.google.dev/gemini-api/docs/imagen
-	// https://platform.openai.com/docs/api-reference/images/create
-	if request.Quality != "" {
-		imageSize := "1K" // default
-		switch request.Quality {
-		case "hd", "high":
-			imageSize = "2K"
-		case "2K":
-			imageSize = "2K"
-		case "standard", "medium", "low", "auto", "1K":
-			imageSize = "1K"
-		default:
-			// unknown quality value, default to 1K
-			imageSize = "1K"
-		}
+	if imageSize := geminiImageOutputSize(request, info.UpstreamModelName); imageSize != "" {
 		geminiRequest.Parameters.ImageSize = imageSize
 	}
 
 	return geminiRequest, nil
+}
+
+func (a *Adaptor) convertImageGenerationRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.ImageRequest) (any, error) {
+	openAIRequest := dto.GeneralOpenAIRequest{
+		Model: info.OriginModelName,
+		Messages: []dto.Message{
+			{
+				Role:    "user",
+				Content: request.Prompt,
+			},
+		},
+	}
+
+	geminiRequest, err := CovertOpenAI2Gemini(c, openAIRequest, info)
+	if err != nil {
+		return nil, err
+	}
+
+	if imageConfig := buildGeminiEditImageConfig(request); len(imageConfig) > 0 {
+		imageConfigBytes, err := common.Marshal(imageConfig)
+		if err != nil {
+			return nil, err
+		}
+		geminiRequest.GenerationConfig.ImageConfig = imageConfigBytes
+	}
+	if request.N != nil && *request.N > 0 {
+		candidateCount := int(*request.N)
+		geminiRequest.GenerationConfig.CandidateCount = &candidateCount
+	}
+	return geminiRequest, nil
+}
+
+func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (usage any, err *types.NewAPIError) {
+	if info.RelayMode == constant.RelayModeGemini {
+		if strings.Contains(info.RequestURLPath, ":embedContent") ||
+			strings.Contains(info.RequestURLPath, ":batchEmbedContents") {
+			return NativeGeminiEmbeddingHandler(c, resp, info)
+		}
+		if info.IsStream {
+			return GeminiTextGenerationStreamHandler(c, info, resp)
+		}
+		return GeminiTextGenerationHandler(c, info, resp)
+	}
+
+	if info.RelayMode == constant.RelayModeImagesEdits && model_setting.IsGeminiModelSupportImagine(info.UpstreamModelName) {
+		return GeminiImageEditHandler(c, info, resp)
+	}
+	if info.RelayMode == constant.RelayModeImagesGenerations && model_setting.IsGeminiModelSupportImagine(info.UpstreamModelName) {
+		return GeminiImageEditHandler(c, info, resp)
+	}
+
+	if strings.HasPrefix(info.UpstreamModelName, "imagen") {
+		return GeminiImageHandler(c, info, resp)
+	}
+
+	if strings.HasPrefix(info.UpstreamModelName, "text-embedding") ||
+		strings.HasPrefix(info.UpstreamModelName, "embedding") ||
+		strings.HasPrefix(info.UpstreamModelName, "gemini-embedding") {
+		return GeminiEmbeddingHandler(c, info, resp)
+	}
+
+	if info.IsStream {
+		return GeminiChatStreamHandler(c, info, resp)
+	}
+	return GeminiChatHandler(c, info, resp)
+}
+
+func (a *Adaptor) convertImageEditRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.ImageRequest) (any, error) {
+	if !strings.Contains(c.Request.Header.Get("Content-Type"), "multipart/form-data") {
+		return nil, errors.New("Gemini image edit requires multipart/form-data image input")
+	}
+
+	imageFiles, err := getImageEditFiles(c)
+	if err != nil {
+		return nil, err
+	}
+
+	content := []any{
+		map[string]any{
+			"type": "text",
+			"text": request.Prompt,
+		},
+	}
+	for _, fileHeader := range imageFiles {
+		dataURL, err := multipartImageToDataURL(fileHeader)
+		if err != nil {
+			return nil, err
+		}
+		content = append(content, map[string]any{
+			"type": "image_url",
+			"image_url": map[string]any{
+				"url": dataURL,
+			},
+		})
+	}
+
+	if maskFiles := c.Request.MultipartForm.File["mask"]; len(maskFiles) > 0 {
+		dataURL, err := multipartImageToDataURL(maskFiles[0])
+		if err != nil {
+			return nil, err
+		}
+		content = append(content,
+			map[string]any{
+				"type": "text",
+				"text": "Use the following mask image as the edit mask.",
+			},
+			map[string]any{
+				"type": "image_url",
+				"image_url": map[string]any{
+					"url": dataURL,
+				},
+			},
+		)
+	}
+
+	openAIRequest := dto.GeneralOpenAIRequest{
+		Model: info.OriginModelName,
+		Messages: []dto.Message{
+			{
+				Role:    "user",
+				Content: content,
+			},
+		},
+	}
+
+	if imageConfig := buildGeminiEditImageConfig(request); len(imageConfig) > 0 {
+		imageConfigBytes, err := common.Marshal(imageConfig)
+		if err != nil {
+			return nil, err
+		}
+		geminiRequest, err := CovertOpenAI2Gemini(c, openAIRequest, info)
+		if err != nil {
+			return nil, err
+		}
+		geminiRequest.GenerationConfig.ImageConfig = imageConfigBytes
+		if request.N != nil && *request.N > 0 {
+			candidateCount := int(*request.N)
+			geminiRequest.GenerationConfig.CandidateCount = &candidateCount
+		}
+		return geminiRequest, nil
+	}
+
+	geminiRequest, err := CovertOpenAI2Gemini(c, openAIRequest, info)
+	if err != nil {
+		return nil, err
+	}
+	if request.N != nil && *request.N > 0 {
+		candidateCount := int(*request.N)
+		geminiRequest.GenerationConfig.CandidateCount = &candidateCount
+	}
+	return geminiRequest, nil
+}
+
+func getImageEditFiles(c *gin.Context) ([]*multipart.FileHeader, error) {
+	if c.Request.MultipartForm == nil {
+		if _, err := c.MultipartForm(); err != nil {
+			return nil, fmt.Errorf("failed to parse image edit form request: %w", err)
+		}
+	}
+	mf := c.Request.MultipartForm
+	if mf == nil || mf.File == nil {
+		return nil, errors.New("image is required")
+	}
+
+	var imageFiles []*multipart.FileHeader
+	for _, fieldName := range []string{"image", "image[]"} {
+		if files := mf.File[fieldName]; len(files) > 0 {
+			imageFiles = append(imageFiles, files...)
+		}
+	}
+	for fieldName, files := range mf.File {
+		if fieldName == "image" || fieldName == "image[]" {
+			continue
+		}
+		if strings.HasPrefix(fieldName, "image[") && len(files) > 0 {
+			imageFiles = append(imageFiles, files...)
+		}
+	}
+	if len(imageFiles) == 0 {
+		return nil, errors.New("image is required")
+	}
+	return imageFiles, nil
+}
+
+func multipartImageToDataURL(fileHeader *multipart.FileHeader) (string, error) {
+	file, err := fileHeader.Open()
+	if err != nil {
+		return "", fmt.Errorf("failed to open image file %s: %w", fileHeader.Filename, err)
+	}
+	defer file.Close()
+
+	fileBytes, err := io.ReadAll(file)
+	if err != nil {
+		return "", fmt.Errorf("failed to read image file %s: %w", fileHeader.Filename, err)
+	}
+	mimeType := strings.TrimSpace(fileHeader.Header.Get("Content-Type"))
+	if mimeType == "" || mimeType == "application/octet-stream" {
+		mimeType = detectGeminiImageMimeType(fileHeader.Filename, fileBytes)
+	}
+	if _, ok := geminiSupportedMimeTypes[strings.ToLower(mimeType)]; !ok {
+		return "", fmt.Errorf("mime type is not supported by Gemini: '%s', file: '%s'", mimeType, fileHeader.Filename)
+	}
+
+	return fmt.Sprintf("data:%s;base64,%s", mimeType, base64.StdEncoding.EncodeToString(fileBytes)), nil
+}
+
+func detectGeminiImageMimeType(filename string, data []byte) string {
+	ext := strings.ToLower(filepath.Ext(filename))
+	switch ext {
+	case ".jpg", ".jpeg":
+		return "image/jpeg"
+	case ".png":
+		return "image/png"
+	case ".webp":
+		return "image/webp"
+	case ".heic":
+		return "image/heic"
+	case ".heif":
+		return "image/heif"
+	}
+	mimeType := http.DetectContentType(data)
+	if strings.HasPrefix(mimeType, "image/") {
+		return mimeType
+	}
+	return "image/png"
+}
+
+func buildGeminiEditImageConfig(request dto.ImageRequest) map[string]any {
+	imageConfig := make(map[string]any)
+	if aspectRatio := geminiImageAspectRatio(request.Size); aspectRatio != "" {
+		imageConfig["aspectRatio"] = aspectRatio
+	}
+
+	if imageSize := geminiImageOutputSize(request, ""); imageSize != "" {
+		imageConfig["imageSize"] = imageSize
+	}
+	return imageConfig
+}
+
+func geminiImageOutputSize(request dto.ImageRequest, modelName string) string {
+	switch normalizedGeminiImageSizeValue(request.Size) {
+	case "4k", "4096x4096", "2160x3840", "3840x2160":
+		return "4K"
+	case "2k", "2048x2048":
+		return "2K"
+	case "1k", "1024x1024", "1024x1792", "1792x1024", "1024x1536", "1536x1024":
+		return "1K"
+	}
+
+	switch normalizedGeminiImageSizeValue(request.Quality) {
+	case "high", "hd", "4k":
+		return "4K"
+	case "2k":
+		return "2K"
+	case "low", "medium", "standard", "auto", "1k":
+		return "1K"
+	}
+	if strings.Contains(normalizedGeminiImageSizeValue(modelName), "4k") {
+		return "4K"
+	}
+	return ""
+}
+
+func geminiImageAspectRatio(size string) string {
+	normalizedSize := normalizedGeminiImageSizeValue(size)
+	switch normalizedSize {
+	case "1024x1792":
+		return "9:16"
+	case "1792x1024":
+		return "16:9"
+	case "1536x1024":
+		return "3:2"
+	case "1024x1536":
+		return "2:3"
+	case "256x256", "512x512", "1024x1024", "2048x2048", "4096x4096", "1k", "2k", "4k":
+		return "1:1"
+	case "2160x3840":
+		return "9:16"
+	case "3840x2160":
+		return "16:9"
+	default:
+		if strings.Contains(normalizedSize, ":") {
+			return normalizedSize
+		}
+		if aspectRatio, ok := reduceGeminiPixelSizeToAspectRatio(normalizedSize); ok {
+			return aspectRatio
+		}
+	}
+	return ""
+}
+
+func reduceGeminiPixelSizeToAspectRatio(size string) (string, bool) {
+	parts := strings.Split(size, "x")
+	if len(parts) != 2 {
+		return "", false
+	}
+	width, widthErr := strconv.Atoi(strings.TrimSpace(parts[0]))
+	height, heightErr := strconv.Atoi(strings.TrimSpace(parts[1]))
+	if widthErr != nil || heightErr != nil || width <= 0 || height <= 0 {
+		return "", false
+	}
+	divisor := gcdGeminiDimensions(width, height)
+	return fmt.Sprintf("%d:%d", width/divisor, height/divisor), true
+}
+
+func gcdGeminiDimensions(a int, b int) int {
+	a = int(math.Abs(float64(a)))
+	b = int(math.Abs(float64(b)))
+	for b != 0 {
+		a, b = b, a%b
+	}
+	if a == 0 {
+		return 1
+	}
+	return a
+}
+
+func normalizedGeminiImageSizeValue(value string) string {
+	return strings.ToLower(strings.TrimSpace(value))
 }
 
 func (a *Adaptor) Init(info *relaycommon.RelayInfo) {
@@ -173,6 +487,10 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Header, info *relaycommon.RelayInfo) error {
 	channel.SetupApiRequestHeader(info, c, req)
 	req.Set("x-goog-api-key", info.ApiKey)
+	if (info.RelayMode == constant.RelayModeImagesEdits || info.RelayMode == constant.RelayModeImagesGenerations) &&
+		model_setting.IsGeminiModelSupportImagine(info.UpstreamModelName) {
+		req.Set("Content-Type", "application/json")
+	}
 	return nil
 }
 
@@ -244,38 +562,6 @@ func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommo
 
 func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, requestBody io.Reader) (any, error) {
 	return channel.DoApiRequest(a, c, info, requestBody)
-}
-
-func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (usage any, err *types.NewAPIError) {
-	if info.RelayMode == constant.RelayModeGemini {
-		if strings.Contains(info.RequestURLPath, ":embedContent") ||
-			strings.Contains(info.RequestURLPath, ":batchEmbedContents") {
-			return NativeGeminiEmbeddingHandler(c, resp, info)
-		}
-		if info.IsStream {
-			return GeminiTextGenerationStreamHandler(c, info, resp)
-		} else {
-			return GeminiTextGenerationHandler(c, info, resp)
-		}
-	}
-
-	if strings.HasPrefix(info.UpstreamModelName, "imagen") {
-		return GeminiImageHandler(c, info, resp)
-	}
-
-	// check if the model is an embedding model
-	if strings.HasPrefix(info.UpstreamModelName, "text-embedding") ||
-		strings.HasPrefix(info.UpstreamModelName, "embedding") ||
-		strings.HasPrefix(info.UpstreamModelName, "gemini-embedding") {
-		return GeminiEmbeddingHandler(c, info, resp)
-	}
-
-	if info.IsStream {
-		return GeminiChatStreamHandler(c, info, resp)
-	} else {
-		return GeminiChatHandler(c, info, resp)
-	}
-
 }
 
 func (a *Adaptor) GetModelList() []string {

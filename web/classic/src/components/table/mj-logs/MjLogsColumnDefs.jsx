@@ -288,6 +288,7 @@ function renderStatus(type, t) {
 }
 
 const renderTimestamp = (timestampInSeconds) => {
+  if (!timestampInSeconds) return '-';
   const date = new Date(timestampInSeconds * 1000);
   const year = date.getFullYear();
   const month = ('0' + (date.getMonth() + 1)).slice(-2);
@@ -299,12 +300,37 @@ const renderTimestamp = (timestampInSeconds) => {
   return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
 };
 
-function renderDuration(submit_time, finishTime, t) {
+const normalizeImageUrl = (imageUrl) => {
+  if (!imageUrl) return '';
+  if (/^(https?:)?\/\//i.test(imageUrl) || imageUrl.startsWith('data:')) {
+    return imageUrl;
+  }
+  return imageUrl.startsWith('/') ? imageUrl : `/${imageUrl}`;
+};
+
+const thumbnailImageUrl = (imageUrl, width = 1024) => {
+  if (!imageUrl.startsWith('/generated-images/')) return imageUrl;
+  const path = imageUrl.slice('/generated-images/'.length);
+  return `/generated-image-thumbnails/${path}?w=${width}`;
+};
+
+const downloadImageUrl = (imageUrl, filename = 'generated-image.jpg') => {
+  const link = document.createElement('a');
+  link.href = imageUrl;
+  link.download = filename;
+  link.rel = 'noopener noreferrer';
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+};
+
+function renderDuration(submit_time, finishTime, t, startTime) {
   if (!submit_time || !finishTime) return 'N/A';
 
-  const start = new Date(submit_time);
-  const finish = new Date(finishTime);
-  const durationMs = finish - start;
+  const startValue = Number(startTime);
+  const submitValue = startValue > 0 ? startValue : Number(submit_time);
+  const finishValue = Number(finishTime);
+  const durationMs = finishValue - submitValue;
   const durationSec = (durationMs / 1000).toFixed(1);
   const color = durationSec > 60 ? 'red' : 'green';
 
@@ -337,7 +363,7 @@ export const getMjLogsColumns = ({
       title: t('花费时间'),
       dataIndex: 'finish_time',
       render: (finish, record) => {
-        return renderDuration(record.submit_time, finish, t);
+        return renderDuration(record.submit_time, finish, t, record.start_time);
       },
     },
     {
@@ -428,15 +454,39 @@ export const getMjLogsColumns = ({
         if (!text) {
           return t('无');
         }
+        const imageUrl = normalizeImageUrl(text);
+        const thumbnailUrl = thumbnailImageUrl(imageUrl);
         return (
-          <Button
-            size='small'
-            onClick={() => {
-              openImageModal(text);
-            }}
-          >
-            {t('查看图片')}
-          </Button>
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+            <Button
+              size='small'
+              onClick={() => {
+                openImageModal(thumbnailUrl);
+              }}
+              style={{ height: 'auto', padding: 4 }}
+            >
+              <img
+                src={thumbnailUrl}
+                alt={t('结果图片')}
+                style={{
+                  width: 56,
+                  height: 56,
+                  objectFit: 'cover',
+                  borderRadius: 4,
+                  display: 'block',
+                }}
+                loading='lazy'
+              />
+            </Button>
+            <Button
+              size='small'
+              onClick={() => {
+                downloadImageUrl(imageUrl, `${record.mj_id || 'generated-image'}.jpg`);
+              }}
+            >
+              {t('下载')}
+            </Button>
+          </div>
         );
       },
     },

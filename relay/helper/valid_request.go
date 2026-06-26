@@ -183,6 +183,10 @@ func GetAndValidOpenAIImageRequest(c *gin.Context, relayMode int) (*dto.ImageReq
 				watermark := formData.Get("watermark") == "true"
 				imageRequest.Watermark = &watermark
 			}
+			if formData.Has("strict_aspect_ratio") {
+				strictAspectRatio := formData.Get("strict_aspect_ratio") == "true"
+				imageRequest.StrictAspectRatio = &strictAspectRatio
+			}
 			break
 		}
 		fallthrough

@@ -610,6 +610,8 @@ func AddChannel(c *gin.Context) {
 	}
 
 	addChannelRequest.Channel.CreatedTime = common.GetTimestamp()
+	autoBan := 1
+	addChannelRequest.Channel.AutoBan = &autoBan
 	keys := make([]string, 0)
 	switch addChannelRequest.Mode {
 	case "multi_to_single":

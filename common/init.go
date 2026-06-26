@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"net/url"
 
 	"github.com/QuantumNous/new-api/constant"
 )
@@ -64,6 +65,9 @@ func InitEnv() {
 	if os.Getenv("SQLITE_PATH") != "" {
 		SQLitePath = os.Getenv("SQLITE_PATH")
 	}
+
+	initOutboundProxyEnv()
+
 	if *LogDir != "" {
 		var err error
 		*LogDir, err = filepath.Abs(*LogDir)
@@ -129,6 +133,34 @@ func InitEnv() {
 	SearchRateLimitNum = GetEnvOrDefault("SEARCH_RATE_LIMIT", 10)
 	SearchRateLimitDuration = int64(GetEnvOrDefault("SEARCH_RATE_LIMIT_DURATION", 60))
 	initConstantEnv()
+}
+
+func initOutboundProxyEnv() {
+	if !GetEnvOrDefaultBool("ENABLE_OUTBOUND_PROXY", true) {
+		return
+	}
+
+	proxyURL := strings.TrimSpace(os.Getenv("OUTBOUND_PROXY_URL"))
+	if proxyURL == "" {
+		proxyURL = strings.TrimSpace(os.Getenv("PASEO_PROXY_URL"))
+	}
+	if proxyURL == "" {
+		proxyURL = "http://127.0.0.1:8787"
+	}
+
+	parsed, err := url.Parse(proxyURL)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		SysError(fmt.Sprintf("invalid outbound proxy url: %s", proxyURL))
+		return
+	}
+
+	_ = os.Setenv("HTTP_PROXY", proxyURL)
+	_ = os.Setenv("HTTPS_PROXY", proxyURL)
+	_ = os.Setenv("http_proxy", proxyURL)
+	_ = os.Setenv("https_proxy", proxyURL)
+	_ = os.Setenv("NO_PROXY", "127.0.0.1,localhost,::1")
+	_ = os.Setenv("no_proxy", "127.0.0.1,localhost,::1")
+	SysLog("outbound proxy enabled: " + parsed.String())
 }
 
 func initConstantEnv() {

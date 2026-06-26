@@ -191,6 +191,29 @@ func DeleteRedemptionById(id int) (err error) {
 	return redemption.Delete()
 }
 
+func DeleteRedemptionsByIds(ids []int) (int64, error) {
+	if len(ids) == 0 {
+		return 0, errors.New("ids 为空！")
+	}
+	cleanIds := make([]int, 0, len(ids))
+	seen := make(map[int]struct{}, len(ids))
+	for _, id := range ids {
+		if id <= 0 {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		cleanIds = append(cleanIds, id)
+	}
+	if len(cleanIds) == 0 {
+		return 0, errors.New("ids 为空！")
+	}
+	result := DB.Where("id IN ?", cleanIds).Delete(&Redemption{})
+	return result.RowsAffected, result.Error
+}
+
 func DeleteInvalidRedemptions() (int64, error) {
 	now := common.GetTimestamp()
 	result := DB.Where("status IN ? OR (status = ? AND expired_time != 0 AND expired_time < ?)", []int{common.RedemptionCodeStatusUsed, common.RedemptionCodeStatusDisabled}, common.RedemptionCodeStatusEnabled, now).Delete(&Redemption{})

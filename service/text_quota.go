@@ -30,6 +30,8 @@ type textQuotaSummary struct {
 	CacheCreationTokens5m    int
 	CacheCreationTokens1h    int
 	ImageTokens              int
+	ImageInputTokens         int
+	ImageOutputTokens        int
 	AudioTokens              int
 	ModelName                string
 	TokenName                string
@@ -189,7 +191,9 @@ func calculateTextQuotaSummary(ctx *gin.Context, relayInfo *relaycommon.RelayInf
 	summary.CacheCreationTokens = usage.PromptTokensDetails.CachedCreationTokens
 	summary.CacheCreationTokens5m = usage.ClaudeCacheCreation5mTokens
 	summary.CacheCreationTokens1h = usage.ClaudeCacheCreation1hTokens
-	summary.ImageTokens = usage.PromptTokensDetails.ImageTokens
+	summary.ImageInputTokens = usage.PromptTokensDetails.ImageTokens
+	summary.ImageOutputTokens = usage.CompletionTokenDetails.ImageTokens
+	summary.ImageTokens = summary.ImageInputTokens + summary.ImageOutputTokens
 	summary.AudioTokens = usage.PromptTokensDetails.AudioTokens
 	legacyClaudeDerived := isLegacyClaudeDerivedOpenAIUsage(relayInfo, usage)
 	isOpenRouterClaudeBilling := relayInfo.ChannelMeta != nil &&
@@ -210,7 +214,7 @@ func calculateTextQuotaSummary(ctx *gin.Context, relayInfo *relaycommon.RelayInf
 
 	dPromptTokens := decimal.NewFromInt(int64(summary.PromptTokens))
 	dCacheTokens := decimal.NewFromInt(int64(summary.CacheTokens))
-	dImageTokens := decimal.NewFromInt(int64(summary.ImageTokens))
+	dImageTokens := decimal.NewFromInt(int64(summary.ImageInputTokens))
 	dAudioTokens := decimal.NewFromInt(int64(summary.AudioTokens))
 	dCompletionTokens := decimal.NewFromInt(int64(summary.CompletionTokens))
 	dCachedCreationTokens := decimal.NewFromInt(int64(summary.CacheCreationTokens))
@@ -361,6 +365,9 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 	if summary.ImageGenerationCallPrice > 0 {
 		extraContent = append(extraContent, fmt.Sprintf("Image Generation Call 花费 %s", decimal.NewFromFloat(summary.ImageGenerationCallPrice).Mul(decimal.NewFromFloat(summary.GroupRatio)).Mul(decimal.NewFromFloat(common.QuotaPerUnit)).String()))
 	}
+	if generatedImageContent := generatedImagesLogContent(ctx); generatedImageContent != "" {
+		extraContent = append(extraContent, generatedImageContent)
+	}
 
 	if summary.TotalTokens == 0 {
 		extraContent = append(extraContent, "上游没有返回计费信息，无法扣费（可能是上游超时）")
@@ -404,7 +411,8 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 	if summary.ImageTokens != 0 {
 		other["image"] = true
 		other["image_ratio"] = summary.ImageRatio
-		other["image_output"] = summary.ImageTokens
+		other["image_input"] = summary.ImageInputTokens
+		other["image_output"] = summary.ImageOutputTokens
 	}
 	if summary.WebSearchCallCount > 0 {
 		other["web_search"] = true
@@ -428,6 +436,9 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 	if summary.ImageGenerationCallPrice > 0 {
 		other["image_generation_call"] = true
 		other["image_generation_call_price"] = summary.ImageGenerationCallPrice
+	}
+	if generatedImages, exists := ctx.Get("generated_images"); exists {
+		other["generated_images"] = generatedImages
 	}
 	if summary.CacheCreationTokens > 0 {
 		other["cache_creation_tokens"] = summary.CacheCreationTokens
@@ -455,6 +466,15 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 		// prompt/cache fields here, otherwise old upstream payloads may be double-counted.
 		other["input_tokens_total"] = usage.InputTokens
 	}
+	if usage != nil && usage.PromptUndercountUpstream > 0 {
+		// upstream reported an implausibly small prompt_tokens compared to local
+		// estimate (typical of upstream prompt truncation/stub responses); we
+		// already overrode usage.PromptTokens with the local estimate, here we
+		// surface both the override flag and the original upstream value for
+		// audit/debugging from the usage log UI.
+		other["prompt_tokens_undercount"] = true
+		other["upstream_prompt_tokens"] = usage.PromptUndercountUpstream
+	}
 	if tieredBillingApplied {
 		InjectTieredBillingInfo(other, relayInfo, tieredResult)
 	}
@@ -476,4 +496,39 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 	gopool.Go(func() {
 		perfmetrics.RecordRelaySample(relayInfo, true, int64(summary.CompletionTokens))
 	})
+}
+
+func generatedImagesLogContent(ctx *gin.Context) string {
+	generatedImages, exists := ctx.Get("generated_images")
+	if !exists {
+		return ""
+	}
+	images, ok := generatedImages.([]GeneratedImageInfo)
+	if !ok || len(images) == 0 {
+		return ""
+	}
+	image := images[0]
+	parts := make([]string, 0, 2)
+	if image.Width > 0 && image.Height > 0 {
+		parts = append(parts, fmt.Sprintf("输出尺寸 %dx%d", image.Width, image.Height))
+	}
+	if image.Size > 0 {
+		parts = append(parts, fmt.Sprintf("原图大小 %s", formatGeneratedImageSize(image.Size)))
+	}
+	return strings.Join(parts, ", ")
+}
+
+func formatGeneratedImageSize(size int64) string {
+	if size < 1024 {
+		return fmt.Sprintf("%d B", size)
+	}
+	value := float64(size)
+	units := []string{"KB", "MB", "GB"}
+	for i, unit := range units {
+		value /= 1024
+		if value < 1024 || i == len(units)-1 {
+			return fmt.Sprintf("%.1f %s", value, unit)
+		}
+	}
+	return fmt.Sprintf("%d B", size)
 }

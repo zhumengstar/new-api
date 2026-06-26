@@ -78,6 +78,48 @@ docker-compose up -d
 
 ***
 
+## 额外说明：通过子路径 `/newapi/` 反向代理
+
+如果你希望把 New API 挂载到同一台机器上的子路径，例如 `http://your-domain/newapi/`，请在前置 nginx 中把 `/newapi/` 转发到正在运行的 `new-api:3000`，不要再指向旧容器名。
+
+```nginx
+location = /newapi {
+    return 301 /newapi/;
+}
+
+location = /newapi/ {
+    proxy_pass http://new-api:3000/;
+    proxy_http_version 1.1;
+    proxy_buffering off;
+    proxy_cache off;
+    proxy_request_buffering off;
+    add_header X-Accel-Buffering no always;
+    add_header X-NewAPI-Backend new-api-ip-newapi-root-compat always;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Prefix /newapi;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-Host $host;
+}
+
+location /newapi/ {
+    proxy_pass http://new-api:3000/;
+    proxy_http_version 1.1;
+    proxy_buffering off;
+    proxy_cache off;
+    proxy_request_buffering off;
+    add_header X-Accel-Buffering no always;
+    add_header X-NewAPI-Backend new-api-ip-newapi always;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Prefix /newapi;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-Host $host;
+}
+```
+
+如果你之前配过旧的 `new-api-mj-image-log-polish-candidate`，把它替换掉即可。
+
+***
+
 ## 配置说明
 
 ### 必要环境变量
@@ -148,4 +190,3 @@ docker-compose down && docker-compose up -d
 ![宝塔面板 Docker 安装](https://github.com/user-attachments/assets/7a6fc03e-c457-45e4-b8f9-184508fc26b0)
 
 > ⚠️ 注意：密钥为环境变量 `SESSION_SECRET`，请务必设置！
-

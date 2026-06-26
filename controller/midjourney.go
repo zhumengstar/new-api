@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -309,7 +310,7 @@ func GetAllMidjourney(c *gin.Context) {
 
 	if setting.MjForwardUrlEnabled {
 		for i, midjourney := range items {
-			midjourney.ImageUrl = system_setting.ServerAddress + "/mj/image/" + midjourney.MjId
+			midjourney.ImageUrl = midjourneyDisplayImageURL(midjourney.ImageUrl, midjourney.MjId)
 			items[i] = midjourney
 		}
 	}
@@ -334,11 +335,21 @@ func GetUserMidjourney(c *gin.Context) {
 
 	if setting.MjForwardUrlEnabled {
 		for i, midjourney := range items {
-			midjourney.ImageUrl = system_setting.ServerAddress + "/mj/image/" + midjourney.MjId
+			midjourney.ImageUrl = midjourneyDisplayImageURL(midjourney.ImageUrl, midjourney.MjId)
 			items[i] = midjourney
 		}
 	}
 	pageInfo.SetTotal(int(total))
 	pageInfo.SetItems(items)
 	common.ApiSuccess(c, pageInfo)
+}
+
+func midjourneyDisplayImageURL(imageURL string, mjID string) string {
+	if imageURL == "" {
+		return ""
+	}
+	if strings.HasPrefix(imageURL, "/generated-images/") {
+		return imageURL
+	}
+	return system_setting.ServerAddress + "/mj/image/" + mjID
 }

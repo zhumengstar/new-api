@@ -36,7 +36,10 @@ export type ApiRequestConfig = AxiosRequestConfig
 // ============================================================================
 
 // Base URL: empty string for same-origin API requests
-const baseURL = ''
+const baseURL =
+  import.meta.env.VITE_REACT_APP_SERVER_URL ||
+  import.meta.env.VITE_PASEO_PROXY_URL ||
+  ''
 
 // Create axios instance with default config
 export const api = axios.create({

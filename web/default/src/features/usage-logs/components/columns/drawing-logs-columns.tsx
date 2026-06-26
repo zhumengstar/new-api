@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { ColumnDef } from '@tanstack/react-table'
 import {
   Blend,
@@ -54,6 +54,92 @@ import {
   createProgressColumn,
   createFailReasonColumn,
 } from './column-helpers'
+
+function formatBytes(bytes?: number) {
+  if (!bytes || bytes <= 0) return ''
+  const units = ['B', 'KB', 'MB', 'GB']
+  let size = bytes
+  let unit = 0
+  while (size >= 1024 && unit < units.length - 1) {
+    size /= 1024
+    unit += 1
+  }
+  return `${size.toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`
+}
+
+function normalizeImageUrl(imageUrl?: string) {
+  if (!imageUrl) return ''
+  if (/^(https?:)?\/\//i.test(imageUrl) || imageUrl.startsWith('data:')) {
+    return imageUrl
+  }
+  if (imageUrl.startsWith('/')) return imageUrl
+  return `/${imageUrl}`
+}
+
+function thumbnailImageUrl(imageUrl: string, width = 1024) {
+  if (!imageUrl.startsWith('/generated-images/')) return imageUrl
+  const path = imageUrl.slice('/generated-images/'.length)
+  return `/generated-image-thumbnails/${path}?w=${width}`
+}
+
+function useImageMeta(imageUrl?: string) {
+  const [meta, setMeta] = useState<{
+    width?: number
+    height?: number
+    size?: number
+  }>({})
+
+  useEffect(() => {
+    if (!imageUrl) {
+      setMeta({})
+      return
+    }
+
+    let cancelled = false
+    const img = new Image()
+
+    const loadMeta = async () => {
+      try {
+        const [width, height] = await new Promise<[number, number]>(
+          (resolve, reject) => {
+            img.onload = () => resolve([img.naturalWidth, img.naturalHeight])
+            img.onerror = () => reject(new Error('image load failed'))
+            img.src = imageUrl
+          }
+        )
+
+        let size: number | undefined
+        try {
+          const response = await fetch(imageUrl, { method: 'HEAD' })
+          const contentLength = response.headers.get('content-length')
+          if (contentLength) {
+            size = Number(contentLength)
+          }
+        } catch {
+          // Ignore size lookup failures and keep dimensions only.
+        }
+
+        if (!cancelled) {
+          setMeta({ width, height, size })
+        }
+      } catch {
+        if (!cancelled) {
+          setMeta({})
+        }
+      }
+    }
+
+    void loadMeta()
+
+    return () => {
+      cancelled = true
+      img.onload = null
+      img.onerror = null
+    }
+  }, [imageUrl])
+
+  return meta
+}
 
 const drawingTypeIconMap: Record<string, LucideIcon> = {
   [MJ_TASK_TYPES.IMAGINE]: ImageIcon,
@@ -193,32 +279,64 @@ export function useDrawingLogsColumns(
       header: t('Image'),
       cell: function ImageCell({ row }) {
         const log = row.original
-        const imageUrl = row.getValue('image_url') as string
+        const imageUrl = normalizeImageUrl(row.getValue('image_url') as string)
+        const previewUrl = thumbnailImageUrl(imageUrl)
         const [dialogOpen, setDialogOpen] = useState(false)
+        const [imageError, setImageError] = useState(false)
+        const meta = useImageMeta(imageUrl)
 
         if (!imageUrl) {
           return <span className='text-muted-foreground/60 text-xs'>-</span>
         }
 
         return (
-          <>
+          <div className='flex min-w-0 items-center gap-2'>
             <button
               type='button'
-              className='group text-left text-xs'
+              className='bg-muted/40 group relative flex size-14 shrink-0 items-center justify-center overflow-hidden rounded-md border text-left'
               onClick={() => setDialogOpen(true)}
               title={t('Click to view image')}
             >
-              <span className='text-foreground truncate leading-snug group-hover:underline'>
-                {t('View')}
-              </span>
+              {imageError ? (
+                <ImageIcon className='text-muted-foreground size-5' />
+              ) : (
+                <img
+                  src={previewUrl}
+                  alt={t('Generated image')}
+                  className='h-full w-full object-cover transition-transform group-hover:scale-105'
+                  loading='lazy'
+                  onError={() => setImageError(true)}
+                />
+              )}
             </button>
+            <div className='min-w-0 text-xs'>
+              <button
+                type='button'
+                className='text-foreground max-w-[140px] truncate text-left leading-snug hover:underline'
+                onClick={() => setDialogOpen(true)}
+                title={t('Click to view image')}
+              >
+                {t('View')}
+              </button>
+              {(meta.width || meta.size) && (
+                <div className='text-muted-foreground mt-0.5 truncate font-mono text-[11px]'>
+                  {meta.width && meta.height
+                    ? `${meta.width}x${meta.height}`
+                    : ''}
+                  {meta.size
+                    ? `${meta.width && meta.height ? ' · ' : ''}${formatBytes(meta.size)}`
+                    : ''}
+                </div>
+              )}
+            </div>
             <ImageDialog
               imageUrl={imageUrl}
+              previewUrl={previewUrl}
               taskId={log.mj_id}
               open={dialogOpen}
               onOpenChange={setDialogOpen}
             />
-          </>
+          </div>
         )
       },
     },

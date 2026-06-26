@@ -39,11 +39,22 @@ func OpenaiImageHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.
 		return nil, types.WithOpenAIError(*oaiError, resp.StatusCode)
 	}
 
+	var imageResp dto.ImageResponse
+	if err := common.Unmarshal(responseBody, &imageResp); err == nil && len(imageResp.Data) > 0 {
+		enforceImageResponseAspectRatio(info, &imageResp)
+		if body, marshalErr := common.Marshal(imageResp); marshalErr == nil {
+			responseBody = body
+		}
+	}
+
 	// 写入新的 response body
 	service.IOCopyBytesGracefully(c, resp, responseBody)
 
 	normalizeOpenAIUsage(&usageResp.Usage)
 	applyUsagePostProcessing(info, &usageResp.Usage, responseBody)
+	if len(imageResp.Data) > 0 {
+		service.RecordGeneratedImages(c, info, imageDataForRecording(c, imageResp.Data), &usageResp.Usage)
+	}
 	return &usageResp.Usage, nil
 }
 
@@ -204,6 +215,7 @@ func OpenaiImageJSONAsStreamHandler(c *gin.Context, info *relaycommon.RelayInfo,
 	if err := common.Unmarshal(responseBody, &imageResp); err != nil {
 		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
 	}
+	enforceImageResponseAspectRatio(info, &imageResp)
 
 	var usageResp dto.SimpleResponse
 	_ = common.Unmarshal(responseBody, &usageResp)
@@ -212,6 +224,9 @@ func OpenaiImageJSONAsStreamHandler(c *gin.Context, info *relaycommon.RelayInfo,
 	}
 	normalizeOpenAIUsage(&usageResp.Usage)
 	applyUsagePostProcessing(info, &usageResp.Usage, responseBody)
+	if len(imageResp.Data) > 0 {
+		service.RecordGeneratedImages(c, info, imageDataForRecording(c, imageResp.Data), &usageResp.Usage)
+	}
 
 	helper.SetEventStreamHeaders(c)
 	c.Status(http.StatusOK)
@@ -261,6 +276,24 @@ func OpenaiImageJSONAsStreamHandler(c *gin.Context, info *relaycommon.RelayInfo,
 		info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonDone, nil)
 	}
 	return &usageResp.Usage, nil
+}
+
+func imageDataForRecording(c *gin.Context, images []dto.ImageData) []dto.ImageData {
+	recordable := make([]dto.ImageData, 0, len(images))
+	for _, image := range images {
+		switch {
+		case image.B64Json != "":
+			recordable = append(recordable, dto.ImageData{B64Json: image.B64Json})
+		case image.Url != "":
+			mimeType, data, err := service.GetImageFromUrl(image.Url)
+			if err != nil {
+				logger.LogError(c, "failed to download generated image: "+err.Error())
+				continue
+			}
+			recordable = append(recordable, dto.ImageData{B64Json: "data:" + mimeType + ";base64," + data})
+		}
+	}
+	return recordable
 }
 
 func writeOpenaiImageStreamPayload(c *gin.Context, eventName string, payload any) error {

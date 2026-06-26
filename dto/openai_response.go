@@ -226,6 +226,13 @@ type Usage struct {
 	TotalTokens          int    `json:"total_tokens"`
 	PromptCacheHitTokens int    `json:"prompt_cache_hit_tokens,omitempty"`
 	UsageSemantic        string `json:"usage_semantic,omitempty"`
+
+	// PromptUndercountUpstream is a transient audit field: when set non-zero,
+	// it means we overrode upstream prompt_tokens with a local estimate because
+	// the upstream value was implausibly small (typical of upstream prompt
+	// truncation/stub responses). The original upstream value is kept here for
+	// audit logging. It is intentionally not serialized to clients.
+	PromptUndercountUpstream int `json:"-"`
 	UsageSource          string `json:"usage_source,omitempty"`
 
 	PromptTokensDetails    InputTokenDetails  `json:"prompt_tokens_details"`

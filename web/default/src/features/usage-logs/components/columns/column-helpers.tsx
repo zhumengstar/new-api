@@ -103,6 +103,7 @@ export function createTimestampColumn<T>(config: {
 export function createDurationColumn<T>(config: {
   submitTimeKey: string
   finishTimeKey: string
+  startTimeKey?: string
   unit?: 'seconds' | 'milliseconds'
   headerLabel: string
   warningThresholdSec?: number
@@ -110,6 +111,7 @@ export function createDurationColumn<T>(config: {
   const {
     submitTimeKey,
     finishTimeKey,
+    startTimeKey,
     unit = 'milliseconds',
     headerLabel,
     warningThresholdSec = 60,
@@ -122,8 +124,11 @@ export function createDurationColumn<T>(config: {
     ),
     cell: ({ row }) => {
       const log = row.original as Record<string, unknown>
+      const startTime = startTimeKey
+        ? (log[startTimeKey] as number | undefined)
+        : undefined
       const duration = formatDuration(
-        log[submitTimeKey] as number | undefined,
+        startTime || (log[submitTimeKey] as number | undefined),
         log[finishTimeKey] as number | undefined,
         unit
       )

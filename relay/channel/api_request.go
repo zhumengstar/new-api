@@ -284,11 +284,147 @@ func processHeaderOverride(info *common.RelayInfo, c *gin.Context) (map[string]s
 
 		headerOverride[key] = value
 	}
+	mergeIncomingSessionHeaders(info, c, headerOverride)
+	injectNewAPIUserSessionHeader(info, headerOverride)
 	return headerOverride, nil
 }
 
 func ResolveHeaderOverride(info *common.RelayInfo, c *gin.Context) (map[string]string, error) {
 	return processHeaderOverride(info, c)
+}
+
+func mergeIncomingSessionHeaders(info *common.RelayInfo, c *gin.Context, headers map[string]string) {
+	if info == nil || info.IsChannelTest || headers == nil {
+		return
+	}
+
+	sessionID, _ := extractIncomingSessionID(c, headers)
+	if sessionID == "" {
+		return
+	}
+
+	if strings.TrimSpace(headers["x-session-id"]) == "" {
+		headers["x-session-id"] = sessionID
+	}
+	if strings.TrimSpace(headers["session_id"]) == "" {
+		headers["session_id"] = sessionID
+	}
+	if strings.TrimSpace(headers["session-id"]) == "" {
+		headers["session-id"] = sessionID
+	}
+	if strings.TrimSpace(headers["x-codex-turn-metadata"]) == "" && c != nil && c.Request != nil {
+		if raw := strings.TrimSpace(c.Request.Header.Get("X-Codex-Turn-Metadata")); raw != "" {
+			headers["x-codex-turn-metadata"] = raw
+		}
+	}
+}
+
+func extractIncomingSessionID(c *gin.Context, headers map[string]string) (string, string) {
+	if headers != nil {
+		if sessionID := strings.TrimSpace(headers["x-session-id"]); sessionID != "" {
+			return sessionID, "x-session-id"
+		}
+		if sessionID := strings.TrimSpace(headers["session_id"]); sessionID != "" {
+			return sessionID, "session_id"
+		}
+		if sessionID := strings.TrimSpace(headers["session-id"]); sessionID != "" {
+			return sessionID, "session-id"
+		}
+		if raw := strings.TrimSpace(headers["x-codex-turn-metadata"]); raw != "" {
+			if sessionID := extractSessionIDFromCodexTurnMetadata(raw); sessionID != "" {
+				return sessionID, "x-codex-turn-metadata"
+			}
+		}
+	}
+
+	if c == nil || c.Request == nil {
+		return "", ""
+	}
+	if sessionID := strings.TrimSpace(c.Request.Header.Get("X-Session-ID")); sessionID != "" {
+		return sessionID, "x-session-id"
+	}
+	if sessionID := strings.TrimSpace(c.Request.Header.Get("Session_ID")); sessionID != "" {
+		return sessionID, "session_id"
+	}
+	if sessionID := strings.TrimSpace(c.Request.Header.Get("Session-ID")); sessionID != "" {
+		return sessionID, "session-id"
+	}
+	if raw := strings.TrimSpace(c.Request.Header.Get("X-Codex-Turn-Metadata")); raw != "" {
+		if sessionID := extractSessionIDFromCodexTurnMetadata(raw); sessionID != "" {
+			return sessionID, "x-codex-turn-metadata"
+		}
+	}
+	return "", ""
+}
+
+func extractSessionIDFromCodexTurnMetadata(raw string) string {
+	sessionID, ok := extractJSONStringField(raw, "session_id")
+	if ok {
+		return sessionID
+	}
+	sessionID, ok = extractJSONStringField(raw, "sessionId")
+	if ok {
+		return sessionID
+	}
+	sessionID, ok = extractJSONStringField(raw, "session")
+	if ok {
+		return sessionID
+	}
+	return ""
+}
+
+func extractJSONStringField(raw string, field string) (string, bool) {
+	quotedField := `"` + field + `"`
+	fieldIndex := strings.Index(raw, quotedField)
+	if fieldIndex < 0 {
+		return "", false
+	}
+	afterField := raw[fieldIndex+len(quotedField):]
+	colonIndex := strings.Index(afterField, ":")
+	if colonIndex < 0 {
+		return "", false
+	}
+	remainder := strings.TrimSpace(afterField[colonIndex+1:])
+	if !strings.HasPrefix(remainder, `"`) {
+		return "", false
+	}
+	remainder = remainder[1:]
+	var builder strings.Builder
+	escaped := false
+	for _, r := range remainder {
+		if escaped {
+			builder.WriteRune(r)
+			escaped = false
+			continue
+		}
+		if r == '\\' {
+			escaped = true
+			continue
+		}
+		if r == '"' {
+			value := strings.TrimSpace(builder.String())
+			return value, value != ""
+		}
+		builder.WriteRune(r)
+	}
+	return "", false
+}
+
+func injectNewAPIUserSessionHeader(info *common.RelayInfo, headers map[string]string) {
+	if info == nil || info.IsChannelTest || headers == nil {
+		return
+	}
+	if strings.TrimSpace(headers["x-session-id"]) != "" || strings.TrimSpace(headers["session_id"]) != "" || strings.TrimSpace(headers["session-id"]) != "" {
+		return
+	}
+	sessionID := strings.TrimSpace(info.Username)
+	if sessionID == "" && info.UserId > 0 {
+		sessionID = fmt.Sprintf("newapi-user-%d", info.UserId)
+	}
+	if sessionID == "" {
+		return
+	}
+	headers["x-session-id"] = sessionID
 }
 
 func applyHeaderOverrideToRequest(req *http.Request, headerOverride map[string]string) {

@@ -1,6 +1,7 @@
 package service
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -13,6 +14,80 @@ import (
 
 func formatNotifyType(channelId int, status int) string {
 	return fmt.Sprintf("%s_%d_%d", dto.NotifyTypeChannelUpdate, channelId, status)
+}
+
+const (
+	channelConsecutiveErrorCountKey = "consecutive_error_count"
+	channelConsecutiveErrorLastKey  = "consecutive_error_last"
+	channelConsecutiveErrorLimit    = 3
+)
+
+func getChannelConsecutiveErrorCount(otherInfo map[string]interface{}) int {
+	if otherInfo == nil {
+		return 0
+	}
+	switch v := otherInfo[channelConsecutiveErrorCountKey].(type) {
+	case int:
+		return v
+	case int64:
+		return int(v)
+	case float64:
+		return int(v)
+	case json.Number:
+		count, _ := v.Int64()
+		return int(count)
+	default:
+		return 0
+	}
+}
+
+func RecordChannelFailureAndMaybeDisable(channelError types.ChannelError, err *types.NewAPIError) bool {
+	if !channelError.AutoBan || !ShouldDisableChannel(err) {
+		return false
+	}
+
+	channel, getErr := model.GetChannelById(channelError.ChannelId, true)
+	if getErr != nil {
+		common.SysLog(fmt.Sprintf("failed to record channel consecutive error: channel_id=%d, error=%v", channelError.ChannelId, getErr))
+		return false
+	}
+
+	info := channel.GetOtherInfo()
+	count := getChannelConsecutiveErrorCount(info) + 1
+	info[channelConsecutiveErrorCountKey] = count
+	info[channelConsecutiveErrorLastKey] = err.ErrorWithStatusCode()
+	channel.SetOtherInfo(info)
+	if saveErr := channel.SaveWithoutKey(); saveErr != nil {
+		common.SysLog(fmt.Sprintf("failed to save channel consecutive error count: channel_id=%d, count=%d, error=%v", channelError.ChannelId, count, saveErr))
+		return false
+	}
+
+	if count < channelConsecutiveErrorLimit {
+		common.SysLog(fmt.Sprintf("通道「%s」（#%d）连续错误 %d/%d，暂不禁用，原因：%s", channelError.ChannelName, channelError.ChannelId, count, channelConsecutiveErrorLimit, err.ErrorWithStatusCode()))
+		return false
+	}
+
+	DisableChannel(channelError, fmt.Sprintf("连续错误 %d 次，最后错误：%s", count, err.ErrorWithStatusCode()))
+	return true
+}
+
+func ClearChannelConsecutiveErrors(channelId int) {
+	channel, err := model.GetChannelById(channelId, true)
+	if err != nil {
+		return
+	}
+	info := channel.GetOtherInfo()
+	if _, ok := info[channelConsecutiveErrorCountKey]; !ok {
+		if _, ok := info[channelConsecutiveErrorLastKey]; !ok {
+			return
+		}
+	}
+	delete(info, channelConsecutiveErrorCountKey)
+	delete(info, channelConsecutiveErrorLastKey)
+	channel.SetOtherInfo(info)
+	if saveErr := channel.SaveWithoutKey(); saveErr != nil {
+		common.SysLog(fmt.Sprintf("failed to clear channel consecutive error count: channel_id=%d, error=%v", channelId, saveErr))
+	}
 }
 
 // disable & notify

@@ -48,6 +48,32 @@ func applyUsagePostProcessing(info *relaycommon.RelayInfo, usage *dto.Usage, res
 			}
 		}
 	}
+	guardPromptUndercount(info, usage)
+}
+
+func guardPromptUndercount(info *relaycommon.RelayInfo, usage *dto.Usage) {
+	if info == nil || usage == nil {
+		return
+	}
+	estimate := info.GetEstimatePromptTokens()
+	if estimate <= 0 {
+		return
+	}
+	upstream := usage.PromptTokens
+	if upstream <= 0 || estimate < 1000 {
+		return
+	}
+	if upstream*10 >= estimate*3 {
+		return
+	}
+	if estimate-upstream <= 500 {
+		return
+	}
+	usage.PromptUndercountUpstream = upstream
+	usage.PromptTokens = estimate
+	if usage.InputTokens > 0 {
+		usage.InputTokens = estimate
+	}
 }
 
 func extractCachedTokensFromBody(body []byte) (int, bool) {

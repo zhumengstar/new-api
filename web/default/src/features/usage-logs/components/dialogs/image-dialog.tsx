@@ -20,10 +20,12 @@ import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Button } from '@/components/ui/button'
 import { Dialog } from '@/components/dialog'
 
 interface ImageDialogProps {
   imageUrl: string
+  previewUrl?: string
   taskId?: string
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -31,6 +33,7 @@ interface ImageDialogProps {
 
 export function ImageDialog({
   imageUrl,
+  previewUrl,
   taskId,
   open,
   onOpenChange,
@@ -58,6 +61,16 @@ export function ImageDialog({
     setHasError(true)
   }
 
+  const handleDownload = () => {
+    const link = document.createElement('a')
+    link.href = imageUrl
+    link.download = taskId ? `${taskId}.jpg` : 'generated-image.jpg'
+    link.rel = 'noopener noreferrer'
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+  }
+
   return (
     <Dialog
       open={open}
@@ -80,7 +93,7 @@ export function ImageDialog({
 
             {/* Actual Image */}
             <img
-              src={imageUrl}
+              src={previewUrl || imageUrl}
               alt={t('Generated image')}
               className={`max-h-[550px] w-full rounded-lg object-contain ${
                 isLoading || hasError ? 'opacity-0' : 'opacity-100'
@@ -103,9 +116,17 @@ export function ImageDialog({
           {/* Image URL */}
           <div className='bg-muted mt-4 rounded-md p-3'>
             <p className='text-muted-foreground font-mono text-xs break-all'>
-              {imageUrl}
+              {previewUrl || imageUrl}
             </p>
           </div>
+          <Button
+            type='button'
+            className='mt-3'
+            size='sm'
+            onClick={handleDownload}
+          >
+            {t('Download Original')}
+          </Button>
         </div>
       </ScrollArea>
     </Dialog>

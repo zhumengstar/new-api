@@ -60,3 +60,48 @@ func TestModelPriceHelperTieredUsesPreloadedRequestInput(t *testing.T) {
 	require.Equal(t, billing_setting.BillingModeTieredExpr, info.TieredBillingSnapshot.BillingMode)
 	require.Equal(t, common.QuotaPerUnit, info.TieredBillingSnapshot.QuotaPerUnit)
 }
+
+func TestModelPriceHelperChannelTestAllowsUnconfiguredModel(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/api/channel/test/1", nil)
+	ctx.Set("group", "default")
+
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "definitely-unpriced-channel-test-model",
+		UserId:          1,
+		UserGroup:       "default",
+		UsingGroup:      "default",
+		IsChannelTest:   true,
+	}
+
+	priceData, err := ModelPriceHelper(ctx, info, 0, &types.TokenCountMeta{})
+	require.NoError(t, err)
+	require.Equal(t, 37.5, priceData.ModelRatio)
+	require.Equal(t, int(float64(common.PreConsumedQuota)*37.5), priceData.QuotaToPreConsume)
+}
+
+func TestModelPriceHelperPerCallChannelTestAllowsUnconfiguredModel(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/api/channel/test/1", nil)
+	ctx.Set("group", "default")
+
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "definitely-unpriced-per-call-channel-test-model",
+		UserId:          1,
+		UserGroup:       "default",
+		UsingGroup:      "default",
+		IsChannelTest:   true,
+	}
+
+	priceData, err := ModelPriceHelperPerCall(ctx, info)
+	require.NoError(t, err)
+	require.False(t, priceData.UsePrice)
+	require.Equal(t, 37.5, priceData.ModelRatio)
+	require.Equal(t, int(37.5/2*common.QuotaPerUnit), priceData.Quota)
+}

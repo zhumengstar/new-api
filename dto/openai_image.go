@@ -31,6 +31,7 @@ type ImageRequest struct {
 	Mask              json.RawMessage `json:"mask,omitempty"`
 	InputFidelity     json.RawMessage `json:"input_fidelity,omitempty"`
 	Watermark         *bool           `json:"watermark,omitempty"`
+	StrictAspectRatio *bool           `json:"strict_aspect_ratio,omitempty"`
 	// zhipu 4v
 	WatermarkEnabled json.RawMessage `json:"watermark_enabled,omitempty"`
 	UserId           json.RawMessage `json:"user_id,omitempty"`
