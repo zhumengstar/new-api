@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React from 'react';
+import { ImagePreview } from '@douyinfe/semi-ui';
 import CardPro from '../../common/ui/CardPro';
 import LogsTable from './UsageLogsTable';
 import LogsActions from './UsageLogsActions';
@@ -41,6 +42,11 @@ const LogsPage = () => {
       <UserInfoModal {...logsData} />
       <ChannelAffinityUsageCacheModal {...logsData} />
       <ParamOverrideModal {...logsData} />
+      <ImagePreview
+        src={logsData.generatedImagePreviewUrl}
+        visible={logsData.isGeneratedImagePreviewOpen}
+        onVisibleChange={(visible) => logsData.setIsGeneratedImagePreviewOpen(visible)}
+      />
 
       {/* Main Content */}
       <CardPro

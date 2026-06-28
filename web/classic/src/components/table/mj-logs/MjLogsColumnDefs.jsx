@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React from 'react';
-import { Button, Progress, Tag, Typography } from '@douyinfe/semi-ui';
+import { Progress, Tag, Typography } from '@douyinfe/semi-ui';
 import {
   Palette,
   ZoomIn,
@@ -84,6 +84,12 @@ function renderType(type, t) {
       return (
         <Tag color='orange' shape='circle' prefixIcon={<Video size={14} />}>
           {t('视频')}
+        </Tag>
+      );
+    case 'IMAGE_GENERATION':
+      return (
+        <Tag color='green' shape='circle' prefixIcon={<Palette size={14} />}>
+          {t('图像生成')}
         </Tag>
       );
     case 'EDITS':
@@ -288,7 +294,6 @@ function renderStatus(type, t) {
 }
 
 const renderTimestamp = (timestampInSeconds) => {
-  if (!timestampInSeconds) return '-';
   const date = new Date(timestampInSeconds * 1000);
   const year = date.getFullYear();
   const month = ('0' + (date.getMonth() + 1)).slice(-2);
@@ -300,37 +305,12 @@ const renderTimestamp = (timestampInSeconds) => {
   return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
 };
 
-const normalizeImageUrl = (imageUrl) => {
-  if (!imageUrl) return '';
-  if (/^(https?:)?\/\//i.test(imageUrl) || imageUrl.startsWith('data:')) {
-    return imageUrl;
-  }
-  return imageUrl.startsWith('/') ? imageUrl : `/${imageUrl}`;
-};
-
-const thumbnailImageUrl = (imageUrl, width = 1024) => {
-  if (!imageUrl.startsWith('/generated-images/')) return imageUrl;
-  const path = imageUrl.slice('/generated-images/'.length);
-  return `/generated-image-thumbnails/${path}?w=${width}`;
-};
-
-const downloadImageUrl = (imageUrl, filename = 'generated-image.jpg') => {
-  const link = document.createElement('a');
-  link.href = imageUrl;
-  link.download = filename;
-  link.rel = 'noopener noreferrer';
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-};
-
-function renderDuration(submit_time, finishTime, t, startTime) {
+function renderDuration(submit_time, finishTime, t) {
   if (!submit_time || !finishTime) return 'N/A';
 
-  const startValue = Number(startTime);
-  const submitValue = startValue > 0 ? startValue : Number(submit_time);
-  const finishValue = Number(finishTime);
-  const durationMs = finishValue - submitValue;
+  const start = new Date(submit_time);
+  const finish = new Date(finishTime);
+  const durationMs = finish - start;
   const durationSec = (durationMs / 1000).toFixed(1);
   const color = durationSec > 60 ? 'red' : 'green';
 
@@ -363,7 +343,7 @@ export const getMjLogsColumns = ({
       title: t('花费时间'),
       dataIndex: 'finish_time',
       render: (finish, record) => {
-        return renderDuration(record.submit_time, finish, t, record.start_time);
+        return renderDuration(record.start_time || record.submit_time, finish, t);
       },
     },
     {
@@ -439,7 +419,7 @@ export const getMjLogsColumns = ({
                 percent={text ? parseInt(text.replace('%', '')) : 0}
                 showInfo={true}
                 aria-label='drawing progress'
-                style={{ minWidth: '160px' }}
+                style={{ width: 104, minWidth: 104 }}
               />
             }
           </div>
@@ -454,39 +434,59 @@ export const getMjLogsColumns = ({
         if (!text) {
           return t('无');
         }
-        const imageUrl = normalizeImageUrl(text);
-        const thumbnailUrl = thumbnailImageUrl(imageUrl);
         return (
-          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-            <Button
-              size='small'
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4, width: 96 }}>
+            <button
+              type='button'
               onClick={() => {
-                openImageModal(thumbnailUrl);
+                openImageModal(text);
               }}
-              style={{ height: 'auto', padding: 4 }}
+              title={t('查看图片')}
+              style={{
+                width: 96,
+                height: 96,
+                border: '1px solid var(--semi-color-border)',
+                borderRadius: 6,
+                padding: 0,
+                overflow: 'hidden',
+                background: 'var(--semi-color-fill-0)',
+                cursor: 'pointer',
+              }}
             >
               <img
-                src={thumbnailUrl}
+                src={text}
                 alt={t('结果图片')}
-                style={{
-                  width: 56,
-                  height: 56,
-                  objectFit: 'cover',
-                  borderRadius: 4,
-                  display: 'block',
-                }}
-                loading='lazy'
+                style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
               />
-            </Button>
-            <Button
-              size='small'
-              onClick={() => {
-                downloadImageUrl(imageUrl, `${record.mj_id || 'generated-image'}.jpg`);
+            </button>
+            <a
+              href={`${text}${text.includes('?') ? '&' : '?'}download=1`}
+              download
+              style={{
+                fontSize: 12,
+                color: 'var(--semi-color-primary)',
+                textAlign: 'center',
+                lineHeight: '18px',
               }}
             >
-              {t('下载')}
-            </Button>
+              {t('下载原图')}
+            </a>
           </div>
+        );
+      },
+    },
+    {
+      key: COLUMN_KEYS.IMAGE_SIZE,
+      title: t('图片大小'),
+      dataIndex: 'image_size',
+      render: (text, record, index) => {
+        if (!text) {
+          return t('无');
+        }
+        return (
+          <Tag color='blue' shape='circle'>
+            {text}
+          </Tag>
         );
       },
     },
@@ -502,7 +502,7 @@ export const getMjLogsColumns = ({
         return (
           <Typography.Text
             ellipsis={{ showTooltip: true }}
-            style={{ width: 100 }}
+            style={{ width: 180 }}
             onClick={() => {
               openContentModal(text);
             }}

@@ -43,6 +43,63 @@ import { ITEMS_PER_PAGE } from '../../constants';
 import { useTableCompactMode } from '../common/useTableCompactMode';
 import ParamOverrideEntry from '../../components/table/usage-logs/components/ParamOverrideEntry';
 
+const renderGeneratedImages = (images, t, openGeneratedImagePreview) => {
+  const validImages = Array.isArray(images)
+    ? images.filter((image) => image?.url)
+    : [];
+  if (!validImages.length) {
+    return null;
+  }
+  return (
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, maxWidth: 640 }}>
+      {validImages.map((image, index) => {
+        const downloadUrl = `${image.url}${image.url.includes('?') ? '&' : '?'}download=1`;
+        return (
+          <div key={`${image.url}-${index}`} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <button
+              type='button'
+              onClick={() => openGeneratedImagePreview(image.url)}
+              title={image.expires_at ? `${t('有效期至')} ${timestamp2string(image.expires_at)}` : t('查看图片')}
+              style={{
+                display: 'block',
+                border: 0,
+                padding: 0,
+                background: 'transparent',
+                cursor: 'pointer',
+              }}
+            >
+              <img
+                src={image.url}
+                alt={t('生成图片')}
+                style={{
+                  width: 120,
+                  height: 120,
+                  objectFit: 'cover',
+                  borderRadius: 6,
+                  border: '1px solid var(--semi-color-border)',
+                  background: 'var(--semi-color-fill-0)',
+                }}
+              />
+            </button>
+            <a
+              href={downloadUrl}
+              download
+              style={{
+                fontSize: 12,
+                color: 'var(--semi-color-primary)',
+                textAlign: 'center',
+                lineHeight: '18px',
+              }}
+            >
+              {t('下载原图')}
+            </a>
+          </div>
+        );
+      })}
+    </div>
+  );
+};
+
 export const useLogsData = () => {
   const { t } = useTranslation();
 
@@ -74,6 +131,8 @@ export const useLogsData = () => {
   const [logCount, setLogCount] = useState(0);
   const [pageSize, setPageSize] = useState(ITEMS_PER_PAGE);
   const [logType, setLogType] = useState(0);
+  const [isGeneratedImagePreviewOpen, setIsGeneratedImagePreviewOpen] = useState(false);
+  const [generatedImagePreviewUrl, setGeneratedImagePreviewUrl] = useState('');
 
   // User and admin
   const isAdminUser = isAdmin();
@@ -172,6 +231,11 @@ export const useLogsData = () => {
 
   // Compact mode
   const [compactMode, setCompactMode] = useTableCompactMode('logs');
+
+  const openGeneratedImagePreview = (imageUrl) => {
+    setGeneratedImagePreviewUrl(imageUrl);
+    setIsGeneratedImagePreviewOpen(true);
+  };
 
   // User info modal state
   const [showUserInfo, setShowUserInfoModal] = useState(false);
@@ -527,6 +591,12 @@ export const useLogsData = () => {
           });
         }
       }
+      if (Array.isArray(other?.generated_images) && other.generated_images.length > 0) {
+        expandDataLocal.push({
+          key: t('生成图片'),
+          value: renderGeneratedImages(other.generated_images, t, openGeneratedImagePreview),
+        });
+      }
       if (other?.request_path) {
         expandDataLocal.push({
           key: t('请求路径'),
@@ -845,6 +915,9 @@ export const useLogsData = () => {
     logType,
     stat,
     isAdminUser,
+    isGeneratedImagePreviewOpen,
+    setIsGeneratedImagePreviewOpen,
+    generatedImagePreviewUrl,
 
     // Form state
     formApi,

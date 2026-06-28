@@ -55,6 +55,18 @@ type Log struct {
 	Other             string `json:"other"`
 }
 
+type GeneratedImageLog struct {
+	Id        int    `json:"id"`
+	UserId    int    `json:"user_id"`
+	CreatedAt int64  `json:"created_at"`
+	ModelName string `json:"model_name"`
+	Prompt    string `json:"prompt"`
+	ChannelId int    `json:"channel_id"`
+	Quota     int    `json:"quota"`
+	UseTime   int    `json:"use_time"`
+	Other     string `json:"other"`
+}
+
 // don't use iota, avoid change log type value
 const (
 	LogTypeUnknown = 0
@@ -104,6 +116,81 @@ func formatUserLogs(logs []*Log, startIdx int) {
 		logs[i].Other = common.MapToJsonStr(otherMap)
 	}
 	assignDisplayLogIds(logs, startIdx)
+}
+
+func CanAccessGeneratedImageAsset(userId int, isAdmin bool, assetURL string) bool {
+	if strings.TrimSpace(assetURL) == "" {
+		return false
+	}
+	tx := LOG_DB.Model(&Log{}).Where("other LIKE ?", "%"+assetURL+"%")
+	if !isAdmin {
+		tx = tx.Where("user_id = ?", userId)
+	}
+	var count int64
+	if err := tx.Count(&count).Error; err != nil {
+		common.SysLog("failed to check generated image asset access: " + err.Error())
+		return false
+	}
+	return count > 0
+}
+
+func GetAllGeneratedImageLogs(startIdx int, num int, queryParams TaskQueryParams) ([]*GeneratedImageLog, int64) {
+	var logs []*GeneratedImageLog
+	query := LOG_DB.Model(&Log{}).
+		Select("id, user_id, created_at, model_name, content as prompt, channel_id, quota, use_time, other").
+		Where("type = ? AND other LIKE ?", LogTypeConsume, "%generated_images%")
+
+	if queryParams.ChannelID != "" {
+		query = query.Where("channel_id = ?", queryParams.ChannelID)
+	}
+	if queryParams.MjID != "" {
+		query = query.Where("request_id = ? OR upstream_request_id = ?", queryParams.MjID, queryParams.MjID)
+	}
+	if queryParams.StartTimestamp != "" {
+		query = query.Where("created_at * 1000 >= ?", queryParams.StartTimestamp)
+	}
+	if queryParams.EndTimestamp != "" {
+		query = query.Where("created_at * 1000 <= ?", queryParams.EndTimestamp)
+	}
+
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		common.SysLog("failed to count generated image logs: " + err.Error())
+		return nil, 0
+	}
+	if err := query.Order("id desc").Limit(num).Offset(startIdx).Find(&logs).Error; err != nil {
+		common.SysLog("failed to query generated image logs: " + err.Error())
+		return nil, 0
+	}
+	return logs, total
+}
+
+func GetAllUserGeneratedImageLogs(userId int, startIdx int, num int, queryParams TaskQueryParams) ([]*GeneratedImageLog, int64) {
+	var logs []*GeneratedImageLog
+	query := LOG_DB.Model(&Log{}).
+		Select("id, user_id, created_at, model_name, content as prompt, channel_id, quota, use_time, other").
+		Where("user_id = ? AND type = ? AND other LIKE ?", userId, LogTypeConsume, "%generated_images%")
+
+	if queryParams.MjID != "" {
+		query = query.Where("request_id = ? OR upstream_request_id = ?", queryParams.MjID, queryParams.MjID)
+	}
+	if queryParams.StartTimestamp != "" {
+		query = query.Where("created_at * 1000 >= ?", queryParams.StartTimestamp)
+	}
+	if queryParams.EndTimestamp != "" {
+		query = query.Where("created_at * 1000 <= ?", queryParams.EndTimestamp)
+	}
+
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		common.SysLog("failed to count user generated image logs: " + err.Error())
+		return nil, 0
+	}
+	if err := query.Order("id desc").Limit(num).Offset(startIdx).Find(&logs).Error; err != nil {
+		common.SysLog("failed to query user generated image logs: " + err.Error())
+		return nil, 0
+	}
+	return logs, total
 }
 
 func GetLogByTokenId(tokenId int) (logs []*Log, err error) {

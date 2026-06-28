@@ -210,6 +210,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		}
 		c.Request.Body = io.NopCloser(bodyStorage)
 
+		attemptStartedAt := time.Now()
 		switch relayFormat {
 		case types.RelayFormatOpenAIRealtime:
 			newAPIError = relay.WssHelper(c, relayInfo)
@@ -230,6 +231,12 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		relayInfo.LastError = newAPIError
 
 		processChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError)
+
+		attemptDuration := time.Since(attemptStartedAt)
+		if shouldStopRetryAfterSlowImageAttempt(relayInfo, attemptDuration) {
+			logger.LogInfo(c, fmt.Sprintf("图片请求单次连接耗时 %.0fs，超过 60s，跳过后续重试", attemptDuration.Seconds()))
+			break
+		}
 
 		if !shouldRetry(c, newAPIError, common.RetryTimes-retryParam.GetRetry()) {
 			break
@@ -320,6 +327,16 @@ func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service
 		return nil, newAPIError
 	}
 	return channel, nil
+}
+
+func shouldStopRetryAfterSlowImageAttempt(info *relaycommon.RelayInfo, attemptDuration time.Duration) bool {
+	if info == nil {
+		return false
+	}
+	if info.RelayMode != relayconstant.RelayModeImagesGenerations && info.RelayMode != relayconstant.RelayModeImagesEdits {
+		return false
+	}
+	return attemptDuration >= 60*time.Second
 }
 
 func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) bool {

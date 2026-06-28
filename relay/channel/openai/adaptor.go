@@ -9,7 +9,6 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/textproto"
-	"net/url"
 	"path/filepath"
 	"strings"
 
@@ -96,6 +95,9 @@ func (a *Adaptor) Init(info *relaycommon.RelayInfo) {
 }
 
 func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
+	if shouldUseGeminiImageChatCompatibility(info) {
+		return fmt.Sprintf("%s/v1/chat/completions", info.ChannelBaseUrl), nil
+	}
 	if info.RelayMode == relayconstant.RelayModeRealtime {
 		if strings.HasPrefix(info.ChannelBaseUrl, "https://") {
 			baseUrl := strings.TrimPrefix(info.ChannelBaseUrl, "https://")
@@ -164,9 +166,6 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 		url = strings.Replace(url, "{model}", info.UpstreamModelName, -1)
 		return url, nil
 	default:
-		if shouldUseGeminiImageChatCompatibility(info) {
-			return fmt.Sprintf("%s/v1/chat/completions", info.ChannelBaseUrl), nil
-		}
 		if (info.RelayFormat == types.RelayFormatClaude || info.RelayFormat == types.RelayFormatGemini) &&
 			info.RelayMode != relayconstant.RelayModeResponses &&
 			info.RelayMode != relayconstant.RelayModeResponsesCompact {
@@ -314,20 +313,18 @@ func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayIn
 		}
 
 	}
-	isOModel := dto.IsOpenAIReasoningOModel(info.UpstreamModelName)
-	isGPT5Model := dto.IsOpenAIGPT5Model(info.UpstreamModelName)
-	if isOModel || isGPT5Model {
+	if strings.HasPrefix(info.UpstreamModelName, "o") || strings.HasPrefix(info.UpstreamModelName, "gpt-5") {
 		if lo.FromPtrOr(request.MaxCompletionTokens, uint(0)) == 0 && lo.FromPtrOr(request.MaxTokens, uint(0)) != 0 {
 			request.MaxCompletionTokens = request.MaxTokens
 			request.MaxTokens = nil
 		}
 
-		if isOModel {
+		if strings.HasPrefix(info.UpstreamModelName, "o") {
 			request.Temperature = nil
 		}
 
 		// gpt-5系列模型适配 归零不再支持的参数
-		if isGPT5Model {
+		if strings.HasPrefix(info.UpstreamModelName, "gpt-5") {
 			request.Temperature = nil
 			request.TopP = nil
 			request.LogProbs = nil
@@ -351,82 +348,8 @@ func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayIn
 			}
 		}
 	}
-	sanitizeOpenAICompatibleGeminiRequest(info, request)
 
 	return request, nil
-}
-
-func sanitizeOpenAICompatibleGeminiRequest(info *relaycommon.RelayInfo, request *dto.GeneralOpenAIRequest) {
-	if info == nil || request == nil || info.ChannelType != constant.ChannelTypeOpenAI {
-		return
-	}
-	modelName := strings.ToLower(info.UpstreamModelName)
-	if modelName == "" {
-		modelName = strings.ToLower(request.Model)
-	}
-	if !strings.HasPrefix(modelName, "gemini") {
-		return
-	}
-
-	// Some OpenAI-compatible Gemini proxies reject newer OpenAI-only extension
-	// fields with "Request contains an invalid argument". Keep the common chat
-	// parameters and drop fields that are not part of the Gemini-compatible
-	// chat surface.
-	request.ResponseFormat = nil
-	request.ParallelTooCalls = nil
-	request.ToolChoice = nil
-	request.FunctionCall = nil
-	request.ServiceTier = nil
-	request.LogProbs = nil
-	request.TopLogProbs = nil
-	request.Modalities = nil
-	request.Audio = nil
-	request.SafetyIdentifier = nil
-	request.Store = nil
-	request.PromptCacheKey = ""
-	request.PromptCacheRetention = nil
-	request.Metadata = nil
-	request.Prediction = nil
-	request.SearchParameters = nil
-	request.WebSearchOptions = nil
-	request.Usage = nil
-	request.Reasoning = nil
-	request.ReasoningEffort = ""
-	request.THINKING = nil
-	for i := range request.Messages {
-		request.Messages[i].Name = nil
-		request.Messages[i].Prefix = nil
-		request.Messages[i].ReasoningContent = nil
-		request.Messages[i].Reasoning = nil
-		request.Messages[i].Content = sanitizeGeminiMessageContent(request.Messages[i].Content)
-	}
-}
-
-func sanitizeGeminiMessageContent(content any) any {
-	switch value := content.(type) {
-	case []any:
-		for i := range value {
-			value[i] = sanitizeGeminiMessageContent(value[i])
-		}
-		return value
-	case []dto.MediaContent:
-		for i := range value {
-			value[i].CacheControl = nil
-		}
-		return value
-	case map[string]any:
-		delete(value, "cache_control")
-		delete(value, "reasoning")
-		delete(value, "reasoning_content")
-		delete(value, "thinking")
-		delete(value, "refusal")
-		for key, item := range value {
-			value[key] = sanitizeGeminiMessageContent(item)
-		}
-		return value
-	default:
-		return content
-	}
 }
 
 func (a *Adaptor) ConvertRerankRequest(c *gin.Context, relayMode int, request dto.RerankRequest) (any, error) {
@@ -503,19 +426,48 @@ func (a *Adaptor) ConvertAudioRequest(c *gin.Context, info *relaycommon.RelayInf
 	}
 }
 
+func shouldUseGeminiImageChatCompatibility(info *relaycommon.RelayInfo) bool {
+	if info == nil || info.ChannelType != constant.ChannelTypeOpenAI {
+		return false
+	}
+	if info.RelayMode != relayconstant.RelayModeImagesGenerations && info.RelayMode != relayconstant.RelayModeImagesEdits {
+		return false
+	}
+	model := strings.ToLower(strings.TrimSpace(info.UpstreamModelName))
+	return strings.HasPrefix(model, "gemini-") && strings.Contains(model, "image")
+}
+
+func convertImageRequestToGeminiImageChat(request dto.ImageRequest, info *relaycommon.RelayInfo) dto.GeneralOpenAIRequest {
+	n := uint(1)
+	if request.N != nil && *request.N > 0 {
+		n = *request.N
+	}
+
+	prompt := request.Prompt
+	if n > 1 {
+		prompt = fmt.Sprintf("%s\n\nGenerate %d images.", prompt, n)
+	}
+	if request.Size != "" {
+		prompt = fmt.Sprintf("%s\n\nTarget image size: %s.", prompt, request.Size)
+	}
+	if request.Quality != "" {
+		prompt = fmt.Sprintf("%s\n\nTarget image quality: %s.", prompt, request.Quality)
+	}
+
+	return dto.GeneralOpenAIRequest{
+		Model: info.UpstreamModelName,
+		Messages: []dto.Message{
+			{
+				Role:    "user",
+				Content: prompt,
+			},
+		},
+	}
+}
+
 func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.ImageRequest) (any, error) {
 	if shouldUseGeminiImageChatCompatibility(info) {
-		stream := false
-		return &dto.GeneralOpenAIRequest{
-			Model: request.Model,
-			Messages: []dto.Message{
-				{
-					Role:    "user",
-					Content: request.Prompt,
-				},
-			},
-			Stream: &stream,
-		}, nil
+		return convertImageRequestToGeminiImageChat(request, info), nil
 	}
 	switch info.RelayMode {
 	case relayconstant.RelayModeImagesEdits:
@@ -530,13 +482,10 @@ func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInf
 		// 使用已解析的 multipart 表单，避免重复解析
 		mf := c.Request.MultipartForm
 		if mf == nil {
-			form, err := common.ParseMultipartFormReusable(c)
-			if err != nil {
-				return nil, fmt.Errorf("failed to parse multipart form: %w", err)
+			if _, err := c.MultipartForm(); err != nil {
+				return nil, errors.New("failed to parse multipart form")
 			}
-			c.Request.MultipartForm = form
-			c.Request.PostForm = url.Values(form.Value)
-			mf = form
+			mf = c.Request.MultipartForm
 		}
 
 		// 写入所有非文件字段
@@ -721,10 +670,8 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 	case relayconstant.RelayModeImagesGenerations, relayconstant.RelayModeImagesEdits:
 		if shouldUseGeminiImageChatCompatibility(info) {
 			usage, err = GeminiImageChatCompatibilityHandler(c, info, resp)
-		} else if info.IsStream {
-			usage, err = OpenaiImageStreamHandler(c, info, resp)
 		} else {
-			usage, err = OpenaiImageHandler(c, info, resp)
+			usage, err = OpenaiHandlerWithUsage(c, info, resp)
 		}
 	case relayconstant.RelayModeRerank:
 		usage, err = common_handler.RerankHandler(c, info, resp)
@@ -744,20 +691,6 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 		}
 	}
 	return
-}
-
-func shouldUseGeminiImageChatCompatibility(info *relaycommon.RelayInfo) bool {
-	if info == nil || info.ChannelMeta == nil || info.ChannelType != constant.ChannelTypeOpenAI {
-		return false
-	}
-	if info.RelayMode != relayconstant.RelayModeImagesGenerations && info.RelayMode != relayconstant.RelayModeImagesEdits {
-		return false
-	}
-	modelName := strings.ToLower(info.UpstreamModelName)
-	if modelName == "" {
-		modelName = strings.ToLower(info.OriginModelName)
-	}
-	return strings.HasPrefix(modelName, "gemini") && strings.Contains(modelName, "image")
 }
 
 func (a *Adaptor) GetModelList() []string {
