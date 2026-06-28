@@ -9,9 +9,13 @@ import (
 
 func GetUserUsableGroups(userGroup string) map[string]string {
 	groupsCopy := setting.GetUserUsableGroupsCopy()
-	if userGroup != "" {
-		specialSettings, b := ratio_setting.GetGroupRatioSetting().GroupSpecialUsableGroup.Get(userGroup)
-		if b {
+	userGroups := ParseUserGroups(userGroup)
+	if len(userGroups) > 0 {
+		for _, singleUserGroup := range userGroups {
+			specialSettings, b := ratio_setting.GetGroupRatioSetting().GroupSpecialUsableGroup.Get(singleUserGroup)
+			if !b {
+				continue
+			}
 			// 处理特殊可用分组
 			for specialGroup, desc := range specialSettings {
 				if strings.HasPrefix(specialGroup, "-:") {
@@ -28,12 +32,76 @@ func GetUserUsableGroups(userGroup string) map[string]string {
 				}
 			}
 		}
-		// 如果userGroup不在UserUsableGroups中，返回UserUsableGroups + userGroup
-		if _, ok := groupsCopy[userGroup]; !ok {
-			groupsCopy[userGroup] = "用户分组"
+		for _, singleUserGroup := range userGroups {
+			// 如果userGroup不在UserUsableGroups中，返回UserUsableGroups + userGroup
+			if _, ok := groupsCopy[singleUserGroup]; !ok {
+				groupsCopy[singleUserGroup] = "用户分组"
+			}
 		}
 	}
 	return groupsCopy
+}
+
+func ParseUserGroups(userGroup string) []string {
+	userGroup = strings.TrimSpace(userGroup)
+	if userGroup == "" {
+		return nil
+	}
+	seen := make(map[string]struct{})
+	groups := make([]string, 0)
+	for _, group := range strings.Split(userGroup, ",") {
+		group = strings.TrimSpace(group)
+		if group == "" {
+			continue
+		}
+		if _, ok := seen[group]; ok {
+			continue
+		}
+		seen[group] = struct{}{}
+		groups = append(groups, group)
+	}
+	return groups
+}
+
+func JoinUserGroups(groups []string) string {
+	seen := make(map[string]struct{})
+	normalized := make([]string, 0, len(groups))
+	for _, group := range groups {
+		group = strings.TrimSpace(group)
+		if group == "" {
+			continue
+		}
+		if _, ok := seen[group]; ok {
+			continue
+		}
+		seen[group] = struct{}{}
+		normalized = append(normalized, group)
+	}
+	return strings.Join(normalized, ",")
+}
+
+func GetPrimaryUserGroup(userGroup string) string {
+	groups := ParseUserGroups(userGroup)
+	if len(groups) == 0 {
+		return ""
+	}
+	return groups[0]
+}
+
+func GetUserGroupRatio(userGroup, group string) float64 {
+	var selectedRatio float64
+	hasSelectedRatio := false
+	for _, singleUserGroup := range ParseUserGroups(userGroup) {
+		ratio, ok := ratio_setting.GetGroupGroupRatio(singleUserGroup, group)
+		if ok && (!hasSelectedRatio || ratio < selectedRatio) {
+			selectedRatio = ratio
+			hasSelectedRatio = true
+		}
+	}
+	if hasSelectedRatio {
+		return selectedRatio
+	}
+	return ratio_setting.GetGroupRatio(group)
 }
 
 func GroupInUserUsableGroups(userGroup, groupName string) bool {
@@ -51,15 +119,4 @@ func GetUserAutoGroup(userGroup string) []string {
 		}
 	}
 	return autoGroups
-}
-
-// GetUserGroupRatio 获取用户使用某个分组的倍率
-// userGroup 用户分组
-// group 需要获取倍率的分组
-func GetUserGroupRatio(userGroup, group string) float64 {
-	ratio, ok := ratio_setting.GetGroupGroupRatio(userGroup, group)
-	if ok {
-		return ratio
-	}
-	return ratio_setting.GetGroupRatio(group)
 }

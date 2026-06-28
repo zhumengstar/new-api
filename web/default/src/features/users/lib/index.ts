@@ -30,4 +30,5 @@ export {
   USER_FORM_DEFAULT_VALUES,
   transformFormDataToPayload,
   transformUserToFormDefaults,
+  normalizeUserGroups,
 } from './user-form'

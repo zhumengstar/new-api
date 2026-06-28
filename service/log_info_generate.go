@@ -1,7 +1,12 @@
 package service
 
 import (
+	"bytes"
 	"encoding/base64"
+	"io"
+	"mime"
+	"mime/multipart"
+	"net/url"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -12,6 +17,14 @@ import (
 	"github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
+)
+
+const (
+	maxLoggedRequestBodyBytes = 2 << 20
+	maxLoggedFormFieldBytes   = 64 << 10
+	maxLoggedJSONDepth        = 12
+	maxLoggedJSONArrayItems   = 50
+	maxLoggedJSONObjectKeys   = 200
 )
 
 func appendRequestPath(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, other map[string]interface{}) {
@@ -31,6 +44,194 @@ func appendRequestPath(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, other
 		}
 		other["request_path"] = path
 	}
+}
+
+func appendRequestBodyInfo(ctx *gin.Context, other map[string]interface{}) {
+	if ctx == nil || ctx.Request == nil || other == nil {
+		return
+	}
+	storage, err := common.GetBodyStorage(ctx)
+	if err != nil || storage == nil {
+		return
+	}
+	defer func() {
+		_, _ = storage.Seek(0, io.SeekStart)
+	}()
+
+	contentType := ctx.Request.Header.Get("Content-Type")
+	size := storage.Size()
+	info := map[string]interface{}{
+		"method":       ctx.Request.Method,
+		"content_type": contentType,
+		"size":         size,
+	}
+	if ctx.Request.URL != nil {
+		info["path"] = ctx.Request.URL.Path
+	}
+
+	mediaType, params, _ := mime.ParseMediaType(contentType)
+	mediaType = strings.ToLower(mediaType)
+	switch {
+	case strings.HasPrefix(mediaType, "multipart/"):
+		_, _ = storage.Seek(0, io.SeekStart)
+		info["body"] = captureMultipartRequestBody(storage, params["boundary"])
+	case mediaType == "application/x-www-form-urlencoded":
+		if size > maxLoggedRequestBodyBytes {
+			info["truncated"] = true
+			break
+		}
+		if body, err := storage.Bytes(); err == nil {
+			info["body"] = captureFormRequestBody(body)
+		}
+	case mediaType == "application/json" || strings.HasSuffix(mediaType, "+json") || mediaType == "":
+		if size > maxLoggedRequestBodyBytes {
+			info["truncated"] = true
+			break
+		}
+		if body, err := storage.Bytes(); err == nil {
+			info["body"] = captureJSONRequestBody(body)
+		}
+	default:
+		if size > maxLoggedRequestBodyBytes {
+			info["truncated"] = true
+			break
+		}
+		if body, err := storage.Bytes(); err == nil {
+			info["body"] = truncateLoggedString(string(body), maxLoggedFormFieldBytes)
+		}
+	}
+
+	other["request_body"] = info
+}
+
+func captureJSONRequestBody(body []byte) interface{} {
+	var value interface{}
+	if err := common.Unmarshal(body, &value); err == nil {
+		return truncateLoggedJSONValue(value, 0)
+	}
+	return truncateLoggedString(string(body), maxLoggedFormFieldBytes)
+}
+
+func truncateLoggedJSONValue(value interface{}, depth int) interface{} {
+	if depth >= maxLoggedJSONDepth {
+		return "...(max depth exceeded)"
+	}
+	switch v := value.(type) {
+	case string:
+		return truncateLoggedString(v, maxLoggedFormFieldBytes)
+	case []interface{}:
+		limit := len(v)
+		if limit > maxLoggedJSONArrayItems {
+			limit = maxLoggedJSONArrayItems
+		}
+		result := make([]interface{}, 0, limit+1)
+		for i := 0; i < limit; i++ {
+			result = append(result, truncateLoggedJSONValue(v[i], depth+1))
+		}
+		if len(v) > limit {
+			result = append(result, map[string]interface{}{
+				"truncated_items": len(v) - limit,
+			})
+		}
+		return result
+	case map[string]interface{}:
+		result := make(map[string]interface{}, len(v))
+		count := 0
+		for key, item := range v {
+			if count >= maxLoggedJSONObjectKeys {
+				result["truncated_keys"] = len(v) - count
+				break
+			}
+			result[key] = truncateLoggedJSONValue(item, depth+1)
+			count++
+		}
+		return result
+	default:
+		return value
+	}
+}
+
+func captureFormRequestBody(body []byte) map[string]interface{} {
+	values, err := url.ParseQuery(string(body))
+	if err != nil {
+		return map[string]interface{}{
+			"raw": truncateLoggedString(string(body), maxLoggedFormFieldBytes),
+		}
+	}
+	result := make(map[string]interface{}, len(values))
+	for key, vals := range values {
+		if len(vals) == 1 {
+			result[key] = truncateLoggedString(vals[0], maxLoggedFormFieldBytes)
+			continue
+		}
+		items := make([]string, 0, len(vals))
+		for _, val := range vals {
+			items = append(items, truncateLoggedString(val, maxLoggedFormFieldBytes))
+		}
+		result[key] = items
+	}
+	return result
+}
+
+func captureMultipartRequestBody(reader io.Reader, boundary string) map[string]interface{} {
+	result := map[string]interface{}{
+		"fields": map[string]interface{}{},
+		"files":  map[string][]map[string]interface{}{},
+	}
+	if boundary == "" {
+		result["error"] = "missing multipart boundary"
+		return result
+	}
+	mr := multipart.NewReader(reader, boundary)
+	fields := result["fields"].(map[string]interface{})
+	files := result["files"].(map[string][]map[string]interface{})
+	for {
+		part, err := mr.NextPart()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			result["error"] = err.Error()
+			break
+		}
+		name := part.FormName()
+		if name == "" {
+			continue
+		}
+		filename := part.FileName()
+		if filename == "" {
+			buf := new(bytes.Buffer)
+			_, _ = io.Copy(buf, io.LimitReader(part, maxLoggedFormFieldBytes+1))
+			value := truncateLoggedString(buf.String(), maxLoggedFormFieldBytes)
+			if existing, ok := fields[name]; ok {
+				switch v := existing.(type) {
+				case []string:
+					fields[name] = append(v, value)
+				case string:
+					fields[name] = []string{v, value}
+				default:
+					fields[name] = value
+				}
+			} else {
+				fields[name] = value
+			}
+			continue
+		}
+		n, _ := io.Copy(io.Discard, part)
+		files[name] = append(files[name], map[string]interface{}{
+			"filename":     filename,
+			"content_type": part.Header.Get("Content-Type"),
+			"size":         n,
+		})
+	}
+	return result
+}
+
+func truncateLoggedString(value string, limit int) string {
+	if limit <= 0 || len(value) <= limit {
+		return value
+	}
+	return value[:limit] + "...(truncated)"
 }
 
 func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, modelRatio, groupRatio, completionRatio float64,
@@ -74,6 +275,7 @@ func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, m
 
 	other["admin_info"] = adminInfo
 	appendRequestPath(ctx, relayInfo, other)
+	appendRequestBodyInfo(ctx, other)
 	appendRequestConversionChain(relayInfo, other)
 	appendFinalRequestFormat(relayInfo, other)
 	appendBillingInfo(relayInfo, other)

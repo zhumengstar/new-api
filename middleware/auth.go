@@ -405,6 +405,8 @@ func TokenAuth() func(c *gin.Context) {
 				}
 			}
 			userGroup = tokenGroup
+		} else {
+			userGroup = service.GetPrimaryUserGroup(userGroup)
 		}
 		common.SetContextKey(c, constant.ContextKeyUsingGroup, userGroup)
 

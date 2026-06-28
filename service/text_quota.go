@@ -140,6 +140,17 @@ func calculateTextToolCallSurcharge(ctx *gin.Context, relayInfo *relaycommon.Rel
 	return surcharge
 }
 
+func imageGenerationCallQuota(summary textQuotaSummary) decimal.Decimal {
+	return decimal.NewFromFloat(summary.ImageGenerationCallPrice).
+		Mul(decimal.NewFromFloat(summary.GroupRatio)).
+		Mul(decimal.NewFromFloat(common.QuotaPerUnit))
+}
+
+func imageGenerationCallCostUSD(summary textQuotaSummary) decimal.Decimal {
+	return decimal.NewFromFloat(summary.ImageGenerationCallPrice).
+		Mul(decimal.NewFromFloat(summary.GroupRatio))
+}
+
 func composeTieredTextQuota(relayInfo *relaycommon.RelayInfo, summary textQuotaSummary, tieredQuota int, tieredResult *billingexpr.TieredResult) int {
 	if summary.ToolCallSurchargeQuota.IsZero() {
 		return tieredQuota
@@ -363,10 +374,9 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 		extraContent = append(extraContent, fmt.Sprintf("Audio Input 花费 %s", decimal.NewFromFloat(summary.AudioInputPrice).Div(decimal.NewFromInt(1000000)).Mul(decimal.NewFromInt(int64(summary.AudioTokens))).Mul(decimal.NewFromFloat(summary.GroupRatio)).Mul(decimal.NewFromFloat(common.QuotaPerUnit)).String()))
 	}
 	if summary.ImageGenerationCallPrice > 0 {
-		extraContent = append(extraContent, fmt.Sprintf("Image Generation Call 花费 %s", decimal.NewFromFloat(summary.ImageGenerationCallPrice).Mul(decimal.NewFromFloat(summary.GroupRatio)).Mul(decimal.NewFromFloat(common.QuotaPerUnit)).String()))
-	}
-	if generatedImageContent := generatedImagesLogContent(ctx); generatedImageContent != "" {
-		extraContent = append(extraContent, generatedImageContent)
+		callQuota := imageGenerationCallQuota(summary)
+		callCostUSD := imageGenerationCallCostUSD(summary)
+		extraContent = append(extraContent, fmt.Sprintf("图片生成调用花费 %s 额度（约 $%s）", callQuota.String(), callCostUSD.StringFixed(6)))
 	}
 
 	if summary.TotalTokens == 0 {
@@ -389,6 +399,9 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 	if strings.HasPrefix(logModel, "gpt-4o-gizmo") {
 		logModel = "gpt-4o-gizmo-*"
 		extraContent = append(extraContent, fmt.Sprintf("模型 %s", summary.ModelName))
+	}
+	if summary.ImageGenerationCallPrice > 0 {
+		extraContent = append(extraContent, fmt.Sprintf("本次扣减 %d 额度，生成耗时 %d 秒", summary.Quota, summary.UseTimeSeconds))
 	}
 
 	logContent := strings.Join(extraContent, ", ")
@@ -436,6 +449,11 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 	if summary.ImageGenerationCallPrice > 0 {
 		other["image_generation_call"] = true
 		other["image_generation_call_price"] = summary.ImageGenerationCallPrice
+		other["image_generation_call_quota"] = imageGenerationCallQuota(summary).IntPart()
+		other["image_generation_call_cost_usd"] = imageGenerationCallCostUSD(summary).InexactFloat64()
+		other["generated_at"] = common.GetTimestamp()
+		other["charged_quota"] = summary.Quota
+		other["generation_duration_seconds"] = summary.UseTimeSeconds
 	}
 	if generatedImages, exists := ctx.Get("generated_images"); exists {
 		other["generated_images"] = generatedImages
@@ -496,39 +514,4 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 	gopool.Go(func() {
 		perfmetrics.RecordRelaySample(relayInfo, true, int64(summary.CompletionTokens))
 	})
-}
-
-func generatedImagesLogContent(ctx *gin.Context) string {
-	generatedImages, exists := ctx.Get("generated_images")
-	if !exists {
-		return ""
-	}
-	images, ok := generatedImages.([]GeneratedImageInfo)
-	if !ok || len(images) == 0 {
-		return ""
-	}
-	image := images[0]
-	parts := make([]string, 0, 2)
-	if image.Width > 0 && image.Height > 0 {
-		parts = append(parts, fmt.Sprintf("输出尺寸 %dx%d", image.Width, image.Height))
-	}
-	if image.Size > 0 {
-		parts = append(parts, fmt.Sprintf("原图大小 %s", formatGeneratedImageSize(image.Size)))
-	}
-	return strings.Join(parts, ", ")
-}
-
-func formatGeneratedImageSize(size int64) string {
-	if size < 1024 {
-		return fmt.Sprintf("%d B", size)
-	}
-	value := float64(size)
-	units := []string{"KB", "MB", "GB"}
-	for i, unit := range units {
-		value /= 1024
-		if value < 1024 || i == len(units)-1 {
-			return fmt.Sprintf("%.1f %s", value, unit)
-		}
-	}
-	return fmt.Sprintf("%d B", size)
 }

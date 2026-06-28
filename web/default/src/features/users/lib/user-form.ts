@@ -31,8 +31,8 @@ export const userFormSchema = z.object({
   password: z.string().optional(),
   role: z.number().optional(),
   quota_dollars: z.number().min(0).optional(),
-  group: z.string().optional(),
-  remark: z.string().optional(),
+  group: z.array(z.string()).min(1, 'Group is required').optional(),
+  remark: z.string().optional()
 })
 
 export type UserFormValues = z.infer<typeof userFormSchema>
@@ -47,8 +47,8 @@ export const USER_FORM_DEFAULT_VALUES: UserFormValues = {
   password: '',
   role: 1, // Default to common user
   quota_dollars: 0,
-  group: DEFAULT_GROUP,
-  remark: '',
+  group: [DEFAULT_GROUP],
+  remark: ''
 }
 
 // ============================================================================
@@ -66,6 +66,7 @@ export function transformFormDataToPayload(
     username: data.username,
     display_name: data.display_name || data.username,
     password: data.password || undefined,
+    group: normalizeUserGroups(data.group).join(',')
   }
 
   // For create: only send required fields
@@ -73,7 +74,6 @@ export function transformFormDataToPayload(
     payload.role = data.role || 1 // Default to common user
   } else {
     // For update: quota is adjusted atomically via /api/user/manage, not sent here
-    payload.group = data.group
     payload.remark = data.remark || undefined
     payload.id = userId
   }
@@ -91,7 +91,24 @@ export function transformUserToFormDefaults(user: User): UserFormValues {
     password: '',
     role: user.role,
     quota_dollars: quotaUnitsToDollars(user.quota),
-    group: user.group || DEFAULT_GROUP,
-    remark: user.remark || '',
+    group: normalizeUserGroups(user.group),
+    remark: user.remark || ''
   }
+}
+
+export function normalizeUserGroups(groups?: string | string[]): string[] {
+  const rawGroups = Array.isArray(groups)
+    ? groups
+    : (groups || DEFAULT_GROUP).split(',')
+  const seen = new Set<string>()
+  const normalized: string[] = []
+
+  for (const group of rawGroups) {
+    const trimmed = group.trim()
+    if (!trimmed || seen.has(trimmed)) continue
+    seen.add(trimmed)
+    normalized.push(trimmed)
+  }
+
+  return normalized.length > 0 ? normalized : [DEFAULT_GROUP]
 }

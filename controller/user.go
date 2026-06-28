@@ -632,6 +632,11 @@ func UpdateUser(c *gin.Context) {
 	if updatedUser.Password == "$I_LOVE_U" {
 		updatedUser.Password = "" // rollback to what it should be
 	}
+	updatedUser.Group = service.JoinUserGroups(service.ParseUserGroups(updatedUser.Group))
+	if len(updatedUser.Group) > 64 {
+		common.ApiErrorMsg(c, "user group is too long")
+		return
+	}
 	updatePassword := updatedUser.Password != ""
 	if err := updatedUser.Edit(updatePassword); err != nil {
 		common.ApiError(c, err)
@@ -889,6 +894,14 @@ func CreateUser(c *gin.Context) {
 	if user.DisplayName == "" {
 		user.DisplayName = user.Username
 	}
+	user.Group = service.JoinUserGroups(service.ParseUserGroups(user.Group))
+	if user.Group == "" {
+		user.Group = "default"
+	}
+	if len(user.Group) > 64 {
+		common.ApiErrorMsg(c, "user group is too long")
+		return
+	}
 	myRole := c.GetInt("role")
 	if user.Role >= myRole {
 		common.ApiErrorI18n(c, i18n.MsgUserCannotCreateHigherLevel)
@@ -900,6 +913,7 @@ func CreateUser(c *gin.Context) {
 		Password:    user.Password,
 		DisplayName: user.DisplayName,
 		Role:        user.Role, // 保持管理员设置的角色
+		Group:       user.Group,
 	}
 	if err := cleanUser.Insert(0); err != nil {
 		common.ApiError(c, err)

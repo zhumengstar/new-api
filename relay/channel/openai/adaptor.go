@@ -2,6 +2,7 @@ package openai
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"net/http"
 	"net/textproto"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -437,10 +439,13 @@ func shouldUseGeminiImageChatCompatibility(info *relaycommon.RelayInfo) bool {
 	return strings.HasPrefix(model, "gemini-") && strings.Contains(model, "image")
 }
 
-func convertImageRequestToGeminiImageChat(request dto.ImageRequest, info *relaycommon.RelayInfo) dto.GeneralOpenAIRequest {
+func convertImageRequestToGeminiImageChat(c *gin.Context, request dto.ImageRequest, info *relaycommon.RelayInfo) (dto.GeneralOpenAIRequest, error) {
 	n := uint(1)
 	if request.N != nil && *request.N > 0 {
 		n = *request.N
+	}
+	if c != nil && strings.TrimSpace(request.Size) != "" {
+		c.Set("gemini_image_target_size", strings.TrimSpace(request.Size))
 	}
 
 	prompt := request.Prompt
@@ -449,25 +454,338 @@ func convertImageRequestToGeminiImageChat(request dto.ImageRequest, info *relayc
 	}
 	if request.Size != "" {
 		prompt = fmt.Sprintf("%s\n\nTarget image size: %s.", prompt, request.Size)
+		if instruction := geminiImageOrientationInstruction(request.Size); instruction != "" {
+			prompt = fmt.Sprintf("%s\n%s", prompt, instruction)
+		}
 	}
 	if request.Quality != "" {
 		prompt = fmt.Sprintf("%s\n\nTarget image quality: %s.", prompt, request.Quality)
 	}
 
-	return dto.GeneralOpenAIRequest{
+	message := dto.Message{Role: "user"}
+	if info.RelayMode == relayconstant.RelayModeImagesEdits && !isJSONRequest(c) {
+		mediaContents := []dto.MediaContent{{Type: dto.ContentTypeText, Text: prompt}}
+		imageContents, err := geminiImageEditMediaContents(c)
+		if err != nil {
+			return dto.GeneralOpenAIRequest{}, err
+		}
+		mediaContents = append(mediaContents, imageContents...)
+		message.SetMediaContent(mediaContents)
+	} else {
+		message.SetStringContent(prompt)
+	}
+
+	openAIRequest := dto.GeneralOpenAIRequest{
 		Model: info.UpstreamModelName,
 		Messages: []dto.Message{
-			{
-				Role:    "user",
-				Content: prompt,
-			},
+			message,
 		},
 	}
+	applyGeminiImageNativeSizeFields(&openAIRequest, request, info)
+	if request.Extra != nil {
+		openAIRequest.ExtraBody = request.Extra["extra_body"]
+	}
+	if err := applyGeminiImageConfig(&openAIRequest, request, info); err != nil {
+		return dto.GeneralOpenAIRequest{}, err
+	}
+	return openAIRequest, nil
+}
+
+func applyGeminiImageNativeSizeFields(openAIRequest *dto.GeneralOpenAIRequest, request dto.ImageRequest, info *relaycommon.RelayInfo) {
+	if openAIRequest == nil || info == nil || !shouldUseGeminiImageChatCompatibility(info) {
+		return
+	}
+	size := strings.TrimSpace(request.Size)
+	if size != "" {
+		openAIRequest.Size = size
+	}
+	if aspectRatio := geminiImageAspectRatioFromSize(request.Size); aspectRatio != "" {
+		openAIRequest.AspectRatio = aspectRatio
+	}
+	if imageSize := geminiImageSizeFromRequest(request, info); imageSize != "" {
+		openAIRequest.ImageSize = imageSize
+	}
+}
+
+func applyGeminiImageConfig(openAIRequest *dto.GeneralOpenAIRequest, request dto.ImageRequest, info *relaycommon.RelayInfo) error {
+	if info == nil || (info.ChannelType != constant.ChannelTypeGemini && info.ChannelType != constant.ChannelTypeVertexAi && !shouldUseGeminiImageChatCompatibility(info)) {
+		return nil
+	}
+
+	imageConfig := make(map[string]interface{})
+	aspectRatio := geminiImageAspectRatioFromSize(request.Size)
+	if aspectRatio != "" {
+		imageConfig["aspect_ratio"] = aspectRatio
+	}
+	imageSize := geminiImageSizeFromRequest(request, info)
+	if imageSize != "" {
+		imageConfig["image_size"] = imageSize
+	}
+	if len(imageConfig) == 0 {
+		return nil
+	}
+
+	extraBody := make(map[string]interface{})
+	if len(openAIRequest.ExtraBody) > 0 {
+		if err := common.Unmarshal(openAIRequest.ExtraBody, &extraBody); err != nil {
+			return fmt.Errorf("invalid extra body: %w", err)
+		}
+	}
+
+	googleBody, _ := extraBody["google"].(map[string]interface{})
+	if googleBody == nil {
+		googleBody = make(map[string]interface{})
+		extraBody["google"] = googleBody
+	}
+
+	userImageConfig, _ := googleBody["image_config"].(map[string]interface{})
+	if userImageConfig == nil {
+		userImageConfig = make(map[string]interface{})
+		googleBody["image_config"] = userImageConfig
+	}
+
+	for key, value := range imageConfig {
+		if _, exists := userImageConfig[key]; !exists {
+			userImageConfig[key] = value
+		}
+	}
+	if size := strings.TrimSpace(request.Size); size != "" {
+		if _, exists := extraBody["size"]; !exists {
+			extraBody["size"] = size
+		}
+	}
+	if aspectRatio != "" {
+		if _, exists := extraBody["aspect_ratio"]; !exists {
+			extraBody["aspect_ratio"] = aspectRatio
+		}
+	}
+	if imageSize != "" {
+		if _, exists := extraBody["image_size"]; !exists {
+			extraBody["image_size"] = imageSize
+		}
+	}
+
+	extraBodyBytes, err := common.Marshal(extraBody)
+	if err != nil {
+		return fmt.Errorf("failed to marshal gemini image_config: %w", err)
+	}
+	openAIRequest.ExtraBody = extraBodyBytes
+	return nil
+}
+
+func geminiImageOrientationInstruction(size string) string {
+	size = strings.TrimSpace(size)
+	if size == "" || strings.Contains(size, ":") {
+		if aspectRatio := closestGeminiImageAspectRatio(size); aspectRatio != "" {
+			return geminiImageAspectRatioInstruction(aspectRatio)
+		}
+		return ""
+	}
+	normalized := strings.ToLower(size)
+	parts := strings.Split(normalized, "x")
+	if len(parts) != 2 {
+		return ""
+	}
+	width, widthErr := strconv.Atoi(strings.TrimSpace(parts[0]))
+	height, heightErr := strconv.Atoi(strings.TrimSpace(parts[1]))
+	if widthErr != nil || heightErr != nil || width <= 0 || height <= 0 {
+		return ""
+	}
+	aspectRatio := geminiImageAspectRatioFromSize(size)
+	if aspectRatio == "" {
+		return ""
+	}
+	orientation := "square"
+	if width < height {
+		orientation = "portrait"
+	} else if width > height {
+		orientation = "landscape"
+	}
+	return fmt.Sprintf("Use a %s canvas with aspect ratio %s. Treat %d as width and %d as height; do not swap width and height.", orientation, aspectRatio, width, height)
+}
+
+func geminiImageAspectRatioInstruction(aspectRatio string) string {
+	width, height, ok := parseAspectRatio(aspectRatio)
+	if !ok {
+		return ""
+	}
+	orientation := "square"
+	if width < height {
+		orientation = "portrait"
+	} else if width > height {
+		orientation = "landscape"
+	}
+	return fmt.Sprintf("Use a %s canvas with aspect ratio %s; do not swap width and height.", orientation, aspectRatio)
+}
+
+func geminiImageAspectRatioFromSize(size string) string {
+	size = strings.TrimSpace(size)
+	if size == "" {
+		return ""
+	}
+	if strings.Contains(size, ":") {
+		return closestGeminiImageAspectRatio(size)
+	}
+
+	normalized := strings.ToLower(size)
+	switch normalized {
+	case "256x256", "512x512", "1024x1024", "2048x2048", "4096x4096":
+		return "1:1"
+	case "1536x1024", "3072x2048":
+		return "3:2"
+	case "1024x1536", "2048x3072":
+		return "2:3"
+	case "1024x1792", "2160x3840":
+		return "9:16"
+	case "1792x1024", "3840x2160":
+		return "16:9"
+	}
+
+	parts := strings.Split(normalized, "x")
+	if len(parts) != 2 {
+		return ""
+	}
+	width, widthErr := strconv.Atoi(strings.TrimSpace(parts[0]))
+	height, heightErr := strconv.Atoi(strings.TrimSpace(parts[1]))
+	if widthErr != nil || heightErr != nil || width <= 0 || height <= 0 {
+		return ""
+	}
+	return closestGeminiImageAspectRatio(fmt.Sprintf("%d:%d", width, height))
+}
+
+func closestGeminiImageAspectRatio(raw string) string {
+	width, height, ok := parseAspectRatio(raw)
+	if !ok {
+		return ""
+	}
+	target := float64(width) / float64(height)
+	supported := []struct {
+		label string
+		ratio float64
+	}{
+		{"1:1", 1.0},
+		{"3:4", 3.0 / 4.0},
+		{"4:3", 4.0 / 3.0},
+		{"3:2", 3.0 / 2.0},
+		{"2:3", 2.0 / 3.0},
+		{"9:16", 9.0 / 16.0},
+		{"16:9", 16.0 / 9.0},
+	}
+
+	best := supported[0]
+	bestDistance := absFloat(target - best.ratio)
+	for _, candidate := range supported[1:] {
+		distance := absFloat(target - candidate.ratio)
+		if distance < bestDistance {
+			best = candidate
+			bestDistance = distance
+		}
+	}
+	return best.label
+}
+
+func parseAspectRatio(raw string) (int, int, bool) {
+	parts := strings.Split(strings.TrimSpace(raw), ":")
+	if len(parts) != 2 {
+		return 0, 0, false
+	}
+	width, widthErr := strconv.Atoi(strings.TrimSpace(parts[0]))
+	height, heightErr := strconv.Atoi(strings.TrimSpace(parts[1]))
+	if widthErr != nil || heightErr != nil || width <= 0 || height <= 0 {
+		return 0, 0, false
+	}
+	return width, height, true
+}
+
+func absFloat(value float64) float64 {
+	if value < 0 {
+		return -value
+	}
+	return value
+}
+
+func geminiImageSizeFromRequest(request dto.ImageRequest, info *relaycommon.RelayInfo) string {
+	quality := strings.ToLower(strings.TrimSpace(request.Quality))
+	switch quality {
+	case "4k":
+		return "4K"
+	case "2k", "hd", "high":
+		return "2K"
+	case "1k", "standard", "medium", "low", "auto":
+		return "1K"
+	}
+
+	model := ""
+	if info != nil {
+		model = strings.ToLower(info.UpstreamModelName)
+	}
+	if strings.Contains(model, "4k") {
+		return "4K"
+	}
+	return ""
+}
+
+func geminiImageEditMediaContents(c *gin.Context) ([]dto.MediaContent, error) {
+	mf := c.Request.MultipartForm
+	if mf == nil {
+		if _, err := c.MultipartForm(); err != nil {
+			return nil, errors.New("failed to parse multipart form")
+		}
+		mf = c.Request.MultipartForm
+	}
+	if mf == nil || mf.File == nil {
+		return nil, errors.New("no multipart form data found")
+	}
+
+	imageFiles := collectImageFileHeaders(mf)
+	if len(imageFiles) == 0 {
+		return nil, errors.New("image is required")
+	}
+
+	mediaContents := make([]dto.MediaContent, 0, len(imageFiles))
+	for i, fileHeader := range imageFiles {
+		file, err := fileHeader.Open()
+		if err != nil {
+			return nil, fmt.Errorf("failed to open image file %d: %w", i, err)
+		}
+
+		data, err := io.ReadAll(file)
+		_ = file.Close()
+		if err != nil {
+			return nil, fmt.Errorf("failed to read image file %d: %w", i, err)
+		}
+
+		mimeType := detectImageMimeType(fileHeader.Filename)
+		mediaContents = append(mediaContents, dto.MediaContent{
+			Type: dto.ContentTypeImageURL,
+			ImageUrl: &dto.MessageImageUrl{
+				Url:      fmt.Sprintf("data:%s;base64,%s", mimeType, base64.StdEncoding.EncodeToString(data)),
+				MimeType: mimeType,
+			},
+		})
+	}
+	return mediaContents, nil
+}
+
+func collectImageFileHeaders(mf *multipart.Form) []*multipart.FileHeader {
+	var imageFiles []*multipart.FileHeader
+	if files := mf.File["image"]; len(files) > 0 {
+		imageFiles = append(imageFiles, files...)
+	}
+	if files := mf.File["image[]"]; len(files) > 0 {
+		imageFiles = append(imageFiles, files...)
+	}
+	for fieldName, files := range mf.File {
+		if strings.HasPrefix(fieldName, "image[") && len(files) > 0 {
+			imageFiles = append(imageFiles, files...)
+		}
+	}
+	return imageFiles
 }
 
 func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.ImageRequest) (any, error) {
 	if shouldUseGeminiImageChatCompatibility(info) {
-		return convertImageRequestToGeminiImageChat(request, info), nil
+		return convertImageRequestToGeminiImageChat(c, request, info)
 	}
 	switch info.RelayMode {
 	case relayconstant.RelayModeImagesEdits:
@@ -670,8 +988,10 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 	case relayconstant.RelayModeImagesGenerations, relayconstant.RelayModeImagesEdits:
 		if shouldUseGeminiImageChatCompatibility(info) {
 			usage, err = GeminiImageChatCompatibilityHandler(c, info, resp)
+		} else if info.IsStream {
+			usage, err = OpenaiImageStreamHandler(c, info, resp)
 		} else {
-			usage, err = OpenaiHandlerWithUsage(c, info, resp)
+			usage, err = OpenaiImageHandler(c, info, resp)
 		}
 	case relayconstant.RelayModeRerank:
 		usage, err = common_handler.RerankHandler(c, info, resp)

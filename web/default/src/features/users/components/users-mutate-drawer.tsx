@@ -26,6 +26,8 @@ import { toast } from 'sonner'
 import { getCurrencyDisplay, getCurrencyLabel } from '@/lib/currency'
 import { formatQuota, parseQuotaFromDollars } from '@/lib/format'
 import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
+import { Checkbox } from '@/components/ui/checkbox'
 import {
   Form,
   FormControl,
@@ -33,17 +35,18 @@ import {
   FormField,
   FormItem,
   FormLabel,
-  FormMessage,
+  FormMessage
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { cn } from '@/lib/utils'
 import {
   Select,
   SelectContent,
   SelectGroup,
   SelectItem,
   SelectTrigger,
-  SelectValue,
+  SelectValue
 } from '@/components/ui/select'
 import {
   Sheet,
@@ -52,7 +55,7 @@ import {
   SheetDescription,
   SheetFooter,
   SheetHeader,
-  SheetTitle,
+  SheetTitle
 } from '@/components/ui/sheet'
 import { Textarea } from '@/components/ui/textarea'
 import {
@@ -60,7 +63,7 @@ import {
   sideDrawerContentClassName,
   sideDrawerFooterClassName,
   sideDrawerFormClassName,
-  sideDrawerHeaderClassName,
+  sideDrawerHeaderClassName
 } from '@/components/drawer-layout'
 import { createUser, updateUser, getUser, getGroups } from '../api'
 import { BINDING_FIELDS, ERROR_MESSAGES, SUCCESS_MESSAGES } from '../constants'
@@ -69,7 +72,7 @@ import {
   type UserFormValues,
   USER_FORM_DEFAULT_VALUES,
   transformFormDataToPayload,
-  transformUserToFormDefaults,
+  transformUserToFormDefaults
 } from '../lib'
 import { type User } from '../types'
 import { UserQuotaDialog } from './user-quota-dialog'
@@ -84,7 +87,7 @@ type UsersMutateDrawerProps = {
 export function UsersMutateDrawer({
   open,
   onOpenChange,
-  currentRow,
+  currentRow
 }: UsersMutateDrawerProps) {
   const { t } = useTranslation()
   const isUpdate = !!currentRow
@@ -96,14 +99,14 @@ export function UsersMutateDrawer({
   const { data: groupsData } = useQuery({
     queryKey: ['groups'],
     queryFn: getGroups,
-    staleTime: 5 * 60 * 1000,
+    staleTime: 5 * 60 * 1000
   })
 
   const groups = groupsData?.data || []
 
   const form = useForm<UserFormValues>({
     resolver: zodResolver(userFormSchema),
-    defaultValues: USER_FORM_DEFAULT_VALUES,
+    defaultValues: USER_FORM_DEFAULT_VALUES
   })
 
   // Load existing data when updating
@@ -133,7 +136,7 @@ export function UsersMutateDrawer({
       if (passwordLength < 8 || passwordLength > 20) {
         form.setError('password', {
           type: 'manual',
-          message: t('Password must be between 8 and 20 characters'),
+          message: t('Password must be between 8 and 20 characters')
         })
         return
       }
@@ -242,7 +245,7 @@ export function UsersMutateDrawer({
                         <Select
                           items={[
                             { value: '1', label: t('Common User') },
-                            { value: '10', label: t('Admin') },
+                            { value: '10', label: t('Admin') }
                           ]}
                           onValueChange={(value) =>
                             value !== null && field.onChange(parseInt(value))
@@ -326,31 +329,61 @@ export function UsersMutateDrawer({
                     render={({ field }) => (
                       <FormItem>
                         <FormLabel>{t('Group')}</FormLabel>
-                        <Select
-                          items={[
-                            ...groups.map((group) => ({
-                              value: group,
-                              label: group,
-                            })),
-                          ]}
-                          onValueChange={field.onChange}
-                          value={field.value}
-                        >
-                          <FormControl>
-                            <SelectTrigger>
-                              <SelectValue placeholder={t('Select a group')} />
-                            </SelectTrigger>
-                          </FormControl>
-                          <SelectContent alignItemWithTrigger={false}>
-                            <SelectGroup>
-                              {groups.map((group) => (
-                                <SelectItem key={group} value={group}>
-                                  {group}
-                                </SelectItem>
-                              ))}
-                            </SelectGroup>
-                          </SelectContent>
-                        </Select>
+                        <FormControl>
+                          <div className='border-input bg-background rounded-md border p-3'>
+                            <div className='mb-3 flex min-h-6 flex-wrap gap-1.5'>
+                              {(field.value || []).length > 0 ? (
+                                field.value?.map((group) => (
+                                  <Badge
+                                    key={group}
+                                    variant='secondary'
+                                    className='max-w-full'
+                                  >
+                                    <span className='truncate'>{group}</span>
+                                  </Badge>
+                                ))
+                              ) : (
+                                <span className='text-muted-foreground text-sm'>
+                                  {t('Select a group')}
+                                </span>
+                              )}
+                            </div>
+                            <div className='grid max-h-48 gap-1 overflow-y-auto pr-1'>
+                              {groups.map((group) => {
+                                const selected = (field.value || []).includes(
+                                  group
+                                )
+                                return (
+                                  <label
+                                    key={group}
+                                    className={cn(
+                                      'hover:bg-muted/50 flex cursor-pointer items-center gap-2 rounded-md px-2 py-2 text-sm transition-colors',
+                                      selected && 'bg-muted'
+                                    )}
+                                  >
+                                    <Checkbox
+                                      checked={selected}
+                                      onCheckedChange={(checked) => {
+                                        const current = field.value || []
+                                        if (checked === true) {
+                                          field.onChange([
+                                            ...new Set([...current, group])
+                                          ])
+                                          return
+                                        }
+                                        const next = current.filter(
+                                          (item) => item !== group
+                                        )
+                                        field.onChange(next)
+                                      }}
+                                    />
+                                    <span className='truncate'>{group}</span>
+                                  </label>
+                                )
+                              })}
+                            </div>
+                          </div>
+                        </FormControl>
                         <FormMessage />
                       </FormItem>
                     )}
@@ -363,7 +396,7 @@ export function UsersMutateDrawer({
                       <FormItem>
                         <FormLabel>
                           {t('Remaining Quota ({{currency}})', {
-                            currency: currencyLabel,
+                            currency: currencyLabel
                           })}
                         </FormLabel>
                         <div className='flex gap-2'>

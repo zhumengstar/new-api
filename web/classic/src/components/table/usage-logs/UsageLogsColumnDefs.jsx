@@ -25,6 +25,8 @@ import {
   Tooltip,
   Popover,
   Typography,
+  Button,
+  Modal,
 } from '@douyinfe/semi-ui';
 import {
   renderGroup,
@@ -91,6 +93,58 @@ function buildChannelAffinityTooltip(affinity, t) {
         <div key={i}>{line}</div>
       ))}
     </div>
+  );
+}
+
+function RequestBodyButton({ requestBody, t }) {
+  const [visible, setVisible] = React.useState(false);
+  if (!requestBody) {
+    return <></>;
+  }
+  const bodyText =
+    typeof requestBody === 'string'
+      ? requestBody
+      : JSON.stringify(requestBody, null, 2);
+
+  return (
+    <>
+      <Button
+        size='small'
+        theme='light'
+        type='primary'
+        onClick={(event) => {
+          event.stopPropagation();
+          setVisible(true);
+        }}
+      >
+        {t('请求体')}
+      </Button>
+      <Modal
+        title={t('请求体')}
+        visible={visible}
+        footer={null}
+        width={760}
+        onCancel={() => setVisible(false)}
+      >
+        <pre
+          style={{
+            maxHeight: '70vh',
+            overflow: 'auto',
+            margin: 0,
+            padding: 12,
+            borderRadius: 6,
+            background: 'var(--semi-color-fill-0)',
+            border: '1px solid var(--semi-color-border)',
+            fontSize: 12,
+            lineHeight: 1.6,
+            whiteSpace: 'pre-wrap',
+            wordBreak: 'break-word',
+          }}
+        >
+          {bodyText}
+        </pre>
+      </Modal>
+    </>
   );
 }
 
@@ -827,6 +881,22 @@ export const getLogsColumns = ({
           );
         }
         return <>{renderQuota(text, 6)}</>;
+      },
+    },
+    {
+      key: COLUMN_KEYS.REQUEST_BODY,
+      title: t('请求体'),
+      dataIndex: 'other',
+      render: (text, record, index) => {
+        if (!(record.type === 2 || record.type === 5)) {
+          return <></>;
+        }
+        const other = getLogOther(record.other);
+        return other?.request_body ? (
+          <RequestBodyButton requestBody={other.request_body} t={t} />
+        ) : (
+          <></>
+        );
       },
     },
     {
