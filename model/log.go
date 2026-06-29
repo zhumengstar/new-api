@@ -32,10 +32,10 @@ func applyExplicitLogTextFilter(tx *gorm.DB, column string, value string) (*gorm
 }
 
 type Log struct {
-	Id                int    `json:"id" gorm:"index:idx_created_at_id,priority:2;index:idx_user_id_id,priority:2"`
-	UserId            int    `json:"user_id" gorm:"index;index:idx_user_id_id,priority:1"`
-	CreatedAt         int64  `json:"created_at" gorm:"bigint;index:idx_created_at_id,priority:1;index:idx_created_at_type"`
-	Type              int    `json:"type" gorm:"index:idx_created_at_type"`
+	Id                int    `json:"id" gorm:"index:idx_created_at_id,priority:2;index:idx_user_id_id,priority:2;index:idx_logs_type_created_at_id,priority:3;index:idx_logs_user_type_id,priority:3"`
+	UserId            int    `json:"user_id" gorm:"index;index:idx_user_id_id,priority:1;index:idx_logs_user_type_id,priority:1"`
+	CreatedAt         int64  `json:"created_at" gorm:"bigint;index:idx_created_at_id,priority:1;index:idx_created_at_type;index:idx_logs_type_created_at_id,priority:2"`
+	Type              int    `json:"type" gorm:"index:idx_created_at_type;index:idx_logs_type_created_at_id,priority:1;index:idx_logs_user_type_id,priority:2"`
 	Content           string `json:"content"`
 	Username          string `json:"username" gorm:"index;index:index_username_model_name,priority:2;default:''"`
 	TokenName         string `json:"token_name" gorm:"index;default:''"`
@@ -53,6 +53,49 @@ type Log struct {
 	RequestId         string `json:"request_id,omitempty" gorm:"type:varchar(64);index:idx_logs_request_id;default:''"`
 	UpstreamRequestId string `json:"upstream_request_id,omitempty" gorm:"type:varchar(128);index:idx_logs_upstream_request_id;default:''"`
 	Other             string `json:"other"`
+}
+
+const maxListRequestBodyPreviewBytes = 8 << 10
+
+func compactLogsForList(logs []*Log) {
+	for _, log := range logs {
+		compactLogOtherForList(log)
+	}
+}
+
+func compactLogOtherForList(log *Log) {
+	if log == nil || log.Other == "" || len(log.Other) <= maxListRequestBodyPreviewBytes {
+		return
+	}
+	var other map[string]interface{}
+	if err := common.UnmarshalJsonStr(log.Other, &other); err != nil || other == nil {
+		return
+	}
+	requestBody, ok := other["request_body"].(map[string]interface{})
+	if !ok {
+		return
+	}
+	body, exists := requestBody["body"]
+	if !exists {
+		return
+	}
+	bodyPreview := fmt.Sprintf("%v", body)
+	if len(bodyPreview) <= maxListRequestBodyPreviewBytes {
+		return
+	}
+	requestBody["body_preview"] = truncateLoggedLogListString(bodyPreview, maxListRequestBodyPreviewBytes)
+	requestBody["body_omitted"] = true
+	requestBody["body_omitted_reason"] = "large request body is omitted from list response"
+	delete(requestBody, "body")
+	other["request_body"] = requestBody
+	log.Other = common.MapToJsonStr(other)
+}
+
+func truncateLoggedLogListString(value string, limit int) string {
+	if limit <= 0 || len(value) <= limit {
+		return value
+	}
+	return value[:limit] + "...(truncated)"
 }
 
 type GeneratedImageLog struct {
@@ -576,6 +619,7 @@ func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName
 	if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
 		assignDisplayLogIds(logs, startIdx)
 	}
+	compactLogsForList(logs)
 
 	channelIds := types.NewSet[int]()
 	for _, log := range logs {
@@ -667,6 +711,7 @@ func GetUserLogs(userId int, logType int, startTimestamp int64, endTimestamp int
 	}
 
 	formatUserLogs(logs, startIdx)
+	compactLogsForList(logs)
 	return logs, total, err
 }
 

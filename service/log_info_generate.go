@@ -20,11 +20,11 @@ import (
 )
 
 const (
-	maxLoggedRequestBodyBytes = 2 << 20
-	maxLoggedFormFieldBytes   = 64 << 10
+	maxLoggedRequestBodyBytes = 256 << 10
+	maxLoggedFormFieldBytes   = 8 << 10
 	maxLoggedJSONDepth        = 12
-	maxLoggedJSONArrayItems   = 50
-	maxLoggedJSONObjectKeys   = 200
+	maxLoggedJSONArrayItems   = 20
+	maxLoggedJSONObjectKeys   = 80
 )
 
 func appendRequestPath(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, other map[string]interface{}) {

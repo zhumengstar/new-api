@@ -124,3 +124,31 @@ func TestAssignDisplayLogIds(t *testing.T) {
 
 	assert.NotPanics(t, func() { assignDisplayLogIds(nil, 0) })
 }
+
+func TestCompactLogOtherForListOmitsLargeRequestBody(t *testing.T) {
+	largePrompt := strings.Repeat("x", maxListRequestBodyPreviewBytes+128)
+	other := map[string]interface{}{
+		"group_ratio": 0.66,
+		"request_body": map[string]interface{}{
+			"method": "POST",
+			"path":   "/v1/chat/completions",
+			"size":   len(largePrompt),
+			"body": map[string]interface{}{
+				"model":  "test-model",
+				"prompt": largePrompt,
+			},
+		},
+	}
+	log := &Log{Other: common.MapToJsonStr(other)}
+
+	compactLogOtherForList(log)
+
+	var compacted map[string]interface{}
+	require.NoError(t, common.UnmarshalJsonStr(log.Other, &compacted))
+	assert.Equal(t, 0.66, compacted["group_ratio"])
+	requestBody, ok := compacted["request_body"].(map[string]interface{})
+	require.True(t, ok)
+	assert.Equal(t, true, requestBody["body_omitted"])
+	assert.NotContains(t, requestBody, "body")
+	assert.NotEmpty(t, requestBody["body_preview"])
+}
