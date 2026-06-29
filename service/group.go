@@ -1,8 +1,10 @@
 package service
 
 import (
+	"fmt"
 	"strings"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting"
@@ -80,6 +82,101 @@ func JoinUserGroups(groups []string) string {
 		normalized = append(normalized, group)
 	}
 	return strings.Join(normalized, ",")
+}
+
+func JoinUserGroupsWithDefault(groups []string) string {
+	normalized := ParseUserGroups(JoinUserGroups(groups))
+	for _, group := range normalized {
+		if group == "default" {
+			return JoinUserGroups(normalized)
+		}
+	}
+	return JoinUserGroups(append([]string{"default"}, normalized...))
+}
+
+func RemoveUnavailableGroupsFromUsers(validGroupRatios map[string]float64) (int, error) {
+	validGroups := make(map[string]struct{}, len(validGroupRatios))
+	for group := range validGroupRatios {
+		group = strings.TrimSpace(group)
+		if group == "" {
+			continue
+		}
+		validGroups[group] = struct{}{}
+	}
+	validGroups["default"] = struct{}{}
+
+	var users []model.User
+	if err := model.DB.Select("id", "group", "setting").Find(&users).Error; err != nil {
+		return 0, err
+	}
+
+	changedCount := 0
+	for _, user := range users {
+		nextGroups := make([]string, 0)
+		for _, group := range ParseUserGroups(user.Group) {
+			if _, ok := validGroups[group]; ok {
+				nextGroups = append(nextGroups, group)
+			}
+		}
+		if len(nextGroups) == 0 {
+			if _, ok := validGroups["default"]; ok {
+				nextGroups = append(nextGroups, "default")
+			}
+		}
+
+		nextGroup := JoinUserGroups(nextGroups)
+		groupChanged := nextGroup != JoinUserGroups(ParseUserGroups(user.Group))
+
+		settingChanged := false
+		nextSetting := user.Setting
+		if strings.TrimSpace(user.Setting) != "" {
+			userSetting := dto.UserSetting{}
+			if err := common.UnmarshalJsonStr(user.Setting, &userSetting); err != nil {
+				common.SysLog(fmt.Sprintf("failed to unmarshal user setting while cleaning deleted groups, user_id=%d: %s", user.Id, err.Error()))
+			} else if userSetting.UserGroupRatios != nil {
+				for group := range userSetting.UserGroupRatios {
+					if _, ok := validGroups[group]; !ok {
+						delete(userSetting.UserGroupRatios, group)
+						settingChanged = true
+					}
+				}
+				if len(userSetting.UserGroupRatios) == 0 {
+					userSetting.UserGroupRatios = nil
+				}
+				if settingChanged {
+					settingBytes, err := common.Marshal(userSetting)
+					if err != nil {
+						return changedCount, err
+					}
+					nextSetting = string(settingBytes)
+				}
+			}
+		}
+
+		if !groupChanged && !settingChanged {
+			continue
+		}
+
+		updates := model.User{}
+		selectFields := make([]string, 0, 2)
+		if groupChanged {
+			updates.Group = nextGroup
+			selectFields = append(selectFields, "Group")
+		}
+		if settingChanged {
+			updates.Setting = nextSetting
+			selectFields = append(selectFields, "Setting")
+		}
+		if err := model.DB.Model(&model.User{}).Where("id = ?", user.Id).Select(selectFields).Updates(updates).Error; err != nil {
+			return changedCount, err
+		}
+		if err := model.InvalidateUserCache(user.Id); err != nil {
+			return changedCount, err
+		}
+		changedCount++
+	}
+
+	return changedCount, nil
 }
 
 func GetPrimaryUserGroup(userGroup string) string {

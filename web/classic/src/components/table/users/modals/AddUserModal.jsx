@@ -74,6 +74,21 @@ const formatRatio = (ratio) => {
   return `${Number.parseFloat(value.toFixed(6))}x`;
 };
 
+const getPublicGroups = (groupOptions) =>
+  groupOptions.filter((option) => option.isPublic).map((option) => option.value);
+
+const collectUserGroupRatios = (selectedGroups, groupOptions, userGroupRatios) =>
+  Array.from(new Set([...selectedGroups, ...getPublicGroups(groupOptions)])).reduce(
+    (ratios, group) => {
+      const ratio = Number(userGroupRatios[group]);
+      if (Number.isFinite(ratio) && ratio >= 0) {
+        ratios[group] = ratio;
+      }
+      return ratios;
+    },
+    {},
+  );
+
 const AddUserModal = (props) => {
   const { t } = useTranslation();
   const formApiRef = useRef(null);
@@ -86,7 +101,7 @@ const AddUserModal = (props) => {
     username: '',
     display_name: '',
     password: '',
-    group: [],
+    group: ['default'],
     remark: '',
   });
 
@@ -117,17 +132,18 @@ const AddUserModal = (props) => {
 
   const submit = async (values) => {
     setLoading(true);
-    const selectedGroups = parseUserGroups(values.group);
+    const publicGroups = new Set(getPublicGroups(groupOptions));
+    const selectedGroups = parseUserGroups(values.group).filter(
+      (group) => !publicGroups.has(group),
+    );
     const payload = {
       ...values,
       group: joinUserGroups(selectedGroups),
-      user_group_ratios: selectedGroups.reduce((ratios, group) => {
-        const ratio = Number(userGroupRatios[group]);
-        if (Number.isFinite(ratio) && ratio >= 0) {
-          ratios[group] = ratio;
-        }
-        return ratios;
-      }, {}),
+      user_group_ratios: collectUserGroupRatios(
+        selectedGroups,
+        groupOptions,
+        userGroupRatios,
+      ),
     };
     const res = await API.post(`/api/user/`, payload);
     const { success, message } = res.data;
@@ -258,9 +274,9 @@ const AddUserModal = (props) => {
                               const selectedGroups = parseUserGroups(
                                 values.group,
                               );
-                              const checked = selectedGroups.includes(
-                                option.value,
-                              );
+                              const checked =
+                                option.isPublic ||
+                                selectedGroups.includes(option.value);
                               return (
                                 <div
                                   key={option.value}
@@ -268,7 +284,9 @@ const AddUserModal = (props) => {
                                 >
                                   <Checkbox
                                     checked={checked}
+                                    disabled={option.isPublic}
                                     onChange={(event) => {
+                                      if (option.isPublic) return;
                                       const nextGroups = toggleUserGroup(
                                         values.group,
                                         option.value,
@@ -295,6 +313,15 @@ const AddUserModal = (props) => {
                                         className='ml-1'
                                       >
                                         {formatRatio(option.ratio)}
+                                      </Tag>
+                                    )}
+                                    {option.isPublic && (
+                                      <Tag
+                                        size='small'
+                                        color='green'
+                                        className='ml-1'
+                                      >
+                                        {t('公开')}
                                       </Tag>
                                     )}
                                   </Checkbox>

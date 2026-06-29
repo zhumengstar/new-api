@@ -636,23 +636,20 @@ func UpdateUser(c *gin.Context) {
 	if updatedUser.Password == "$I_LOVE_U" {
 		updatedUser.Password = "" // rollback to what it should be
 	}
-	updatedUser.Group = service.JoinUserGroups(service.ParseUserGroups(updatedUser.Group))
+	updatedUser.Group = service.JoinUserGroupsWithDefault(service.ParseUserGroups(updatedUser.Group))
 	if len(updatedUser.Group) > model.UserGroupMaxLength {
 		common.ApiErrorMsg(c, "user group is too long")
 		return
 	}
 	var nextSetting *dto.UserSetting
 	if request.UserGroupRatios != nil {
-		selectedGroups := make(map[string]struct{})
-		for _, group := range service.ParseUserGroups(updatedUser.Group) {
-			selectedGroups[group] = struct{}{}
-		}
+		allowedRatioGroups := allowedUserRatioGroups(updatedUser.Group)
 		for group, ratio := range request.UserGroupRatios {
 			if ratio < 0 {
 				common.ApiErrorMsg(c, "user group ratio must be not less than 0")
 				return
 			}
-			if _, ok := selectedGroups[group]; !ok {
+			if _, ok := allowedRatioGroups[group]; !ok {
 				delete(request.UserGroupRatios, group)
 			}
 		}
@@ -930,10 +927,7 @@ func CreateUser(c *gin.Context) {
 	if user.DisplayName == "" {
 		user.DisplayName = user.Username
 	}
-	user.Group = service.JoinUserGroups(service.ParseUserGroups(user.Group))
-	if user.Group == "" {
-		user.Group = "default"
-	}
+	user.Group = service.JoinUserGroupsWithDefault(service.ParseUserGroups(user.Group))
 	if len(user.Group) > model.UserGroupMaxLength {
 		common.ApiErrorMsg(c, "user group is too long")
 		return
@@ -956,16 +950,13 @@ func CreateUser(c *gin.Context) {
 		return
 	}
 	if request.UserGroupRatios != nil {
-		selectedGroups := make(map[string]struct{})
-		for _, group := range service.ParseUserGroups(cleanUser.Group) {
-			selectedGroups[group] = struct{}{}
-		}
+		allowedRatioGroups := allowedUserRatioGroups(cleanUser.Group)
 		for group, ratio := range request.UserGroupRatios {
 			if ratio < 0 {
 				common.ApiErrorMsg(c, "user group ratio must be not less than 0")
 				return
 			}
-			if _, ok := selectedGroups[group]; !ok {
+			if _, ok := allowedRatioGroups[group]; !ok {
 				delete(request.UserGroupRatios, group)
 			}
 		}
@@ -988,6 +979,17 @@ func CreateUser(c *gin.Context) {
 		"message": "",
 	})
 	return
+}
+
+func allowedUserRatioGroups(userGroup string) map[string]struct{} {
+	allowedGroups := make(map[string]struct{})
+	for _, group := range service.ParseUserGroups(userGroup) {
+		allowedGroups[group] = struct{}{}
+	}
+	for group := range setting.GetUserUsableGroupsCopy() {
+		allowedGroups[group] = struct{}{}
+	}
+	return allowedGroups
 }
 
 type ManageRequest struct {

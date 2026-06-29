@@ -89,6 +89,21 @@ const formatRatio = (ratio) => {
   return `${Number.parseFloat(value.toFixed(6))}x`;
 };
 
+const getPublicGroups = (groupOptions) =>
+  groupOptions.filter((option) => option.isPublic).map((option) => option.value);
+
+const collectUserGroupRatios = (selectedGroups, groupOptions, userGroupRatios) =>
+  Array.from(new Set([...selectedGroups, ...getPublicGroups(groupOptions)])).reduce(
+    (ratios, group) => {
+      const ratio = Number(userGroupRatios[group]);
+      if (Number.isFinite(ratio) && ratio >= 0) {
+        ratios[group] = ratio;
+      }
+      return ratios;
+    },
+    {},
+  );
+
 const parseUserGroupRatios = (setting) => {
   let parsed = setting;
   if (typeof setting === 'string' && setting.trim()) {
@@ -215,14 +230,14 @@ const EditUserModal = (props) => {
     let payload = { ...values };
     delete payload.quota;
     delete payload.quota_amount;
-    payload.group = joinUserGroups(selectedGroups);
-    payload.user_group_ratios = selectedGroups.reduce((ratios, group) => {
-      const ratio = Number(userGroupRatios[group]);
-      if (Number.isFinite(ratio) && ratio >= 0) {
-        ratios[group] = ratio;
-      }
-      return ratios;
-    }, {});
+    const publicGroups = new Set(getPublicGroups(groupOptions));
+    const privateGroups = selectedGroups.filter((group) => !publicGroups.has(group));
+    payload.group = joinUserGroups(privateGroups);
+    payload.user_group_ratios = collectUserGroupRatios(
+      privateGroups,
+      groupOptions,
+      userGroupRatios,
+    );
     if (userId) {
       payload.id = parseInt(userId);
     }
@@ -442,9 +457,9 @@ const EditUserModal = (props) => {
                           <div className='border border-gray-200 rounded-lg p-3'>
                             <div className='flex flex-wrap gap-2'>
                               {groupOptions.map((option) => {
-                                const checked = selectedGroups.includes(
-                                  option.value,
-                                );
+                                const checked =
+                                  option.isPublic ||
+                                  selectedGroups.includes(option.value);
                                 return (
                                   <div
                                     key={option.value}
@@ -452,7 +467,9 @@ const EditUserModal = (props) => {
                                   >
                                     <Checkbox
                                       checked={checked}
+                                      disabled={option.isPublic}
                                       onChange={(event) => {
+                                        if (option.isPublic) return;
                                         const nextGroups = toggleUserGroup(
                                           selectedGroups,
                                           option.value,
@@ -480,6 +497,15 @@ const EditUserModal = (props) => {
                                           className='ml-1'
                                         >
                                           {formatRatio(option.ratio)}
+                                        </Tag>
+                                      )}
+                                      {option.isPublic && (
+                                        <Tag
+                                          size='small'
+                                          color='green'
+                                          className='ml-1'
+                                        >
+                                          {t('公开')}
                                         </Tag>
                                       )}
                                     </Checkbox>
