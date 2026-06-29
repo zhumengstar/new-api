@@ -223,6 +223,18 @@ func GetUserOrder(sortBy string, sortOrder string) string {
 	}
 }
 
+const userManagementInactiveHiddenDays = 5
+
+func applyUserManagementDefaultVisibility(tx *gorm.DB) *gorm.DB {
+	cutoff := common.GetTimestamp() - int64(userManagementInactiveHiddenDays*24*60*60)
+	return tx.Where(
+		"deleted_at IS NOT NULL OR role >= ? OR last_login_at >= ? OR (COALESCE(last_login_at, 0) = 0 AND created_at >= ?)",
+		common.RoleAdminUser,
+		cutoff,
+		cutoff,
+	)
+}
+
 func GetAllUsers(pageInfo *common.PageInfo, sortBy string, sortOrder string) (users []*User, total int64, err error) {
 	// Start transaction
 	tx := DB.Begin()
@@ -235,15 +247,17 @@ func GetAllUsers(pageInfo *common.PageInfo, sortBy string, sortOrder string) (us
 		}
 	}()
 
+	query := applyUserManagementDefaultVisibility(tx.Unscoped().Model(&User{}))
+
 	// Get total count within transaction
-	err = tx.Unscoped().Model(&User{}).Count(&total).Error
+	err = query.Count(&total).Error
 	if err != nil {
 		tx.Rollback()
 		return nil, 0, err
 	}
 
 	// Get paginated users within same transaction
-	err = tx.Unscoped().Order(GetUserOrder(sortBy, sortOrder)).Limit(pageInfo.GetPageSize()).Offset(pageInfo.GetStartIdx()).Omit("password").Find(&users).Error
+	err = query.Order(GetUserOrder(sortBy, sortOrder)).Limit(pageInfo.GetPageSize()).Offset(pageInfo.GetStartIdx()).Omit("password").Find(&users).Error
 	if err != nil {
 		tx.Rollback()
 		return nil, 0, err
