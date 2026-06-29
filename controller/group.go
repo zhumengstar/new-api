@@ -23,6 +23,30 @@ func GetGroups(c *gin.Context) {
 	})
 }
 
+func GetGroupDetails(c *gin.Context) {
+	groupNames := make([]string, 0)
+	groupRatios := ratio_setting.GetGroupRatioCopy()
+	userUsableGroups := setting.GetUserUsableGroupsCopy()
+	groupMeta := make(map[string]map[string]interface{}, len(groupRatios))
+	for groupName, ratio := range groupRatios {
+		groupNames = append(groupNames, groupName)
+		_, isPublic := userUsableGroups[groupName]
+		groupMeta[groupName] = map[string]interface{}{
+			"ratio":     ratio,
+			"is_public": isPublic,
+			"desc":      setting.GetUsableGroupDescription(groupName),
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+		"data": gin.H{
+			"groups": groupNames,
+			"meta":   groupMeta,
+		},
+	})
+}
+
 func GetUserGroups(c *gin.Context) {
 	usableGroups := make(map[string]map[string]interface{})
 	userGroup := ""
@@ -33,7 +57,7 @@ func GetUserGroups(c *gin.Context) {
 		// UserUsableGroups contains the groups that the user can use
 		if desc, ok := userUsableGroups[groupName]; ok {
 			usableGroups[groupName] = map[string]interface{}{
-				"ratio": service.GetUserGroupRatio(userGroup, groupName),
+				"ratio": service.GetUserGroupRatioForUser(userId, userGroup, groupName),
 				"desc":  desc,
 			}
 		}

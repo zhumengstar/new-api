@@ -3,6 +3,8 @@ package service
 import (
 	"strings"
 
+	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 )
@@ -102,6 +104,27 @@ func GetUserGroupRatio(userGroup, group string) float64 {
 		return selectedRatio
 	}
 	return ratio_setting.GetGroupRatio(group)
+}
+
+func GetUserGroupRatioForUser(userId int, userGroup, group string) float64 {
+	if userId > 0 {
+		userSetting, err := model.GetUserSetting(userId, true)
+		if err == nil && userSetting.UserGroupRatios != nil {
+			if ratio, ok := userSetting.UserGroupRatios[group]; ok {
+				return ratio
+			}
+		}
+	}
+	return GetUserGroupRatio(userGroup, group)
+}
+
+func GetUserGroupRatioWithSetting(userSetting dto.UserSetting, userGroup, group string) float64 {
+	if userSetting.UserGroupRatios != nil {
+		if ratio, ok := userSetting.UserGroupRatios[group]; ok {
+			return ratio
+		}
+	}
+	return GetUserGroupRatio(userGroup, group)
 }
 
 func GroupInUserUsableGroups(userGroup, groupName string) bool {

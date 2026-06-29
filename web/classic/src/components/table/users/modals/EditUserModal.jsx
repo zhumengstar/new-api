@@ -47,6 +47,7 @@ import {
   InputNumber,
   RadioGroup,
   Radio,
+  Checkbox,
 } from '@douyinfe/semi-ui';
 import {
   IconUser,
@@ -59,6 +60,53 @@ import {
 import UserBindingManagementModal from './UserBindingManagementModal';
 
 const { Text, Title } = Typography;
+
+const parseUserGroups = (group) => {
+  if (Array.isArray(group)) {
+    return group.map((item) => String(item).trim()).filter(Boolean);
+  }
+  return String(group || '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+};
+
+const joinUserGroups = (groups) => {
+  return Array.from(new Set(parseUserGroups(groups))).join(',');
+};
+
+const toggleUserGroup = (currentGroups, group, checked) => {
+  const current = parseUserGroups(currentGroups);
+  if (checked) {
+    return Array.from(new Set([...current, group]));
+  }
+  return current.filter((item) => item !== group);
+};
+
+const formatRatio = (ratio) => {
+  const value = Number(ratio);
+  if (!Number.isFinite(value)) return '';
+  return `${Number.parseFloat(value.toFixed(6))}x`;
+};
+
+const parseUserGroupRatios = (setting) => {
+  let parsed = setting;
+  if (typeof setting === 'string' && setting.trim()) {
+    try {
+      parsed = JSON.parse(setting);
+    } catch {
+      parsed = {};
+    }
+  }
+  const source = parsed?.user_group_ratios || {};
+  return Object.entries(source).reduce((ratios, [group, ratio]) => {
+    const value = Number(ratio);
+    if (group && Number.isFinite(value) && value >= 0) {
+      ratios[group] = value;
+    }
+    return ratios;
+  }, {});
+};
 
 const EditUserModal = (props) => {
   const { t } = useTranslation();
@@ -76,6 +124,8 @@ const EditUserModal = (props) => {
   const [showAdjustQuotaRaw, setShowAdjustQuotaRaw] = useState(false);
   const [showQuotaInput, setShowQuotaInput] = useState(false);
   const [inputs, setInputs] = useState(null);
+  const [selectedGroups, setSelectedGroups] = useState(['default']);
+  const [userGroupRatios, setUserGroupRatios] = useState({});
 
   const isEdit = Boolean(userId);
 
@@ -92,14 +142,24 @@ const EditUserModal = (props) => {
     email: '',
     quota: 0,
     quota_amount: 0,
-    group: 'default',
+    group: ['default'],
     remark: '',
   });
 
   const fetchGroups = async () => {
     try {
-      let res = await API.get(`/api/group/`);
-      setGroupOptions(res.data.data.map((g) => ({ label: g, value: g })));
+      let res = await API.get(`/api/group/detail`);
+      const payload = res.data.data;
+      const groups = Array.isArray(payload) ? payload : payload?.groups || [];
+      const meta = Array.isArray(payload) ? {} : payload?.meta || {};
+      setGroupOptions(
+        groups.map((g) => ({
+          label: g,
+          value: g,
+          ratio: meta[g]?.ratio,
+          isPublic: Boolean(meta[g]?.is_public),
+        })),
+      );
     } catch (e) {
       showError(e.message);
     }
@@ -117,6 +177,10 @@ const EditUserModal = (props) => {
       data.quota_amount = Number(
         quotaToDisplayAmount(data.quota || 0).toFixed(6),
       );
+      const groups = parseUserGroups(data.group || 'default');
+      data.group = groups;
+      setSelectedGroups(groups);
+      setUserGroupRatios(parseUserGroupRatios(data.setting));
       setInputs({ ...getInitValues(), ...data });
     } else {
       showError(message);
@@ -127,6 +191,7 @@ const EditUserModal = (props) => {
   useEffect(() => {
     if (inputs && formApiRef.current) {
       formApiRef.current.setValues(inputs);
+      setSelectedGroups(parseUserGroups(inputs.group));
     }
   }, [inputs]);
 
@@ -150,6 +215,14 @@ const EditUserModal = (props) => {
     let payload = { ...values };
     delete payload.quota;
     delete payload.quota_amount;
+    payload.group = joinUserGroups(selectedGroups);
+    payload.user_group_ratios = selectedGroups.reduce((ratios, group) => {
+      const ratio = Number(userGroupRatios[group]);
+      if (Number.isFinite(ratio) && ratio >= 0) {
+        ratios[group] = ratio;
+      }
+      return ratios;
+    }, {});
     if (userId) {
       payload.id = parseInt(userId);
     }
@@ -192,6 +265,10 @@ const EditUserModal = (props) => {
           data.quota_amount = Number(
             quotaToDisplayAmount(data.quota || 0).toFixed(6),
           );
+          const groups = parseUserGroups(data.group || 'default');
+          data.group = groups;
+          setSelectedGroups(groups);
+          setUserGroupRatios(parseUserGroupRatios(data.setting));
           setInputs({ ...getInitValues(), ...data });
         }
         props.refresh();
@@ -357,15 +434,85 @@ const EditUserModal = (props) => {
 
                     <Row gutter={12}>
                       <Col span={24}>
-                        <Form.Select
-                          field='group'
-                          label={t('分组')}
-                          placeholder={t('请选择分组')}
-                          optionList={groupOptions}
-                          allowAdditions
-                          search
-                          rules={[{ required: true, message: t('请选择分组') }]}
-                        />
+                        <Form.Slot label={t('分组')}>
+                          <div className='border border-gray-200 rounded-lg p-3'>
+                            <div className='flex flex-wrap gap-2'>
+                              {groupOptions
+                                .filter((option) => {
+                                  return !option.isPublic || selectedGroups.includes(option.value);
+                                })
+                                .map((option) => {
+                                  const checked = selectedGroups.includes(option.value);
+                                  return (
+                                    <div
+                                      key={option.value}
+                                      className='flex items-center gap-2 flex-wrap'
+                                    >
+                                      <Checkbox
+                                        checked={checked}
+                                        onChange={(event) => {
+                                          const nextGroups = toggleUserGroup(
+                                            selectedGroups,
+                                            option.value,
+                                            event.target.checked,
+                                          );
+                                          setSelectedGroups(nextGroups);
+                                          formApiRef.current?.setValue(
+                                            'group',
+                                            nextGroups,
+                                          );
+                                          if (!event.target.checked) {
+                                            setUserGroupRatios((ratios) => {
+                                              const nextRatios = { ...ratios };
+                                              delete nextRatios[option.value];
+                                              return nextRatios;
+                                            });
+                                          }
+                                        }}
+                                      >
+                                        <span>{option.label}</span>
+                                        {option.ratio !== undefined && (
+                                          <Tag size='small' color='blue' className='ml-1'>
+                                            {formatRatio(option.ratio)}
+                                          </Tag>
+                                        )}
+                                      </Checkbox>
+                                      {checked && (
+                                        <InputNumber
+                                          size='small'
+                                          min={0}
+                                          precision={6}
+                                          step={0.001}
+                                          value={userGroupRatios[option.value]}
+                                          placeholder={formatRatio(option.ratio)}
+                                          style={{ width: 96 }}
+                                          onChange={(value) => {
+                                            setUserGroupRatios((ratios) => {
+                                              const nextRatios = { ...ratios };
+                                              if (value === '' || value === null || value === undefined) {
+                                                delete nextRatios[option.value];
+                                              } else {
+                                                const ratio = Number(value);
+                                                if (Number.isFinite(ratio) && ratio >= 0) {
+                                                  nextRatios[option.value] = ratio;
+                                                }
+                                              }
+                                              return nextRatios;
+                                            });
+                                          }}
+                                        />
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                            </div>
+                            {selectedGroups.length === 0 && (
+                              <div className='text-xs text-red-500 mt-2'>
+                                {t('请选择分组')}
+                              </div>
+                            )}
+                          </div>
+                        </Form.Slot>
                       </Col>
 
                       <Col span={10}>

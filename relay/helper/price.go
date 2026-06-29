@@ -51,7 +51,7 @@ func HandleGroupRatio(ctx *gin.Context, relayInfo *relaycommon.RelayInfo) types.
 	}
 
 	normalGroupRatio := ratio_setting.GetGroupRatio(relayInfo.UsingGroup)
-	userGroupRatio := service.GetUserGroupRatio(relayInfo.UserGroup, relayInfo.UsingGroup)
+	userGroupRatio := service.GetUserGroupRatioWithSetting(relayInfo.UserSetting, relayInfo.UserGroup, relayInfo.UsingGroup)
 	if userGroupRatio != normalGroupRatio {
 		// user group special ratio
 		groupRatioInfo.GroupSpecialRatio = userGroupRatio

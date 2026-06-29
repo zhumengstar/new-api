@@ -602,8 +602,12 @@ func GetUserModels(c *gin.Context) {
 }
 
 func UpdateUser(c *gin.Context) {
-	var updatedUser model.User
-	err := json.NewDecoder(c.Request.Body).Decode(&updatedUser)
+	var request struct {
+		model.User
+		UserGroupRatios map[string]float64 `json:"user_group_ratios"`
+	}
+	err := json.NewDecoder(c.Request.Body).Decode(&request)
+	updatedUser := request.User
 	if err != nil || updatedUser.Id == 0 {
 		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
 		return
@@ -633,14 +637,42 @@ func UpdateUser(c *gin.Context) {
 		updatedUser.Password = "" // rollback to what it should be
 	}
 	updatedUser.Group = service.JoinUserGroups(service.ParseUserGroups(updatedUser.Group))
-	if len(updatedUser.Group) > 64 {
+	if len(updatedUser.Group) > model.UserGroupMaxLength {
 		common.ApiErrorMsg(c, "user group is too long")
 		return
+	}
+	var nextSetting *dto.UserSetting
+	if request.UserGroupRatios != nil {
+		selectedGroups := make(map[string]struct{})
+		for _, group := range service.ParseUserGroups(updatedUser.Group) {
+			selectedGroups[group] = struct{}{}
+		}
+		for group, ratio := range request.UserGroupRatios {
+			if ratio < 0 {
+				common.ApiErrorMsg(c, "user group ratio must be not less than 0")
+				return
+			}
+			if _, ok := selectedGroups[group]; !ok {
+				delete(request.UserGroupRatios, group)
+			}
+		}
+		currentSetting := originUser.GetSetting()
+		currentSetting.UserGroupRatios = request.UserGroupRatios
+		if len(currentSetting.UserGroupRatios) == 0 {
+			currentSetting.UserGroupRatios = nil
+		}
+		nextSetting = &currentSetting
 	}
 	updatePassword := updatedUser.Password != ""
 	if err := updatedUser.Edit(updatePassword); err != nil {
 		common.ApiError(c, err)
 		return
+	}
+	if nextSetting != nil {
+		if err := model.UpdateUserSetting(updatedUser.Id, *nextSetting); err != nil {
+			common.ApiError(c, err)
+			return
+		}
 	}
 	recordManageAuditFor(c, updatedUser.Id, "user.update", map[string]interface{}{
 		"username": originUser.Username,
@@ -898,7 +930,7 @@ func CreateUser(c *gin.Context) {
 	if user.Group == "" {
 		user.Group = "default"
 	}
-	if len(user.Group) > 64 {
+	if len(user.Group) > model.UserGroupMaxLength {
 		common.ApiErrorMsg(c, "user group is too long")
 		return
 	}

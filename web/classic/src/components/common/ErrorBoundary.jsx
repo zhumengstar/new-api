@@ -9,15 +9,16 @@ import { withTranslation } from 'react-i18next';
 class ErrorBoundary extends React.Component {
   constructor(props) {
     super(props);
-    this.state = { hasError: false };
+    this.state = { hasError: false, error: null, errorInfo: null };
   }
 
-  static getDerivedStateFromError() {
-    return { hasError: true };
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error };
   }
 
   componentDidCatch(error, errorInfo) {
     console.error('[ErrorBoundary]', error, errorInfo);
+    this.setState({ error, errorInfo });
   }
 
   render() {
@@ -42,6 +43,25 @@ class ErrorBoundary extends React.Component {
           >
             {t('刷新页面')}
           </Button>
+          {this.state.error && (
+            <pre
+              style={{
+                maxWidth: 900,
+                maxHeight: 260,
+                overflow: 'auto',
+                marginTop: 16,
+                padding: 12,
+                borderRadius: 8,
+                background: 'var(--semi-color-fill-0)',
+                color: 'var(--semi-color-text-1)',
+                whiteSpace: 'pre-wrap',
+                textAlign: 'left',
+              }}
+            >
+              {String(this.state.error?.message || this.state.error)}
+              {this.state.errorInfo?.componentStack || ''}
+            </pre>
+          )}
         </div>
       );
     }

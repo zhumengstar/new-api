@@ -1,4 +1,5 @@
-import '@douyinfe/semi-ui/react19-adapter';
+import './semiReact19Adapter';
+import './vchartBrowserEnv';
 
 /*
 Copyright (C) 2025 QuantumNous

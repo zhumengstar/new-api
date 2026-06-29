@@ -15,6 +15,7 @@ import (
 	"github.com/QuantumNous/new-api/relay"
 	"github.com/QuantumNous/new-api/relay/channel"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 )
 
@@ -161,18 +162,20 @@ func updateVideoSingleTask(ctx context.Context, adaptor channel.TaskAdaptor, cha
 					if hasRatioSetting && modelRatio > 0 {
 						// 获取用户和组的倍率信息
 						group := task.Group
+						userGroup := group
 						if group == "" {
 							user, err := model.GetUserById(task.UserId, false)
 							if err == nil {
 								group = user.Group
+								userGroup = user.Group
 							}
 						}
 						if group != "" {
 							groupRatio := ratio_setting.GetGroupRatio(group)
-							userGroupRatio, hasUserGroupRatio := ratio_setting.GetGroupGroupRatio(group, group)
+							userGroupRatio := service.GetUserGroupRatioForUser(task.UserId, userGroup, group)
 
 							var finalGroupRatio float64
-							if hasUserGroupRatio {
+							if userGroupRatio != groupRatio {
 								finalGroupRatio = userGroupRatio
 							} else {
 								finalGroupRatio = groupRatio

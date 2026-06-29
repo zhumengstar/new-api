@@ -4,6 +4,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 
 	"github.com/gin-gonic/gin"
@@ -36,7 +37,8 @@ func filterPricingByUsableGroups(pricing []model.Pricing, usableGroup map[string
 func GetPricing(c *gin.Context) {
 	pricing := model.GetPricing()
 	userId, exists := c.Get("id")
-	usableGroup := map[string]string{}
+	role := c.GetInt("role")
+	isAdmin := role >= common.RoleAdminUser
 	groupRatio := map[string]float64{}
 	for s, f := range ratio_setting.GetGroupRatioCopy() {
 		groupRatio[s] = f
@@ -53,14 +55,32 @@ func GetPricing(c *gin.Context) {
 				}
 			}
 		}
+		if !isAdmin {
+			user, err := model.GetUserById(userId.(int), false)
+			if err == nil && user.Role >= common.RoleAdminUser {
+				isAdmin = true
+			}
+		}
 	}
 
-	usableGroup = service.GetUserUsableGroups(group)
-	pricing = filterPricingByUsableGroups(pricing, usableGroup)
-	// check groupRatio contains usableGroup
-	for group := range ratio_setting.GetGroupRatioCopy() {
-		if _, ok := usableGroup[group]; !ok {
-			delete(groupRatio, group)
+	usableGroup := map[string]string{}
+	if isAdmin {
+		for groupName := range ratio_setting.GetGroupRatioCopy() {
+			usableGroup[groupName] = setting.GetUsableGroupDescription(groupName)
+		}
+		for _, groupName := range service.ParseUserGroups(group) {
+			if _, ok := usableGroup[groupName]; !ok {
+				usableGroup[groupName] = setting.GetUsableGroupDescription(groupName)
+			}
+		}
+	} else {
+		usableGroup = service.GetUserUsableGroups(group)
+		pricing = filterPricingByUsableGroups(pricing, usableGroup)
+		// check groupRatio contains usableGroup
+		for group := range ratio_setting.GetGroupRatioCopy() {
+			if _, ok := usableGroup[group]; !ok {
+				delete(groupRatio, group)
+			}
 		}
 	}
 

@@ -705,11 +705,20 @@ func absFloat(value float64) float64 {
 }
 
 func geminiImageSizeFromRequest(request dto.ImageRequest, info *relaycommon.RelayInfo) string {
+	switch strings.ToLower(strings.TrimSpace(request.Size)) {
+	case "4k", "4096x4096", "2160x3840", "3840x2160":
+		return "4K"
+	case "2k", "2048x2048":
+		return "2K"
+	case "1k", "1024x1024", "1024x1792", "1792x1024", "1024x1536", "1536x1024":
+		return "1K"
+	}
+
 	quality := strings.ToLower(strings.TrimSpace(request.Quality))
 	switch quality {
-	case "4k":
+	case "4k", "hd", "high":
 		return "4K"
-	case "2k", "hd", "high":
+	case "2k":
 		return "2K"
 	case "1k", "standard", "medium", "low", "auto":
 		return "1K"

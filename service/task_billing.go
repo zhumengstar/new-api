@@ -263,17 +263,19 @@ func RecalculateTaskQuotaByTokens(ctx context.Context, task *model.Task, totalTo
 
 	// 获取用户和组的倍率信息
 	group := task.Group
+	userGroup := group
 	if group == "" {
 		user, err := model.GetUserById(task.UserId, false)
 		if err == nil {
 			group = user.Group
+			userGroup = user.Group
 		}
 	}
 	if group == "" {
 		return
 	}
 
-	finalGroupRatio := GetUserGroupRatio(group, group)
+	finalGroupRatio := GetUserGroupRatioForUser(task.UserId, userGroup, group)
 	if finalGroupRatio == 0 {
 		finalGroupRatio = ratio_setting.GetGroupRatio(group)
 	}

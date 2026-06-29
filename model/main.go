@@ -1,6 +1,7 @@
 package model
 
 import (
+	"database/sql"
 	"fmt"
 	"log"
 	"net/url"
@@ -263,6 +264,9 @@ func InitLogDB() (err error) {
 func migrateDB() error {
 	// Migrate price_amount column from float/double to decimal for existing tables
 	migrateSubscriptionPlanPriceAmount()
+	if err := migrateUserGroupToMultiGroupLength(); err != nil {
+		return err
+	}
 	// Migrate model_limits column from varchar to text for existing tables
 	if err := migrateTokenModelLimitsToText(); err != nil {
 		return err
@@ -563,6 +567,60 @@ PRIMARY KEY (` + "`id`" + `)
 			return err
 		}
 	}
+	return nil
+}
+
+// migrateUserGroupToMultiGroupLength expands users.group for comma-separated multi-group assignments.
+func migrateUserGroupToMultiGroupLength() error {
+	// SQLite uses type affinity, so existing varchar columns do not need ALTER COLUMN.
+	if common.UsingMainDatabase(common.DatabaseTypeSQLite) {
+		return nil
+	}
+
+	tableName := "users"
+	columnName := "group"
+
+	if !DB.Migrator().HasTable(tableName) {
+		return nil
+	}
+	if !DB.Migrator().HasColumn(&User{}, columnName) {
+		return nil
+	}
+
+	var alterSQL string
+	if common.UsingMainDatabase(common.DatabaseTypePostgreSQL) {
+		var maximumLength sql.NullInt64
+		if err := DB.Raw(`SELECT character_maximum_length FROM information_schema.columns
+			WHERE table_schema = current_schema() AND table_name = ? AND column_name = ?`,
+			tableName, columnName).Scan(&maximumLength).Error; err != nil {
+			common.SysLog(fmt.Sprintf("Warning: failed to query metadata for %s.%s: %v", tableName, columnName, err))
+		} else if !maximumLength.Valid || maximumLength.Int64 >= UserGroupMaxLength {
+			return nil
+		}
+		alterSQL = fmt.Sprintf(`ALTER TABLE %s ALTER COLUMN %s TYPE varchar(%d)`,
+			tableName, commonGroupCol, UserGroupMaxLength)
+	} else if common.UsingMainDatabase(common.DatabaseTypeMySQL) {
+		var characterMaximumLength sql.NullInt64
+		if err := DB.Raw(`SELECT CHARACTER_MAXIMUM_LENGTH FROM information_schema.columns
+				WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?`,
+			tableName, columnName).Scan(&characterMaximumLength).Error; err != nil {
+			common.SysLog(fmt.Sprintf("Warning: failed to query metadata for %s.%s: %v", tableName, columnName, err))
+		} else if !characterMaximumLength.Valid || characterMaximumLength.Int64 >= UserGroupMaxLength {
+			return nil
+		}
+		alterSQL = fmt.Sprintf("ALTER TABLE %s MODIFY COLUMN %s varchar(%d) DEFAULT 'default'",
+			tableName, commonGroupCol, UserGroupMaxLength)
+	} else {
+		return nil
+	}
+
+	if alterSQL == "" {
+		return nil
+	}
+	if err := DB.Exec(alterSQL).Error; err != nil {
+		return fmt.Errorf("failed to migrate %s.%s to varchar(%d): %w", tableName, columnName, UserGroupMaxLength, err)
+	}
+	common.SysLog(fmt.Sprintf("Successfully migrated %s.%s to varchar(%d)", tableName, columnName, UserGroupMaxLength))
 	return nil
 }
 
