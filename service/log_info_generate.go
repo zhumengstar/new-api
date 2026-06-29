@@ -276,6 +276,9 @@ func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, m
 	other["admin_info"] = adminInfo
 	appendRequestPath(ctx, relayInfo, other)
 	appendRequestBodyInfo(ctx, other)
+	if enhancedPrompt := strings.TrimSpace(common.GetContextKeyString(ctx, "enhanced_image_prompt")); enhancedPrompt != "" {
+		other["enhanced_image_prompt"] = truncateLoggedString(enhancedPrompt, maxLoggedRequestBodyBytes)
+	}
 	appendRequestConversionChain(relayInfo, other)
 	appendFinalRequestFormat(relayInfo, other)
 	appendBillingInfo(relayInfo, other)

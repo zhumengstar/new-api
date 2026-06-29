@@ -441,6 +441,7 @@ func shouldUseGeminiImageChatCompatibility(info *relaycommon.RelayInfo) bool {
 
 func convertImageRequestToGeminiImageChat(c *gin.Context, request dto.ImageRequest, info *relaycommon.RelayInfo) (dto.GeneralOpenAIRequest, error) {
 	prompt := imagePromptWithRequestConstraints(request, info)
+	setEnhancedImagePrompt(c, prompt)
 
 	message := dto.Message{Role: "user"}
 	if info.RelayMode == relayconstant.RelayModeImagesEdits && !isJSONRequest(c) {
@@ -848,6 +849,7 @@ func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInf
 		return convertImageRequestToGeminiImageChat(c, request, info)
 	}
 	request.Prompt = imagePromptWithRequestConstraints(request, info)
+	setEnhancedImagePrompt(c, request.Prompt)
 	switch info.RelayMode {
 	case relayconstant.RelayModeImagesEdits:
 		if isJSONRequest(c) {
@@ -979,6 +981,13 @@ func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInf
 	default:
 		return request, nil
 	}
+}
+
+func setEnhancedImagePrompt(c *gin.Context, prompt string) {
+	if c == nil {
+		return
+	}
+	c.Set("enhanced_image_prompt", prompt)
 }
 
 func isJSONRequest(c *gin.Context) bool {
