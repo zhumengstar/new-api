@@ -912,8 +912,12 @@ func DeleteSelf(c *gin.Context) {
 }
 
 func CreateUser(c *gin.Context) {
-	var user model.User
-	err := json.NewDecoder(c.Request.Body).Decode(&user)
+	var request struct {
+		model.User
+		UserGroupRatios map[string]float64 `json:"user_group_ratios"`
+	}
+	err := json.NewDecoder(c.Request.Body).Decode(&request)
+	user := request.User
 	user.Username = strings.TrimSpace(user.Username)
 	if err != nil || user.Username == "" || user.Password == "" {
 		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
@@ -950,6 +954,29 @@ func CreateUser(c *gin.Context) {
 	if err := cleanUser.Insert(0); err != nil {
 		common.ApiError(c, err)
 		return
+	}
+	if request.UserGroupRatios != nil {
+		selectedGroups := make(map[string]struct{})
+		for _, group := range service.ParseUserGroups(cleanUser.Group) {
+			selectedGroups[group] = struct{}{}
+		}
+		for group, ratio := range request.UserGroupRatios {
+			if ratio < 0 {
+				common.ApiErrorMsg(c, "user group ratio must be not less than 0")
+				return
+			}
+			if _, ok := selectedGroups[group]; !ok {
+				delete(request.UserGroupRatios, group)
+			}
+		}
+		if len(request.UserGroupRatios) > 0 {
+			setting := cleanUser.GetSetting()
+			setting.UserGroupRatios = request.UserGroupRatios
+			if err := model.UpdateUserSetting(cleanUser.Id, setting); err != nil {
+				common.ApiError(c, err)
+				return
+			}
+		}
 	}
 
 	recordManageAuditFor(c, cleanUser.Id, "user.create", map[string]interface{}{

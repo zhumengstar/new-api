@@ -33,6 +33,7 @@ import {
   Row,
   Col,
   Checkbox,
+  InputNumber,
 } from '@douyinfe/semi-ui';
 import { IconSave, IconClose, IconUserAdd } from '@douyinfe/semi-icons';
 import { useTranslation } from 'react-i18next';
@@ -78,6 +79,7 @@ const AddUserModal = (props) => {
   const formApiRef = useRef(null);
   const [loading, setLoading] = useState(false);
   const [groupOptions, setGroupOptions] = useState([]);
+  const [userGroupRatios, setUserGroupRatios] = useState({});
   const isMobile = useIsMobile();
 
   const getInitValues = () => ({
@@ -115,12 +117,24 @@ const AddUserModal = (props) => {
 
   const submit = async (values) => {
     setLoading(true);
-    const payload = { ...values, group: joinUserGroups(values.group) };
+    const selectedGroups = parseUserGroups(values.group);
+    const payload = {
+      ...values,
+      group: joinUserGroups(selectedGroups),
+      user_group_ratios: selectedGroups.reduce((ratios, group) => {
+        const ratio = Number(userGroupRatios[group]);
+        if (Number.isFinite(ratio) && ratio >= 0) {
+          ratios[group] = ratio;
+        }
+        return ratios;
+      }, {}),
+    };
     const res = await API.post(`/api/user/`, payload);
     const { success, message } = res.data;
     if (success) {
       showSuccess(t('用户账户创建成功！'));
       formApiRef.current?.setValues(getInitValues());
+      setUserGroupRatios({});
       props.refresh();
       props.handleClose();
     } else {
@@ -130,6 +144,7 @@ const AddUserModal = (props) => {
   };
 
   const handleCancel = () => {
+    setUserGroupRatios({});
     props.handleClose();
   };
 
@@ -190,11 +205,17 @@ const AddUserModal = (props) => {
               <div className='p-2'>
                 <Card className='!rounded-2xl shadow-sm border-0'>
                   <div className='flex items-center mb-2'>
-                    <Avatar size='small' color='blue' className='mr-2 shadow-md'>
+                    <Avatar
+                      size='small'
+                      color='blue'
+                      className='mr-2 shadow-md'
+                    >
                       <IconUserAdd size={16} />
                     </Avatar>
                     <div>
-                      <Text className='text-lg font-medium'>{t('用户信息')}</Text>
+                      <Text className='text-lg font-medium'>
+                        {t('用户信息')}
+                      </Text>
                       <div className='text-xs text-gray-600'>
                         {t('创建新用户账户')}
                       </div>
@@ -233,39 +254,89 @@ const AddUserModal = (props) => {
                       <Form.Slot label={t('分组')}>
                         <div className='border border-gray-200 rounded-lg p-3'>
                           <div className='flex flex-wrap gap-2'>
-                            {groupOptions
-                              .filter((option) => !option.isPublic)
-                              .map((option) => {
-                                const selectedGroups = parseUserGroups(values.group);
-                                const checked = selectedGroups.includes(option.value);
-                                return (
+                            {groupOptions.map((option) => {
+                              const selectedGroups = parseUserGroups(
+                                values.group,
+                              );
+                              const checked = selectedGroups.includes(
+                                option.value,
+                              );
+                              return (
+                                <div
+                                  key={option.value}
+                                  className='flex items-center gap-2 flex-wrap'
+                                >
                                   <Checkbox
-                                    key={option.value}
                                     checked={checked}
                                     onChange={(event) => {
+                                      const nextGroups = toggleUserGroup(
+                                        values.group,
+                                        option.value,
+                                        event.target.checked,
+                                      );
                                       formApiRef.current?.setValue(
                                         'group',
-                                        toggleUserGroup(
-                                          values.group,
-                                          option.value,
-                                          event.target.checked,
-                                        ),
+                                        nextGroups,
                                       );
+                                      if (!event.target.checked) {
+                                        setUserGroupRatios((ratios) => {
+                                          const nextRatios = { ...ratios };
+                                          delete nextRatios[option.value];
+                                          return nextRatios;
+                                        });
+                                      }
                                     }}
                                   >
                                     <span>{option.label}</span>
                                     {option.ratio !== undefined && (
-                                      <Tag size='small' color='blue' className='ml-1'>
+                                      <Tag
+                                        size='small'
+                                        color='blue'
+                                        className='ml-1'
+                                      >
                                         {formatRatio(option.ratio)}
                                       </Tag>
                                     )}
                                   </Checkbox>
-                                );
-                              })}
+                                  {checked && (
+                                    <InputNumber
+                                      size='small'
+                                      min={0}
+                                      precision={6}
+                                      step={0.001}
+                                      value={userGroupRatios[option.value]}
+                                      placeholder={formatRatio(option.ratio)}
+                                      style={{ width: 96 }}
+                                      onChange={(value) => {
+                                        setUserGroupRatios((ratios) => {
+                                          const nextRatios = { ...ratios };
+                                          if (
+                                            value === '' ||
+                                            value === null ||
+                                            value === undefined
+                                          ) {
+                                            delete nextRatios[option.value];
+                                          } else {
+                                            const ratio = Number(value);
+                                            if (
+                                              Number.isFinite(ratio) &&
+                                              ratio >= 0
+                                            ) {
+                                              nextRatios[option.value] = ratio;
+                                            }
+                                          }
+                                          return nextRatios;
+                                        });
+                                      }}
+                                    />
+                                  )}
+                                </div>
+                              );
+                            })}
                           </div>
-                          {groupOptions.filter((option) => !option.isPublic).length === 0 && (
+                          {groupOptions.length === 0 && (
                             <div className='text-xs text-gray-500'>
-                              {t('暂无专属分组')}
+                              {t('暂无分组')}
                             </div>
                           )}
                         </div>

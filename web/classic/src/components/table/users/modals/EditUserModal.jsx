@@ -243,7 +243,11 @@ const EditUserModal = (props) => {
   const adjustQuota = async () => {
     const quotaVal = parseInt(adjustQuotaLocal) || 0;
     if (quotaVal <= 0 && adjustMode !== 'override') return;
-    if (adjustMode === 'override' && (adjustQuotaLocal === '' || adjustQuotaLocal == null)) return;
+    if (
+      adjustMode === 'override' &&
+      (adjustQuotaLocal === '' || adjustQuotaLocal == null)
+    )
+      return;
     setAdjustLoading(true);
     try {
       const res = await API.post('/api/user/manage', {
@@ -437,74 +441,84 @@ const EditUserModal = (props) => {
                         <Form.Slot label={t('分组')}>
                           <div className='border border-gray-200 rounded-lg p-3'>
                             <div className='flex flex-wrap gap-2'>
-                              {groupOptions
-                                .filter((option) => {
-                                  return !option.isPublic || selectedGroups.includes(option.value);
-                                })
-                                .map((option) => {
-                                  const checked = selectedGroups.includes(option.value);
-                                  return (
-                                    <div
-                                      key={option.value}
-                                      className='flex items-center gap-2 flex-wrap'
+                              {groupOptions.map((option) => {
+                                const checked = selectedGroups.includes(
+                                  option.value,
+                                );
+                                return (
+                                  <div
+                                    key={option.value}
+                                    className='flex items-center gap-2 flex-wrap'
+                                  >
+                                    <Checkbox
+                                      checked={checked}
+                                      onChange={(event) => {
+                                        const nextGroups = toggleUserGroup(
+                                          selectedGroups,
+                                          option.value,
+                                          event.target.checked,
+                                        );
+                                        setSelectedGroups(nextGroups);
+                                        formApiRef.current?.setValue(
+                                          'group',
+                                          nextGroups,
+                                        );
+                                        if (!event.target.checked) {
+                                          setUserGroupRatios((ratios) => {
+                                            const nextRatios = { ...ratios };
+                                            delete nextRatios[option.value];
+                                            return nextRatios;
+                                          });
+                                        }
+                                      }}
                                     >
-                                      <Checkbox
-                                        checked={checked}
-                                        onChange={(event) => {
-                                          const nextGroups = toggleUserGroup(
-                                            selectedGroups,
-                                            option.value,
-                                            event.target.checked,
-                                          );
-                                          setSelectedGroups(nextGroups);
-                                          formApiRef.current?.setValue(
-                                            'group',
-                                            nextGroups,
-                                          );
-                                          if (!event.target.checked) {
-                                            setUserGroupRatios((ratios) => {
-                                              const nextRatios = { ...ratios };
-                                              delete nextRatios[option.value];
-                                              return nextRatios;
-                                            });
-                                          }
-                                        }}
-                                      >
-                                        <span>{option.label}</span>
-                                        {option.ratio !== undefined && (
-                                          <Tag size='small' color='blue' className='ml-1'>
-                                            {formatRatio(option.ratio)}
-                                          </Tag>
-                                        )}
-                                      </Checkbox>
-                                      {checked && (
-                                        <InputNumber
+                                      <span>{option.label}</span>
+                                      {option.ratio !== undefined && (
+                                        <Tag
                                           size='small'
-                                          min={0}
-                                          precision={6}
-                                          step={0.001}
-                                          value={userGroupRatios[option.value]}
-                                          placeholder={formatRatio(option.ratio)}
-                                          style={{ width: 96 }}
-                                          onChange={(value) => {
-                                            setUserGroupRatios((ratios) => {
-                                              const nextRatios = { ...ratios };
-                                              if (value === '' || value === null || value === undefined) {
-                                                delete nextRatios[option.value];
-                                              } else {
-                                                const ratio = Number(value);
-                                                if (Number.isFinite(ratio) && ratio >= 0) {
-                                                  nextRatios[option.value] = ratio;
-                                                }
-                                              }
-                                              return nextRatios;
-                                            });
-                                          }}
-                                        />
+                                          color='blue'
+                                          className='ml-1'
+                                        >
+                                          {formatRatio(option.ratio)}
+                                        </Tag>
                                       )}
-                                    </div>
-                                  );
-                                })}
+                                    </Checkbox>
+                                    {checked && (
+                                      <InputNumber
+                                        size='small'
+                                        min={0}
+                                        precision={6}
+                                        step={0.001}
+                                        value={userGroupRatios[option.value]}
+                                        placeholder={formatRatio(option.ratio)}
+                                        style={{ width: 96 }}
+                                        onChange={(value) => {
+                                          setUserGroupRatios((ratios) => {
+                                            const nextRatios = { ...ratios };
+                                            if (
+                                              value === '' ||
+                                              value === null ||
+                                              value === undefined
+                                            ) {
+                                              delete nextRatios[option.value];
+                                            } else {
+                                              const ratio = Number(value);
+                                              if (
+                                                Number.isFinite(ratio) &&
+                                                ratio >= 0
+                                              ) {
+                                                nextRatios[option.value] =
+                                                  ratio;
+                                              }
+                                            }
+                                            return nextRatios;
+                                          });
+                                        }}
+                                      />
+                                    )}
+                                  </div>
+                                );
+                              })}
                             </div>
                             {selectedGroups.length === 0 && (
                               <div className='text-xs text-red-500 mt-2'>
@@ -548,7 +562,10 @@ const EditUserModal = (props) => {
                             ? `▾ ${t('收起原生额度输入')}`
                             : `▸ ${t('使用原生额度输入')}`}
                         </div>
-                        <div style={{ display: showQuotaInput ? 'block' : 'none' }} className='mt-2'>
+                        <div
+                          style={{ display: showQuotaInput ? 'block' : 'none' }}
+                          className='mt-2'
+                        >
                           <Form.InputNumber
                             field='quota'
                             label={t('额度')}
@@ -686,7 +703,10 @@ const EditUserModal = (props) => {
             ? `▾ ${t('收起原生额度输入')}`
             : `▸ ${t('使用原生额度输入')}`}
         </div>
-        <div style={{ display: showAdjustQuotaRaw ? 'block' : 'none' }} className='mt-2'>
+        <div
+          style={{ display: showAdjustQuotaRaw ? 'block' : 'none' }}
+          className='mt-2'
+        >
           <div className='mb-1'>
             <Text size='small'>{t('额度')}</Text>
           </div>
