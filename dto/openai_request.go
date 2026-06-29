@@ -48,6 +48,7 @@ type GeneralOpenAIRequest struct {
 	Size                string            `json:"size,omitempty"`
 	AspectRatio         string            `json:"aspect_ratio,omitempty"`
 	ImageSize           string            `json:"image_size,omitempty"`
+	ImageConfig         map[string]any    `json:"image_config,omitempty"`
 	Functions           json.RawMessage   `json:"functions,omitempty"`
 	FrequencyPenalty    *float64          `json:"frequency_penalty,omitempty"`
 	PresencePenalty     *float64          `json:"presence_penalty,omitempty"`

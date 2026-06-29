@@ -12,4 +12,11 @@ docs
 /web/default/dist
 /web/classic/node_modules
 /web/classic/dist
+.merge-backups
+backups
+generated-tests
+antigravity-stats-dashboard
+.tmp-*
+*.jpg
+*.png
 !THIRD-PARTY-LICENSES.md

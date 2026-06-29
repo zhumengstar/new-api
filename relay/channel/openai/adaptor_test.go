@@ -2,6 +2,7 @@ package openai
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/QuantumNous/new-api/constant"
@@ -141,15 +142,25 @@ func TestGeminiImageCompatibilityUsesChatCompletions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ConvertImageRequest returned error: %v", err)
 	}
-	chatReq := converted.(*dto.GeneralOpenAIRequest)
+	chatReq := converted.(dto.GeneralOpenAIRequest)
 	if chatReq.Model != "gemini-3.1-flash-image-4k" {
 		t.Fatalf("model = %q", chatReq.Model)
 	}
-	if len(chatReq.Messages) != 1 || chatReq.Messages[0].Role != "user" || chatReq.Messages[0].Content != "draw a cat" {
+	if len(chatReq.Messages) != 1 || chatReq.Messages[0].Role != "user" {
 		t.Fatalf("unexpected messages: %#v", chatReq.Messages)
 	}
-	if chatReq.Stream == nil || *chatReq.Stream {
-		t.Fatalf("stream should be explicitly false")
+	content, ok := chatReq.Messages[0].Content.(string)
+	if !ok {
+		t.Fatalf("message content has type %T, want string", chatReq.Messages[0].Content)
+	}
+	if !strings.Contains(content, "draw a cat") || !strings.Contains(content, "Target image size: 4K") || strings.Contains(content, "1024x1024") {
+		t.Fatalf("unexpected message content: %q", content)
+	}
+	if chatReq.ImageConfig == nil || chatReq.ImageConfig["image_size"] != "4K" {
+		t.Fatalf("image_config.image_size = %v, want 4K", chatReq.ImageConfig["image_size"])
+	}
+	if chatReq.ImageSize != "4K" {
+		t.Fatalf("image_size = %q, want 4K", chatReq.ImageSize)
 	}
 }
 

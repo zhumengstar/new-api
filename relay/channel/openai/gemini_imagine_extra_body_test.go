@@ -82,3 +82,14 @@ func TestBuildGeminiImagineExtraBodyUses4KModelName(t *testing.T) {
 		t.Fatalf("image_size = %v, want 4K", config["image_size"])
 	}
 }
+
+func TestBuildGeminiImagineExtraBodyKeeps4KModelWhenClientSendsDefault1KSize(t *testing.T) {
+	got := buildGeminiImagineExtraBody(dto.ImageRequest{Size: "1024x1024", Quality: "standard"}, "gemini-3.1-flash-image-4k")
+	config, ok := got["image_config"].(map[string]any)
+	if !ok {
+		t.Fatalf("image_config missing or wrong type: %#v", got)
+	}
+	if config["image_size"] != "4K" {
+		t.Fatalf("image_size = %v, want 4K", config["image_size"])
+	}
+}

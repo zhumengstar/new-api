@@ -444,17 +444,27 @@ func convertImageRequestToGeminiImageChat(c *gin.Context, request dto.ImageReque
 	if request.N != nil && *request.N > 0 {
 		n = *request.N
 	}
-	if c != nil && strings.TrimSpace(request.Size) != "" {
-		c.Set("gemini_image_target_size", strings.TrimSpace(request.Size))
-	}
-
 	prompt := request.Prompt
 	if n > 1 {
 		prompt = fmt.Sprintf("%s\n\nGenerate %d images.", prompt, n)
 	}
 	if request.Size != "" {
-		prompt = fmt.Sprintf("%s\n\nTarget image size: %s.", prompt, request.Size)
-		if instruction := geminiImageOrientationInstruction(request.Size); instruction != "" {
+		promptSize := strings.TrimSpace(request.Size)
+		instructionSize := promptSize
+		if geminiImageSizeFromRequest(request, info) == "4K" {
+			switch strings.ToLower(promptSize) {
+			case "4k", "4096x4096", "2160x3840", "3840x2160":
+			default:
+				promptSize = "4K"
+				if aspectRatio := geminiImageAspectRatioFromSize(instructionSize); aspectRatio != "" {
+					instructionSize = aspectRatio
+				} else {
+					instructionSize = ""
+				}
+			}
+		}
+		prompt = fmt.Sprintf("%s\n\nTarget image size: %s.", prompt, promptSize)
+		if instruction := geminiImageOrientationInstruction(instructionSize); instruction != "" {
 			prompt = fmt.Sprintf("%s\n%s", prompt, instruction)
 		}
 	}
@@ -523,6 +533,16 @@ func applyGeminiImageConfig(openAIRequest *dto.GeneralOpenAIRequest, request dto
 	}
 	if len(imageConfig) == 0 {
 		return nil
+	}
+	if shouldUseGeminiImageChatCompatibility(info) {
+		if openAIRequest.ImageConfig == nil {
+			openAIRequest.ImageConfig = make(map[string]any)
+		}
+		for key, value := range imageConfig {
+			if _, exists := openAIRequest.ImageConfig[key]; !exists {
+				openAIRequest.ImageConfig[key] = value
+			}
+		}
 	}
 
 	extraBody := make(map[string]interface{})
@@ -705,6 +725,14 @@ func absFloat(value float64) float64 {
 }
 
 func geminiImageSizeFromRequest(request dto.ImageRequest, info *relaycommon.RelayInfo) string {
+	model := ""
+	if info != nil {
+		model = strings.ToLower(info.UpstreamModelName)
+	}
+	if strings.Contains(model, "4k") {
+		return "4K"
+	}
+
 	switch strings.ToLower(strings.TrimSpace(request.Size)) {
 	case "4k", "4096x4096", "2160x3840", "3840x2160":
 		return "4K"
@@ -722,14 +750,6 @@ func geminiImageSizeFromRequest(request dto.ImageRequest, info *relaycommon.Rela
 		return "2K"
 	case "1k", "standard", "medium", "low", "auto":
 		return "1K"
-	}
-
-	model := ""
-	if info != nil {
-		model = strings.ToLower(info.UpstreamModelName)
-	}
-	if strings.Contains(model, "4k") {
-		return "4K"
 	}
 	return ""
 }

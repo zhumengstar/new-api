@@ -66,3 +66,17 @@ func TestGeminiImageSizeFromRequestUses4KModelName(t *testing.T) {
 		t.Fatalf("geminiImageSizeFromRequest() = %q, want 4K", got)
 	}
 }
+
+func TestGeminiImageSizeFromRequestKeeps4KModelWhenClientSendsDefault1KSize(t *testing.T) {
+	info := &relaycommon.RelayInfo{
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ChannelType:       constant.ChannelTypeOpenAI,
+			UpstreamModelName: "gemini-3.1-flash-image-4k",
+		},
+	}
+
+	got := geminiImageSizeFromRequest(dto.ImageRequest{Size: "1024x1024", Quality: "standard"}, info)
+	if got != "4K" {
+		t.Fatalf("geminiImageSizeFromRequest() = %q, want 4K", got)
+	}
+}

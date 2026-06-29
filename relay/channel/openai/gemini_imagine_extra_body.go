@@ -24,6 +24,10 @@ func buildGeminiImagineExtraBody(request dto.ImageRequest, modelName string) map
 }
 
 func geminiImagineOutputSize(request dto.ImageRequest, modelName string) string {
+	if strings.Contains(normalizedGeminiImagineSizeValue(modelName), "4k") {
+		return "4K"
+	}
+
 	switch normalizedGeminiImagineSizeValue(request.Size) {
 	case "4k", "4096x4096", "2160x3840", "3840x2160":
 		return "4K"
@@ -40,9 +44,6 @@ func geminiImagineOutputSize(request dto.ImageRequest, modelName string) string 
 		return "2K"
 	case "standard", "medium", "low", "auto", "1k":
 		return "1K"
-	}
-	if strings.Contains(normalizedGeminiImagineSizeValue(modelName), "4k") {
-		return "4K"
 	}
 	return ""
 }
