@@ -5,6 +5,7 @@ type Midjourney struct {
 	Code        int    `json:"code"`
 	UserId      int    `json:"user_id" gorm:"index"`
 	Action      string `json:"action" gorm:"type:varchar(40);index"`
+	ModelName   string `json:"model_name" gorm:"-"`
 	MjId        string `json:"mj_id" gorm:"index"`
 	Prompt      string `json:"prompt"`
 	PromptEn    string `json:"prompt_en"`

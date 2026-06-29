@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -102,6 +103,7 @@ type GeneratedImageLog struct {
 	Id        int    `json:"id"`
 	UserId    int    `json:"user_id"`
 	CreatedAt int64  `json:"created_at"`
+	RequestId string `json:"request_id"`
 	ModelName string `json:"model_name"`
 	Prompt    string `json:"prompt"`
 	ChannelId int    `json:"channel_id"`
@@ -180,7 +182,7 @@ func CanAccessGeneratedImageAsset(userId int, isAdmin bool, assetURL string) boo
 func GetAllGeneratedImageLogs(startIdx int, num int, queryParams TaskQueryParams) ([]*GeneratedImageLog, int64) {
 	var logs []*GeneratedImageLog
 	query := LOG_DB.Model(&Log{}).
-		Select("id, user_id, created_at, model_name, content as prompt, channel_id, quota, use_time, other").
+		Select("id, user_id, created_at, request_id, model_name, content as prompt, channel_id, quota, use_time, other").
 		Where("type = ? AND other LIKE ?", LogTypeConsume, "%generated_images%")
 
 	if queryParams.ChannelID != "" {
@@ -190,10 +192,10 @@ func GetAllGeneratedImageLogs(startIdx int, num int, queryParams TaskQueryParams
 		query = query.Where("request_id = ? OR upstream_request_id = ?", queryParams.MjID, queryParams.MjID)
 	}
 	if queryParams.StartTimestamp != "" {
-		query = query.Where("created_at * 1000 >= ?", queryParams.StartTimestamp)
+		query = query.Where("created_at >= ?", timestampMillisToSeconds(queryParams.StartTimestamp))
 	}
 	if queryParams.EndTimestamp != "" {
-		query = query.Where("created_at * 1000 <= ?", queryParams.EndTimestamp)
+		query = query.Where("created_at <= ?", timestampMillisToSeconds(queryParams.EndTimestamp))
 	}
 
 	var total int64
@@ -208,20 +210,31 @@ func GetAllGeneratedImageLogs(startIdx int, num int, queryParams TaskQueryParams
 	return logs, total
 }
 
+func timestampMillisToSeconds(value string) int64 {
+	timestamp, err := strconv.ParseInt(value, 10, 64)
+	if err != nil {
+		return 0
+	}
+	if timestamp > 9999999999 {
+		return timestamp / 1000
+	}
+	return timestamp
+}
+
 func GetAllUserGeneratedImageLogs(userId int, startIdx int, num int, queryParams TaskQueryParams) ([]*GeneratedImageLog, int64) {
 	var logs []*GeneratedImageLog
 	query := LOG_DB.Model(&Log{}).
-		Select("id, user_id, created_at, model_name, content as prompt, channel_id, quota, use_time, other").
+		Select("id, user_id, created_at, request_id, model_name, content as prompt, channel_id, quota, use_time, other").
 		Where("user_id = ? AND type = ? AND other LIKE ?", userId, LogTypeConsume, "%generated_images%")
 
 	if queryParams.MjID != "" {
 		query = query.Where("request_id = ? OR upstream_request_id = ?", queryParams.MjID, queryParams.MjID)
 	}
 	if queryParams.StartTimestamp != "" {
-		query = query.Where("created_at * 1000 >= ?", queryParams.StartTimestamp)
+		query = query.Where("created_at >= ?", timestampMillisToSeconds(queryParams.StartTimestamp))
 	}
 	if queryParams.EndTimestamp != "" {
-		query = query.Where("created_at * 1000 <= ?", queryParams.EndTimestamp)
+		query = query.Where("created_at <= ?", timestampMillisToSeconds(queryParams.EndTimestamp))
 	}
 
 	var total int64

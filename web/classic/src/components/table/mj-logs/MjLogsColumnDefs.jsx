@@ -379,6 +379,28 @@ export const getMjLogsColumns = ({
       },
     },
     {
+      key: COLUMN_KEYS.MODEL_NAME,
+      title: t('模型名称'),
+      dataIndex: 'model_name',
+      render: (text, record, index) => {
+        const modelName = text || record.prompt_en;
+        if (!modelName) {
+          return t('无');
+        }
+        return (
+          <Typography.Text
+            ellipsis={{ showTooltip: true }}
+            style={{ width: 140 }}
+            onClick={() => {
+              openContentModal(modelName);
+            }}
+          >
+            {modelName}
+          </Typography.Text>
+        );
+      },
+    },
+    {
       key: COLUMN_KEYS.TASK_ID,
       title: t('任务ID'),
       dataIndex: 'mj_id',

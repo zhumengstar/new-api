@@ -3,7 +3,6 @@ package controller
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -311,16 +310,11 @@ func GetAllMidjourney(c *gin.Context) {
 	items := model.GetAllTasks(0, fetchSize, queryParams)
 	total := model.CountAllTasks(queryParams)
 	generatedImageLogs, generatedImageTotal := model.GetAllGeneratedImageLogs(0, fetchSize, queryParams)
-	generatedItems, skippedGeneratedItems := filterGeneratedImageLogItems(generatedImageLogsToMidjourney(generatedImageLogs), items)
+	generatedItems := generatedImageLogsToMidjourney(generatedImageLogs)
+	items, skippedExistingItems := filterMidjourneyItemsDuplicatedByGeneratedLogs(items, generatedImageLogs)
 	items = append(items, generatedItems...)
-	total += generatedImageTotal - int64(skippedGeneratedItems)
-
-	if setting.MjForwardUrlEnabled {
-		for i, midjourney := range items {
-			midjourney.ImageUrl = midjourneyDisplayImageURL(midjourney.ImageUrl, midjourney.MjId)
-			items[i] = midjourney
-		}
-	}
+	total += generatedImageTotal - int64(skippedExistingItems)
+	normalizeMidjourneyLogItems(items)
 	sortMidjourneyBySubmitTime(items)
 	items = sliceMidjourneyPage(items, pageInfo.GetStartIdx(), pageInfo.GetPageSize())
 	pageInfo.SetTotal(int(total))
@@ -343,16 +337,11 @@ func GetUserMidjourney(c *gin.Context) {
 	items := model.GetAllUserTask(userId, 0, fetchSize, queryParams)
 	total := model.CountAllUserTask(userId, queryParams)
 	generatedImageLogs, generatedImageTotal := model.GetAllUserGeneratedImageLogs(userId, 0, fetchSize, queryParams)
-	generatedItems, skippedGeneratedItems := filterGeneratedImageLogItems(generatedImageLogsToMidjourney(generatedImageLogs), items)
+	generatedItems := generatedImageLogsToMidjourney(generatedImageLogs)
+	items, skippedExistingItems := filterMidjourneyItemsDuplicatedByGeneratedLogs(items, generatedImageLogs)
 	items = append(items, generatedItems...)
-	total += generatedImageTotal - int64(skippedGeneratedItems)
-
-	if setting.MjForwardUrlEnabled {
-		for i, midjourney := range items {
-			midjourney.ImageUrl = midjourneyDisplayImageURL(midjourney.ImageUrl, midjourney.MjId)
-			items[i] = midjourney
-		}
-	}
+	total += generatedImageTotal - int64(skippedExistingItems)
+	normalizeMidjourneyLogItems(items)
 	sortMidjourneyBySubmitTime(items)
 	items = sliceMidjourneyPage(items, pageInfo.GetStartIdx(), pageInfo.GetPageSize())
 	pageInfo.SetTotal(int(total))
@@ -360,55 +349,37 @@ func GetUserMidjourney(c *gin.Context) {
 	common.ApiSuccess(c, pageInfo)
 }
 
-func midjourneyDisplayImageURL(imageURL string, mjID string) string {
-	if imageURL == "" {
-		return ""
-	}
-	if strings.HasPrefix(imageURL, "/generated-images/") {
-		return imageURL
-	}
-	return system_setting.ServerAddress + "/mj/image/" + mjID
-}
-
-func filterGeneratedImageLogItems(generatedItems []*model.Midjourney, existingItems []*model.Midjourney) ([]*model.Midjourney, int) {
-	if len(generatedItems) == 0 || len(existingItems) == 0 {
-		return generatedItems, 0
+func filterMidjourneyItemsDuplicatedByGeneratedLogs(items []*model.Midjourney, generatedLogs []*model.GeneratedImageLog) ([]*model.Midjourney, int) {
+	if len(items) == 0 || len(generatedLogs) == 0 {
+		return items, 0
 	}
 
-	existingKeys := make(map[string]bool, len(existingItems))
-	for _, item := range existingItems {
-		if item == nil {
+	generatedRequestIDs := make(map[string]bool, len(generatedLogs))
+	for _, log := range generatedLogs {
+		if log == nil || strings.TrimSpace(log.RequestId) == "" {
 			continue
 		}
-		existingKeys[generatedImageDedupeKey(item)] = true
+		generatedRequestIDs[strings.TrimSpace(log.RequestId)] = true
+	}
+	if len(generatedRequestIDs) == 0 {
+		return items, 0
 	}
 
-	filtered := make([]*model.Midjourney, 0, len(generatedItems))
+	filtered := make([]*model.Midjourney, 0, len(items))
 	skipped := 0
-	for _, item := range generatedItems {
+	for _, item := range items {
 		if item == nil {
 			continue
 		}
-		if existingKeys[generatedImageDedupeKey(item)] {
+		mjID := strings.TrimSpace(item.MjId)
+		requestID := strings.TrimPrefix(mjID, "generated-image-")
+		if requestID != mjID && generatedRequestIDs[requestID] {
 			skipped++
 			continue
 		}
 		filtered = append(filtered, item)
 	}
 	return filtered, skipped
-}
-
-func generatedImageDedupeKey(item *model.Midjourney) string {
-	if item == nil {
-		return ""
-	}
-	return fmt.Sprintf("%d:%d:%s:%s:%s",
-		item.UserId,
-		item.ChannelId,
-		strings.TrimSpace(item.Action),
-		strings.TrimSpace(item.Status),
-		strings.TrimSpace(item.Prompt),
-	)
 }
 
 func generatedImageLogsToMidjourney(logs []*model.GeneratedImageLog) []*model.Midjourney {
@@ -429,7 +400,7 @@ func generatedImageLogsToMidjourney(logs []*model.GeneratedImageLog) []*model.Mi
 			Action:     "IMAGE_GENERATION",
 			MjId:       fmt.Sprintf("generated-image-%d", log.Id),
 			Prompt:     generatedImagePrompt(log.Other, log.Prompt),
-			PromptEn:   log.ModelName,
+			ModelName:  log.ModelName,
 			SubmitTime: log.CreatedAt * 1000,
 			StartTime:  startTime * 1000,
 			FinishTime: log.CreatedAt * 1000,
@@ -446,6 +417,13 @@ func generatedImageLogsToMidjourney(logs []*model.GeneratedImageLog) []*model.Mi
 
 func generatedImagePrompt(other string, fallback string) string {
 	otherMap, _ := common.StrToMap(other)
+	if requestBody, ok := otherMap["request_body"].(map[string]interface{}); ok {
+		if body, ok := requestBody["body"].(map[string]interface{}); ok {
+			if prompt, ok := body["prompt"].(string); ok && strings.TrimSpace(prompt) != "" {
+				return prompt
+			}
+		}
+	}
 	if prompt, ok := otherMap["prompt"].(string); ok && strings.TrimSpace(prompt) != "" {
 		return prompt
 	}
@@ -459,26 +437,47 @@ func generatedImageSize(other string, content string) string {
 	otherMap, _ := common.StrToMap(other)
 	parts := make([]string, 0, 2)
 
-	if size, ok := otherMap["image_size"].(string); ok && strings.TrimSpace(size) != "" {
-		parts = append(parts, strings.TrimSpace(size))
-	} else if size := extractImageSizeFromContent(content); size != "" {
-		parts = append(parts, size)
-	}
-
 	if images, ok := otherMap["generated_images"].([]interface{}); ok {
 		for _, image := range images {
 			imageMap, ok := image.(map[string]interface{})
 			if !ok {
 				continue
 			}
+			width, hasWidth := imageMap["width"]
+			height, hasHeight := imageMap["height"]
+			if hasWidth && hasHeight {
+				parts = append(parts, fmt.Sprintf("%.0fx%.0f", generatedImageNumber(width), generatedImageNumber(height)))
+			}
 			if fileSize := generatedImageFileSize(imageMap["size"]); fileSize != "" {
 				parts = append(parts, fileSize)
-				break
+			}
+			if len(parts) > 0 {
+				return strings.Join(parts, " / ")
 			}
 		}
 	}
 
+	if size := generatedImageRequestedSize(other); size != "" {
+		parts = append(parts, size)
+	} else if size := extractImageSizeFromContent(content); size != "" {
+		parts = append(parts, size)
+	}
 	return strings.Join(parts, " / ")
+}
+
+func generatedImageRequestedSize(other string) string {
+	otherMap, _ := common.StrToMap(other)
+	if requestBody, ok := otherMap["request_body"].(map[string]interface{}); ok {
+		if body, ok := requestBody["body"].(map[string]interface{}); ok {
+			if size, ok := body["size"].(string); ok && strings.TrimSpace(size) != "" {
+				return strings.TrimSpace(size)
+			}
+		}
+	}
+	if size, ok := otherMap["image_size"].(string); ok && strings.TrimSpace(size) != "" {
+		return strings.TrimSpace(size)
+	}
+	return ""
 }
 
 func extractImageSizeFromContent(content string) string {
@@ -492,20 +491,7 @@ func extractImageSizeFromContent(content string) string {
 }
 
 func generatedImageFileSize(value interface{}) string {
-	var size float64
-	switch v := value.(type) {
-	case float64:
-		size = v
-	case int:
-		size = float64(v)
-	case int64:
-		size = float64(v)
-	case json.Number:
-		parsed, err := v.Float64()
-		if err == nil {
-			size = parsed
-		}
-	}
+	size := generatedImageNumber(value)
 	if size <= 0 {
 		return ""
 	}
@@ -516,6 +502,29 @@ func generatedImageFileSize(value interface{}) string {
 		return fmt.Sprintf("%.1f KB", size/1024)
 	}
 	return fmt.Sprintf("%.0f B", size)
+}
+
+func generatedImageNumber(value interface{}) float64 {
+	switch v := value.(type) {
+	case float64:
+		return v
+	case float32:
+		return float64(v)
+	case int:
+		return float64(v)
+	case int64:
+		return float64(v)
+	case int32:
+		return float64(v)
+	case uint:
+		return float64(v)
+	case uint64:
+		return float64(v)
+	case uint32:
+		return float64(v)
+	default:
+		return 0
+	}
 }
 
 func firstGeneratedImageURL(other string) string {
@@ -536,6 +545,21 @@ func firstGeneratedImageURL(other string) string {
 	return ""
 }
 
+func normalizeMidjourneyLogItems(items []*model.Midjourney) {
+	for i, midjourney := range items {
+		if midjourney == nil {
+			continue
+		}
+		if strings.TrimSpace(midjourney.ModelName) == "" {
+			midjourney.ModelName = strings.TrimSpace(midjourney.PromptEn)
+		}
+		if setting.MjForwardUrlEnabled {
+			midjourney.ImageUrl = midjourneyDisplayImageURL(midjourney.ImageUrl, midjourney.MjId)
+		}
+		items[i] = midjourney
+	}
+}
+
 func sortMidjourneyBySubmitTime(items []*model.Midjourney) {
 	sort.SliceStable(items, func(i, j int) bool {
 		if items[i].SubmitTime == items[j].SubmitTime {
@@ -554,4 +578,14 @@ func sliceMidjourneyPage(items []*model.Midjourney, startIdx int, pageSize int) 
 		endIdx = len(items)
 	}
 	return items[startIdx:endIdx]
+}
+
+func midjourneyDisplayImageURL(imageURL string, mjID string) string {
+	if imageURL == "" {
+		return ""
+	}
+	if strings.HasPrefix(imageURL, "/generated-images/") {
+		return imageURL
+	}
+	return system_setting.ServerAddress + "/mj/image/" + mjID
 }
