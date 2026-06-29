@@ -469,3 +469,36 @@ func TestCalculateTextQuotaSummarySkipsImageGenerationCallSurchargeForGeminiImag
 	require.Equal(t, 0.0, summary.ImageGenerationCallPrice)
 	require.Equal(t, int(0.075*0.66*common.QuotaPerUnit), summary.Quota)
 }
+
+func TestCalculateTextQuotaSummaryUsesOnlyModelPriceForPricedImageGeneration(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(w)
+	ctx.Set("image_generation_call", true)
+	ctx.Set("image_generation_call_quality", "high")
+	ctx.Set("image_generation_call_size", "4096x4096")
+
+	relayInfo := &relaycommon.RelayInfo{
+		OriginModelName: "gpt-image-2-4K",
+		PriceData: types.PriceData{
+			UsePrice:       true,
+			ModelPrice:     0.05,
+			GroupRatioInfo: types.GroupRatioInfo{GroupRatio: 1},
+		},
+		StartTime: time.Now(),
+	}
+	usage := &dto.Usage{
+		PromptTokens:     1,
+		CompletionTokens: 1400,
+		TotalTokens:      1401,
+		CompletionTokenDetails: dto.CompletionTokenDetails{
+			ImageTokens: 1400,
+		},
+	}
+
+	summary := calculateTextQuotaSummary(ctx, relayInfo, usage)
+
+	require.Equal(t, 0.167, summary.ImageGenerationCallPrice)
+	require.False(t, summary.ImageGenerationCallBillable)
+	require.Equal(t, int(0.05*common.QuotaPerUnit), summary.Quota)
+}

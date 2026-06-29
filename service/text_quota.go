@@ -22,41 +22,42 @@ import (
 )
 
 type textQuotaSummary struct {
-	PromptTokens             int
-	CompletionTokens         int
-	TotalTokens              int
-	CacheTokens              int
-	CacheCreationTokens      int
-	CacheCreationTokens5m    int
-	CacheCreationTokens1h    int
-	ImageTokens              int
-	ImageInputTokens         int
-	ImageOutputTokens        int
-	AudioTokens              int
-	ModelName                string
-	TokenName                string
-	UseTimeSeconds           int64
-	CompletionRatio          float64
-	CacheRatio               float64
-	ImageRatio               float64
-	ModelRatio               float64
-	GroupRatio               float64
-	ModelPrice               float64
-	CacheCreationRatio       float64
-	CacheCreationRatio5m     float64
-	CacheCreationRatio1h     float64
-	Quota                    int
-	IsClaudeUsageSemantic    bool
-	UsageSemantic            string
-	WebSearchPrice           float64
-	WebSearchCallCount       int
-	ClaudeWebSearchPrice     float64
-	ClaudeWebSearchCallCount int
-	FileSearchPrice          float64
-	FileSearchCallCount      int
-	AudioInputPrice          float64
-	ImageGenerationCallPrice float64
-	ToolCallSurchargeQuota   decimal.Decimal
+	PromptTokens                int
+	CompletionTokens            int
+	TotalTokens                 int
+	CacheTokens                 int
+	CacheCreationTokens         int
+	CacheCreationTokens5m       int
+	CacheCreationTokens1h       int
+	ImageTokens                 int
+	ImageInputTokens            int
+	ImageOutputTokens           int
+	AudioTokens                 int
+	ModelName                   string
+	TokenName                   string
+	UseTimeSeconds              int64
+	CompletionRatio             float64
+	CacheRatio                  float64
+	ImageRatio                  float64
+	ModelRatio                  float64
+	GroupRatio                  float64
+	ModelPrice                  float64
+	CacheCreationRatio          float64
+	CacheCreationRatio5m        float64
+	CacheCreationRatio1h        float64
+	Quota                       int
+	IsClaudeUsageSemantic       bool
+	UsageSemantic               string
+	WebSearchPrice              float64
+	WebSearchCallCount          int
+	ClaudeWebSearchPrice        float64
+	ClaudeWebSearchCallCount    int
+	FileSearchPrice             float64
+	FileSearchCallCount         int
+	AudioInputPrice             float64
+	ImageGenerationCallPrice    float64
+	ImageGenerationCallBillable bool
+	ToolCallSurchargeQuota      decimal.Decimal
 }
 
 func cacheWriteTokensTotal(summary textQuotaSummary) int {
@@ -132,9 +133,12 @@ func calculateTextToolCallSurcharge(ctx *gin.Context, relayInfo *relaycommon.Rel
 
 	if ctx.GetBool("image_generation_call") && shouldChargeImageGenerationCall(summary.ModelName) {
 		summary.ImageGenerationCallPrice = operation_setting.GetGPTImage1PriceOnceCall(ctx.GetString("image_generation_call_quality"), ctx.GetString("image_generation_call_size"))
-		surcharge = surcharge.Add(decimal.NewFromFloat(summary.ImageGenerationCallPrice).
-			Mul(dGroupRatio).
-			Mul(dQuotaPerUnit))
+		if !relayInfo.PriceData.UsePrice {
+			summary.ImageGenerationCallBillable = true
+			surcharge = surcharge.Add(decimal.NewFromFloat(summary.ImageGenerationCallPrice).
+				Mul(dGroupRatio).
+				Mul(dQuotaPerUnit))
+		}
 	}
 
 	return surcharge
@@ -384,7 +388,11 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 	if summary.ImageGenerationCallPrice > 0 {
 		callQuota := imageGenerationCallQuota(summary)
 		callCostUSD := imageGenerationCallCostUSD(summary)
-		extraContent = append(extraContent, fmt.Sprintf("图片生成调用花费 %s 额度（约 $%s）", callQuota.String(), callCostUSD.StringFixed(6)))
+		if summary.ImageGenerationCallBillable {
+			extraContent = append(extraContent, fmt.Sprintf("图片生成调用花费 %s 额度（约 $%s）", callQuota.String(), callCostUSD.StringFixed(6)))
+		} else {
+			extraContent = append(extraContent, fmt.Sprintf("上游图片生成调用成本参考 %s 额度（约 $%s，不参与扣费）", callQuota.String(), callCostUSD.StringFixed(6)))
+		}
 	}
 
 	if summary.TotalTokens == 0 {
@@ -459,6 +467,7 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 		other["image_generation_call_price"] = summary.ImageGenerationCallPrice
 		other["image_generation_call_quota"] = imageGenerationCallQuota(summary).IntPart()
 		other["image_generation_call_cost_usd"] = imageGenerationCallCostUSD(summary).InexactFloat64()
+		other["image_generation_call_billable"] = summary.ImageGenerationCallBillable
 		other["generated_at"] = common.GetTimestamp()
 		other["charged_quota"] = summary.Quota
 		other["generation_duration_seconds"] = summary.UseTimeSeconds
