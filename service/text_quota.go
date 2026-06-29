@@ -130,7 +130,7 @@ func calculateTextToolCallSurcharge(ctx *gin.Context, relayInfo *relaycommon.Rel
 		}
 	}
 
-	if ctx.GetBool("image_generation_call") {
+	if ctx.GetBool("image_generation_call") && shouldChargeImageGenerationCall(summary.ModelName) {
 		summary.ImageGenerationCallPrice = operation_setting.GetGPTImage1PriceOnceCall(ctx.GetString("image_generation_call_quality"), ctx.GetString("image_generation_call_size"))
 		surcharge = surcharge.Add(decimal.NewFromFloat(summary.ImageGenerationCallPrice).
 			Mul(dGroupRatio).
@@ -138,6 +138,14 @@ func calculateTextToolCallSurcharge(ctx *gin.Context, relayInfo *relaycommon.Rel
 	}
 
 	return surcharge
+}
+
+func shouldChargeImageGenerationCall(modelName string) bool {
+	model := strings.ToLower(strings.TrimSpace(modelName))
+	return strings.Contains(model, "gpt-image-") ||
+		strings.HasPrefix(model, "dall-e") ||
+		strings.HasPrefix(model, "gpt-4o") ||
+		strings.HasPrefix(model, "gpt-5")
 }
 
 func imageGenerationCallQuota(summary textQuotaSummary) decimal.Decimal {

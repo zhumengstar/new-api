@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
@@ -438,4 +439,33 @@ func TestComposeTieredTextQuotaErrorFallbackUsesPreConsumedQuota(t *testing.T) {
 
 	require.Equal(t, int64(12500), summary.ToolCallSurchargeQuota.Round(0).IntPart())
 	require.Equal(t, 14500, quota)
+}
+
+func TestCalculateTextQuotaSummarySkipsImageGenerationCallSurchargeForGeminiImage(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(w)
+	ctx.Set("image_generation_call", true)
+	ctx.Set("image_generation_call_quality", "standard")
+	ctx.Set("image_generation_call_size", "1024x1024")
+
+	relayInfo := &relaycommon.RelayInfo{
+		OriginModelName: "gemini-3.1-flash-image-4k",
+		PriceData: types.PriceData{
+			UsePrice:       true,
+			ModelPrice:     0.075,
+			GroupRatioInfo: types.GroupRatioInfo{GroupRatio: 0.66},
+		},
+		StartTime: time.Now(),
+	}
+	usage := &dto.Usage{
+		PromptTokens:     24,
+		CompletionTokens: 1400,
+		TotalTokens:      1424,
+	}
+
+	summary := calculateTextQuotaSummary(ctx, relayInfo, usage)
+
+	require.Equal(t, 0.0, summary.ImageGenerationCallPrice)
+	require.Equal(t, int(0.075*0.66*common.QuotaPerUnit), summary.Quota)
 }
