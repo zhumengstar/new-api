@@ -7,7 +7,7 @@ import {
   Typography,
   Popconfirm,
 } from '@douyinfe/semi-ui';
-import { IconPlus, IconDelete } from '@douyinfe/semi-icons';
+import { IconPlus, IconDelete, IconMenu } from '@douyinfe/semi-icons';
 import { useTranslation } from 'react-i18next';
 import CardTable from '../../../../components/common/ui/CardTable';
 
@@ -67,6 +67,7 @@ export default function GroupTable({ groupRatio, userUsableGroups, onChange }) {
   const [rows, setRows] = useState(() =>
     buildRows(groupRatio, userUsableGroups),
   );
+  const [draggingId, setDraggingId] = useState(null);
 
   // Use functional setRows to keep updateRow/addRow/removeRow referentially
   // stable, preventing columns useMemo from rebuilding on every keystroke
@@ -120,6 +121,23 @@ export default function GroupTable({ groupRatio, userUsableGroups, onChange }) {
     [emitAndSet],
   );
 
+  const moveRow = useCallback(
+    (sourceId, targetId) => {
+      if (!sourceId || !targetId || sourceId === targetId) return;
+      emitAndSet((prev) => {
+        const sourceIndex = prev.findIndex((row) => row._id === sourceId);
+        const targetIndex = prev.findIndex((row) => row._id === targetId);
+        if (sourceIndex < 0 || targetIndex < 0) return prev;
+
+        const next = [...prev];
+        const [sourceRow] = next.splice(sourceIndex, 1);
+        next.splice(targetIndex, 0, sourceRow);
+        return next;
+      });
+    },
+    [emitAndSet],
+  );
+
   const groupNames = useMemo(() => rows.map((r) => r.name), [rows]);
 
   const duplicateNames = useMemo(() => {
@@ -137,6 +155,35 @@ export default function GroupTable({ groupRatio, userUsableGroups, onChange }) {
 
   const columns = useMemo(
     () => [
+      {
+        title: '',
+        key: 'drag',
+        width: 44,
+        align: 'center',
+        render: (_, record) => (
+          <span
+            draggable
+            title={t('拖动调整顺序')}
+            onDragStart={(event) => {
+              setDraggingId(record._id);
+              event.dataTransfer.effectAllowed = 'move';
+              event.dataTransfer.setData('text/plain', record._id);
+            }}
+            onDragEnd={() => setDraggingId(null)}
+            style={{
+              cursor: 'grab',
+              color: 'var(--semi-color-text-2)',
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              width: 24,
+              height: 24,
+            }}
+          >
+            <IconMenu />
+          </span>
+        ),
+      },
       {
         title: t('分组名称'),
         dataIndex: 'name',
@@ -233,6 +280,20 @@ export default function GroupTable({ groupRatio, userUsableGroups, onChange }) {
         rowKey='_id'
         hidePagination
         size='small'
+        onRow={(record) => ({
+          onDragOver: (event) => {
+            if (!draggingId || draggingId === record._id) return;
+            event.preventDefault();
+            event.dataTransfer.dropEffect = 'move';
+          },
+          onDrop: (event) => {
+            event.preventDefault();
+            const sourceId =
+              event.dataTransfer.getData('text/plain') || draggingId;
+            moveRow(sourceId, record._id);
+            setDraggingId(null);
+          },
+        })}
         empty={<Text type='tertiary'>{t('暂无分组，点击下方按钮添加')}</Text>}
       />
       <div className='mt-3 flex justify-center'>
