@@ -440,37 +440,7 @@ func shouldUseGeminiImageChatCompatibility(info *relaycommon.RelayInfo) bool {
 }
 
 func convertImageRequestToGeminiImageChat(c *gin.Context, request dto.ImageRequest, info *relaycommon.RelayInfo) (dto.GeneralOpenAIRequest, error) {
-	n := uint(1)
-	if request.N != nil && *request.N > 0 {
-		n = *request.N
-	}
-	prompt := request.Prompt
-	if n > 1 {
-		prompt = fmt.Sprintf("%s\n\nGenerate %d images.", prompt, n)
-	}
-	if request.Size != "" {
-		promptSize := strings.TrimSpace(request.Size)
-		instructionSize := promptSize
-		if geminiImageSizeFromRequest(request, info) == "4K" {
-			switch strings.ToLower(promptSize) {
-			case "4k", "4096x4096", "2160x3840", "3840x2160":
-			default:
-				promptSize = "4K"
-				if aspectRatio := geminiImageAspectRatioFromSize(instructionSize); aspectRatio != "" {
-					instructionSize = aspectRatio
-				} else {
-					instructionSize = ""
-				}
-			}
-		}
-		prompt = fmt.Sprintf("%s\n\nTarget image size: %s.", prompt, promptSize)
-		if instruction := geminiImageOrientationInstruction(instructionSize); instruction != "" {
-			prompt = fmt.Sprintf("%s\n%s", prompt, instruction)
-		}
-	}
-	if request.Quality != "" {
-		prompt = fmt.Sprintf("%s\n\nTarget image quality: %s.", prompt, request.Quality)
-	}
+	prompt := imagePromptWithRequestConstraints(request, info)
 
 	message := dto.Message{Role: "user"}
 	if info.RelayMode == relayconstant.RelayModeImagesEdits && !isJSONRequest(c) {
@@ -591,6 +561,67 @@ func applyGeminiImageConfig(openAIRequest *dto.GeneralOpenAIRequest, request dto
 	}
 	openAIRequest.ExtraBody = extraBodyBytes
 	return nil
+}
+
+func imagePromptWithRequestConstraints(request dto.ImageRequest, info *relaycommon.RelayInfo) string {
+	prompt := strings.TrimSpace(request.Prompt)
+	constraints := imageRequestConstraintLines(request, info)
+	if len(constraints) == 0 {
+		return prompt
+	}
+	return prompt + "\n\nImage generation constraints:\n- " + strings.Join(constraints, "\n- ")
+}
+
+func imageRequestConstraintLines(request dto.ImageRequest, info *relaycommon.RelayInfo) []string {
+	lines := make([]string, 0, 8)
+
+	if size := strings.TrimSpace(request.Size); size != "" {
+		lines = append(lines, fmt.Sprintf("Requested output size: %s pixels.", size))
+		if aspectRatio := geminiImageAspectRatioFromSize(size); aspectRatio != "" {
+			lines = append(lines, fmt.Sprintf("Use aspect ratio %s.", aspectRatio))
+		}
+		if instruction := geminiImageOrientationInstruction(size); instruction != "" {
+			lines = append(lines, instruction)
+		}
+		if imageSize := geminiImageSizeFromRequest(request, info); imageSize != "" {
+			lines = append(lines, fmt.Sprintf("Target resolution tier: %s. Preserve the requested aspect ratio and avoid changing width/height orientation.", imageSize))
+		}
+	}
+
+	if quality := strings.TrimSpace(request.Quality); quality != "" {
+		lines = append(lines, fmt.Sprintf("Requested quality: %s.", quality))
+	}
+	if request.N != nil && *request.N > 0 {
+		lines = append(lines, fmt.Sprintf("Requested image count: %d.", *request.N))
+	}
+	if format := strings.TrimSpace(request.ResponseFormat); format != "" {
+		lines = append(lines, fmt.Sprintf("Requested response format: %s.", format))
+	}
+	if style := imageRawMessageString(request.Style); style != "" {
+		lines = append(lines, fmt.Sprintf("Requested style: %s.", style))
+	}
+	if background := imageRawMessageString(request.Background); background != "" {
+		lines = append(lines, fmt.Sprintf("Requested background: %s.", background))
+	}
+	if outputFormat := imageRawMessageString(request.OutputFormat); outputFormat != "" {
+		lines = append(lines, fmt.Sprintf("Requested output format: %s.", outputFormat))
+	}
+	if compression := imageRawMessageString(request.OutputCompression); compression != "" {
+		lines = append(lines, fmt.Sprintf("Requested output compression: %s.", compression))
+	}
+
+	return lines
+}
+
+func imageRawMessageString(raw json.RawMessage) string {
+	if len(raw) == 0 || string(raw) == "null" {
+		return ""
+	}
+	var text string
+	if err := common.Unmarshal(raw, &text); err == nil {
+		return strings.TrimSpace(text)
+	}
+	return strings.TrimSpace(string(raw))
 }
 
 func geminiImageOrientationInstruction(size string) string {
@@ -816,6 +847,7 @@ func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInf
 	if shouldUseGeminiImageChatCompatibility(info) {
 		return convertImageRequestToGeminiImageChat(c, request, info)
 	}
+	request.Prompt = imagePromptWithRequestConstraints(request, info)
 	switch info.RelayMode {
 	case relayconstant.RelayModeImagesEdits:
 		if isJSONRequest(c) {
@@ -842,6 +874,9 @@ func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInf
 					continue
 				}
 				for _, value := range values {
+					if key == "prompt" {
+						value = request.Prompt
+					}
 					writer.WriteField(key, value)
 				}
 			}

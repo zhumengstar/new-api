@@ -153,14 +153,61 @@ func TestGeminiImageCompatibilityUsesChatCompletions(t *testing.T) {
 	if !ok {
 		t.Fatalf("message content has type %T, want string", chatReq.Messages[0].Content)
 	}
-	if !strings.Contains(content, "draw a cat") || !strings.Contains(content, "Target image size: 4K") || strings.Contains(content, "1024x1024") {
+	if !strings.Contains(content, "draw a cat") ||
+		!strings.Contains(content, "Requested output size: 1024x1024 pixels.") ||
+		!strings.Contains(content, "Target resolution tier: 4K.") ||
+		!strings.Contains(content, "Use a square canvas with aspect ratio 1:1") {
 		t.Fatalf("unexpected message content: %q", content)
+	}
+	if strings.Count(content, "Image generation constraints:") != 1 {
+		t.Fatalf("constraints should be appended exactly once: %q", content)
 	}
 	if chatReq.ImageConfig == nil || chatReq.ImageConfig["image_size"] != "4K" {
 		t.Fatalf("image_config.image_size = %v, want 4K", chatReq.ImageConfig["image_size"])
 	}
 	if chatReq.ImageSize != "4K" {
 		t.Fatalf("image_size = %q, want 4K", chatReq.ImageSize)
+	}
+}
+
+func TestConvertImageRequestAppendsRequestConstraintsForOpenAIImage(t *testing.T) {
+	n := uint(1)
+	info := &relaycommon.RelayInfo{
+		RelayMode: relayconstant.RelayModeImagesGenerations,
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ChannelType:       constant.ChannelTypeOpenAI,
+			UpstreamModelName: "gpt-image-2-4K",
+		},
+	}
+
+	converted, err := (&Adaptor{}).ConvertImageRequest(nil, info, dto.ImageRequest{
+		Model:          "gpt-image-2-4K",
+		Prompt:         "draw a blue cube",
+		N:              &n,
+		Size:           "4096x2304",
+		Quality:        "high",
+		ResponseFormat: "b64_json",
+	})
+	if err != nil {
+		t.Fatalf("ConvertImageRequest returned error: %v", err)
+	}
+	imageReq := converted.(dto.ImageRequest)
+	if imageReq.Size != "4096x2304" || imageReq.Quality != "high" {
+		t.Fatalf("request parameters should be preserved: %#v", imageReq)
+	}
+	for _, want := range []string{
+		"draw a blue cube",
+		"Requested output size: 4096x2304 pixels.",
+		"Use aspect ratio 16:9.",
+		"Use a landscape canvas",
+		"Target resolution tier: 4K.",
+		"Requested quality: high.",
+		"Requested image count: 1.",
+		"Requested response format: b64_json.",
+	} {
+		if !strings.Contains(imageReq.Prompt, want) {
+			t.Fatalf("prompt missing %q: %q", want, imageReq.Prompt)
+		}
 	}
 }
 
