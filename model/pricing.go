@@ -1,7 +1,6 @@
 package model
 
 import (
-	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -124,16 +123,24 @@ func updatePricing() {
 	for i := range allMeta {
 		m := &allMeta[i]
 		if m.NameRule == NameRuleExact {
-			metaMap[m.ModelName] = m
-		} else {
-			switch m.NameRule {
-			case NameRulePrefix:
-				prefixList = append(prefixList, m)
-			case NameRuleSuffix:
-				suffixList = append(suffixList, m)
-			case NameRuleContains:
-				containsList = append(containsList, m)
+			if m.Status != 1 {
+				continue
 			}
+			if existing, exists := metaMap[m.ModelName]; !exists || existing.Status != 1 || m.Id > existing.Id {
+				metaMap[m.ModelName] = m
+			}
+			continue
+		}
+		if m.Status != 1 {
+			continue
+		}
+		switch m.NameRule {
+		case NameRulePrefix:
+			prefixList = append(prefixList, m)
+		case NameRuleSuffix:
+			suffixList = append(suffixList, m)
+		case NameRuleContains:
+			containsList = append(containsList, m)
 		}
 	}
 
@@ -220,7 +227,7 @@ func updatePricing() {
 			continue
 		}
 		var raw map[string]interface{}
-		if err := json.Unmarshal([]byte(meta.Endpoints), &raw); err == nil {
+		if err := common.Unmarshal([]byte(meta.Endpoints), &raw); err == nil {
 			endpoints := make([]string, 0, len(raw))
 			for k, v := range raw {
 				switch v.(type) {
@@ -264,7 +271,7 @@ func updatePricing() {
 			continue
 		}
 		var raw map[string]interface{}
-		if err := json.Unmarshal([]byte(meta.Endpoints), &raw); err == nil {
+		if err := common.Unmarshal([]byte(meta.Endpoints), &raw); err == nil {
 			for k, v := range raw {
 				switch val := v.(type) {
 				case string:
