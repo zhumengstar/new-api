@@ -163,13 +163,16 @@ func formatUserLogs(logs []*Log, startIdx int) {
 	assignDisplayLogIds(logs, startIdx)
 }
 
-func CanAccessGeneratedImageAsset(userId int, isAdmin bool, assetURL string) bool {
+func CanAccessGeneratedImageAsset(userId int, scopedUserIDs []int, scoped bool, assetURL string) bool {
 	if strings.TrimSpace(assetURL) == "" {
 		return false
 	}
 	tx := LOG_DB.Model(&Log{}).Where("other LIKE ?", "%"+assetURL+"%")
-	if !isAdmin {
-		tx = tx.Where("user_id = ?", userId)
+	if scoped {
+		if len(scopedUserIDs) == 0 {
+			return false
+		}
+		tx = tx.Where("user_id in (?)", scopedUserIDs)
 	}
 	var count int64
 	if err := tx.Count(&count).Error; err != nil {
@@ -185,6 +188,9 @@ func GetAllGeneratedImageLogs(startIdx int, num int, queryParams TaskQueryParams
 		Select("id, user_id, created_at, request_id, model_name, content as prompt, channel_id, quota, use_time, other").
 		Where("type = ? AND other LIKE ?", LogTypeConsume, "%generated_images%")
 
+	if len(queryParams.UserIDs) != 0 {
+		query = query.Where("user_id in (?)", queryParams.UserIDs)
+	}
 	if queryParams.ChannelID != "" {
 		query = query.Where("channel_id = ?", queryParams.ChannelID)
 	}
@@ -582,12 +588,18 @@ func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
 	}
 }
 
-func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, startIdx int, num int, channel int, group string, requestId string, upstreamRequestId string) (logs []*Log, total int64, err error) {
+func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, startIdx int, num int, channel int, group string, requestId string, upstreamRequestId string, scopedUserIDs []int, scoped bool) (logs []*Log, total int64, err error) {
 	var tx *gorm.DB
 	if logType == LogTypeUnknown {
 		tx = LOG_DB
 	} else {
 		tx = LOG_DB.Where("logs.type = ?", logType)
+	}
+	if scoped {
+		if len(scopedUserIDs) == 0 {
+			return []*Log{}, 0, nil
+		}
+		tx = tx.Where("logs.user_id in (?)", scopedUserIDs)
 	}
 
 	if tx, err = applyExplicitLogTextFilter(tx, "logs.model_name", modelName); err != nil {
@@ -734,11 +746,19 @@ type Stat struct {
 	Tpm   int `json:"tpm"`
 }
 
-func SumUsedQuota(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, channel int, group string) (stat Stat, err error) {
+func SumUsedQuota(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, channel int, group string, scopedUserIDs []int, scoped bool) (stat Stat, err error) {
 	tx := LOG_DB.Table("logs").Select("COALESCE(sum(quota), 0) quota")
 
 	// 为rpm和tpm创建单独的查询
 	rpmTpmQuery := LOG_DB.Table("logs").Select("count(*) rpm, COALESCE(sum(prompt_tokens), 0) + COALESCE(sum(completion_tokens), 0) tpm")
+
+	if scoped {
+		if len(scopedUserIDs) == 0 {
+			return stat, nil
+		}
+		tx = tx.Where("user_id in (?)", scopedUserIDs)
+		rpmTpmQuery = rpmTpmQuery.Where("user_id in (?)", scopedUserIDs)
+	}
 
 	if tx, err = applyExplicitLogTextFilter(tx, "username", username); err != nil {
 		return stat, err

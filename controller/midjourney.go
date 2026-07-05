@@ -305,6 +305,14 @@ func GetAllMidjourney(c *gin.Context) {
 		StartTimestamp: c.Query("start_timestamp"),
 		EndTimestamp:   c.Query("end_timestamp"),
 	}
+	scopedUserIDs, scoped, err := model.GetScopedUserIDs(c.GetInt("id"), c.GetInt("role"))
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if scoped {
+		queryParams.UserIDs = scopedUserIDs
+	}
 
 	fetchSize := pageInfo.GetEndIdx()
 	items := model.GetAllTasks(0, fetchSize, queryParams)

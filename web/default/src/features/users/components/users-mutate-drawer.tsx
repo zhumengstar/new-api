@@ -1,3 +1,6 @@
+import { zodResolver } from '@hookform/resolvers/zod'
+import { useQuery } from '@tanstack/react-query'
+import { Pencil } from 'lucide-react'
 /*
 Copyright (C) 2023-2026 QuantumNous
 
@@ -18,15 +21,18 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useEffect, useState } from 'react'
 import { useForm } from 'react-hook-form'
-import { zodResolver } from '@hookform/resolvers/zod'
-import { useQuery } from '@tanstack/react-query'
-import { Pencil } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
-import { getCurrencyDisplay, getCurrencyLabel } from '@/lib/currency'
-import { formatQuota, parseQuotaFromDollars } from '@/lib/format'
-import { Button } from '@/components/ui/button'
+
+import {
+  SideDrawerSection,
+  sideDrawerContentClassName,
+  sideDrawerFooterClassName,
+  sideDrawerFormClassName,
+  sideDrawerHeaderClassName,
+} from '@/components/drawer-layout'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
   Form,
@@ -35,18 +41,17 @@ import {
   FormField,
   FormItem,
   FormLabel,
-  FormMessage
+  FormMessage,
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { cn } from '@/lib/utils'
 import {
   Select,
   SelectContent,
   SelectGroup,
   SelectItem,
   SelectTrigger,
-  SelectValue
+  SelectValue,
 } from '@/components/ui/select'
 import {
   Sheet,
@@ -55,26 +60,24 @@ import {
   SheetDescription,
   SheetFooter,
   SheetHeader,
-  SheetTitle
+  SheetTitle,
 } from '@/components/ui/sheet'
 import { Textarea } from '@/components/ui/textarea'
-import {
-  SideDrawerSection,
-  sideDrawerContentClassName,
-  sideDrawerFooterClassName,
-  sideDrawerFormClassName,
-  sideDrawerHeaderClassName
-} from '@/components/drawer-layout'
+import { useIsRoot } from '@/hooks/use-admin'
+import { getCurrencyDisplay, getCurrencyLabel } from '@/lib/currency'
+import { formatQuota, parseQuotaFromDollars } from '@/lib/format'
+import { cn } from '@/lib/utils'
+
 import { createUser, updateUser, getUser, getGroups } from '../api'
 import { BINDING_FIELDS, ERROR_MESSAGES, SUCCESS_MESSAGES } from '../constants'
 import {
   userFormSchema,
-  type UserFormValues,
   USER_FORM_DEFAULT_VALUES,
   transformFormDataToPayload,
-  transformUserToFormDefaults
+  transformUserToFormDefaults,
 } from '../lib'
-import { type User } from '../types'
+import type { UserFormValues } from '../lib/user-form'
+import type { User } from '../types'
 import { UserQuotaDialog } from './user-quota-dialog'
 import { useUsers } from './users-provider'
 
@@ -87,9 +90,10 @@ type UsersMutateDrawerProps = {
 export function UsersMutateDrawer({
   open,
   onOpenChange,
-  currentRow
+  currentRow,
 }: UsersMutateDrawerProps) {
   const { t } = useTranslation()
+  const isRoot = useIsRoot()
   const isUpdate = !!currentRow
   const { triggerRefresh } = useUsers()
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -99,25 +103,27 @@ export function UsersMutateDrawer({
   const { data: groupsData } = useQuery({
     queryKey: ['groups'],
     queryFn: getGroups,
-    staleTime: 5 * 60 * 1000
+    staleTime: 5 * 60 * 1000,
   })
 
   const groups = groupsData?.data || []
 
   const form = useForm<UserFormValues>({
     resolver: zodResolver(userFormSchema),
-    defaultValues: USER_FORM_DEFAULT_VALUES
+    defaultValues: USER_FORM_DEFAULT_VALUES,
   })
 
   // Load existing data when updating
   useEffect(() => {
     if (open && isUpdate && currentRow) {
       // For update, fetch fresh data
-      getUser(currentRow.id).then((result) => {
-        if (result.success && result.data) {
-          form.reset(transformUserToFormDefaults(result.data))
-        }
-      })
+      void getUser(currentRow.id)
+        .then((result) => {
+          if (result.success && result.data) {
+            form.reset(transformUserToFormDefaults(result.data))
+          }
+        })
+        .catch(() => undefined)
     } else if (open && !isUpdate) {
       // For create, reset to defaults
       form.reset(USER_FORM_DEFAULT_VALUES)
@@ -136,7 +142,7 @@ export function UsersMutateDrawer({
       if (passwordLength < 8 || passwordLength > 20) {
         form.setError('password', {
           type: 'manual',
-          message: t('Password must be between 8 and 20 characters')
+          message: t('Password must be between 8 and 20 characters'),
         })
         return
       }
@@ -158,14 +164,12 @@ export function UsersMutateDrawer({
         onOpenChange(false)
         triggerRefresh()
       } else {
-        toast.error(
-          result.message ||
-            (isUpdate
-              ? t(ERROR_MESSAGES.UPDATE_FAILED)
-              : t(ERROR_MESSAGES.CREATE_FAILED))
-        )
+        const fallbackMessage = isUpdate
+          ? t(ERROR_MESSAGES.UPDATE_FAILED)
+          : t(ERROR_MESSAGES.CREATE_FAILED)
+        toast.error(result.message || fallbackMessage)
       }
-    } catch (_error) {
+    } catch {
       toast.error(t(ERROR_MESSAGES.UNEXPECTED))
     } finally {
       setIsSubmitting(false)
@@ -245,10 +249,11 @@ export function UsersMutateDrawer({
                         <Select
                           items={[
                             { value: '1', label: t('Common User') },
-                            { value: '10', label: t('Admin') }
+                            { value: '10', label: t('Admin') },
                           ]}
                           onValueChange={(value) =>
-                            value !== null && field.onChange(parseInt(value))
+                            value !== null &&
+                            field.onChange(Number.parseInt(value))
                           }
                           value={String(field.value)}
                         >
@@ -367,7 +372,7 @@ export function UsersMutateDrawer({
                                         const current = field.value || []
                                         if (checked === true) {
                                           field.onChange([
-                                            ...new Set([...current, group])
+                                            ...new Set([...current, group]),
                                           ])
                                           return
                                         }
@@ -395,9 +400,14 @@ export function UsersMutateDrawer({
                     render={({ field }) => (
                       <FormItem>
                         <FormLabel>
-                          {t('Remaining Quota ({{currency}})', {
-                            currency: currencyLabel
-                          })}
+                          {t(
+                            isRoot
+                              ? 'Remaining Quota ({{currency}})'
+                              : 'Remaining Virtual Quota ({{currency}})',
+                            {
+                              currency: currencyLabel,
+                            }
+                          )}
                         </FormLabel>
                         <div className='flex gap-2'>
                           <FormControl>
@@ -417,7 +427,9 @@ export function UsersMutateDrawer({
                             onClick={() => setQuotaDialogOpen(true)}
                           >
                             <Pencil className='mr-1 h-4 w-4' />
-                            {t('Adjust Quota')}
+                            {isRoot
+                              ? t('Adjust Quota')
+                              : t('Adjust Virtual Quota')}
                           </Button>
                         </div>
                         <FormDescription>

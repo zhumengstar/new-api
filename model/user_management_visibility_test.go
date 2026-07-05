@@ -56,7 +56,7 @@ func TestGetAllUsersHidesInactiveCommonUsersOnly(t *testing.T) {
 	})
 
 	pageInfo := &common.PageInfo{Page: 1, PageSize: 20}
-	users, total, err := GetAllUsers(pageInfo, "", "")
+	users, total, err := GetAllUsers(pageInfo, "", "", 1, common.RoleRootUser)
 
 	require.NoError(t, err)
 	assert.Equal(t, int64(2), total)
@@ -79,10 +79,70 @@ func TestSearchUsersCanFindInactiveCommonUsers(t *testing.T) {
 		LastLoginAt: old,
 	})
 
-	users, total, err := SearchUsers("inactive_search_target", "", nil, nil, 0, 20, "", "")
+	users, total, err := SearchUsers("inactive_search_target", "", nil, nil, 0, 20, "", "", 1, common.RoleRootUser)
 
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), total)
 	require.Len(t, users, 1)
 	assert.Equal(t, "inactive_search_target", users[0].Username)
+}
+
+func TestAdminUserManagementShowsSelfAndInvitedUsers(t *testing.T) {
+	truncateTables(t)
+	now := common.GetTimestamp()
+
+	insertUserForManagementVisibilityTest(t, &User{
+		Id:          20,
+		Username:    "admin_owner",
+		Role:        common.RoleAdminUser,
+		Status:      common.UserStatusEnabled,
+		Quota:       900,
+		CreatedAt:   now,
+		LastLoginAt: now,
+	})
+	insertUserForManagementVisibilityTest(t, &User{
+		Id:          21,
+		Username:    "invited_by_admin",
+		Role:        common.RoleCommonUser,
+		Status:      common.UserStatusEnabled,
+		InviterId:   20,
+		CreatedAt:   now,
+		LastLoginAt: now,
+	})
+	insertUserForManagementVisibilityTest(t, &User{
+		Id:          22,
+		Username:    "not_invited_by_admin",
+		Role:        common.RoleCommonUser,
+		Status:      common.UserStatusEnabled,
+		InviterId:   99,
+		CreatedAt:   now,
+		LastLoginAt: now,
+	})
+
+	pageInfo := &common.PageInfo{Page: 1, PageSize: 20}
+	users, total, err := GetAllUsers(pageInfo, "", "", 20, common.RoleAdminUser)
+
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), total)
+	names := make([]string, 0, len(users))
+	adminQuota := 0
+	for _, user := range users {
+		names = append(names, user.Username)
+		if user.Id == 20 {
+			adminQuota = user.Quota
+		}
+	}
+	assert.ElementsMatch(t, []string{"admin_owner", "invited_by_admin"}, names)
+	assert.Equal(t, 900, adminQuota)
+
+	searchUsers, searchTotal, err := SearchUsers("not_invited_by_admin", "", nil, nil, 0, 20, "", "", 20, common.RoleAdminUser)
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), searchTotal)
+	assert.Empty(t, searchUsers)
+
+	selfSearchUsers, selfSearchTotal, err := SearchUsers("admin_owner", "", nil, nil, 0, 20, "", "", 20, common.RoleAdminUser)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), selfSearchTotal)
+	require.Len(t, selfSearchUsers, 1)
+	assert.Equal(t, "admin_owner", selfSearchUsers[0].Username)
 }

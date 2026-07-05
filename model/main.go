@@ -208,6 +208,10 @@ func InitDB() (err error) {
 		if !common.IsMasterNode {
 			return nil
 		}
+		if common.GetEnvOrDefaultBool("SKIP_DATABASE_MIGRATION", false) {
+			common.SysLog("database migration skipped by SKIP_DATABASE_MIGRATION")
+			return nil
+		}
 		if common.UsingMainDatabase(common.DatabaseTypeMySQL) {
 			//_, _ = sqlDB.Exec("ALTER TABLE channels MODIFY model_mapping TEXT;") // TODO: delete this line when most users have upgraded
 		}
@@ -252,6 +256,10 @@ func InitLogDB() (err error) {
 		if !common.IsMasterNode {
 			return nil
 		}
+		if common.GetEnvOrDefaultBool("SKIP_DATABASE_MIGRATION", false) {
+			common.SysLog("log database migration skipped by SKIP_DATABASE_MIGRATION")
+			return nil
+		}
 		common.SysLog("database migration started")
 		err = migrateLOGDB()
 		return err
@@ -276,6 +284,7 @@ func migrateDB() error {
 		&Channel{},
 		&Token{},
 		&User{},
+		&UserVirtualQuota{},
 		&PasskeyCredential{},
 		&Option{},
 		&Redemption{},
@@ -328,6 +337,7 @@ func migrateDBFast() error {
 		{&Channel{}, "Channel"},
 		{&Token{}, "Token"},
 		{&User{}, "User"},
+		{&UserVirtualQuota{}, "UserVirtualQuota"},
 		{&PasskeyCredential{}, "PasskeyCredential"},
 		{&Option{}, "Option"},
 		{&Redemption{}, "Redemption"},

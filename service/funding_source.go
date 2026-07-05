@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/model"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
 )
 
 // ---------------------------------------------------------------------------
@@ -61,6 +62,75 @@ func (w *WalletFunding) Refund() error {
 	// IncreaseUserQuota 是 quota += N 的非幂等操作，不能重试，否则会多退额度。
 	// 订阅的 RefundSubscriptionPreConsume 有 requestId 幂等保护所以可以重试。
 	return model.IncreaseUserQuota(w.userId, w.consumed, false)
+}
+
+type VirtualWalletFunding struct {
+	relayInfo     *relaycommon.RelayInfo
+	adminId       int
+	userId        int
+	adminRatio    float64
+	userRatio     float64
+	consumed      int
+	adminConsumed int
+}
+
+func (v *VirtualWalletFunding) Source() string { return BillingSourceWallet }
+
+func (v *VirtualWalletFunding) actualQuota(virtualQuota int) int {
+	return model.ScaleVirtualQuota(virtualQuota, v.adminRatio, v.userRatio)
+}
+
+func (v *VirtualWalletFunding) PreConsume(amount int) error {
+	if amount <= 0 {
+		return nil
+	}
+	actual := v.actualQuota(amount)
+	if err := model.ConsumeVirtualQuota(v.adminId, v.userId, amount, actual); err != nil {
+		return err
+	}
+	v.consumed = amount
+	v.adminConsumed = actual
+	v.syncRelayInfo()
+	return nil
+}
+
+func (v *VirtualWalletFunding) Settle(delta int) error {
+	if delta == 0 {
+		return nil
+	}
+	actualDelta := v.actualQuota(delta)
+	if err := model.ConsumeVirtualQuota(v.adminId, v.userId, delta, actualDelta); err != nil {
+		return err
+	}
+	v.consumed += delta
+	v.adminConsumed += actualDelta
+	v.syncRelayInfo()
+	return nil
+}
+
+func (v *VirtualWalletFunding) Refund() error {
+	if v.consumed <= 0 && v.adminConsumed <= 0 {
+		return nil
+	}
+	err := model.ConsumeVirtualQuota(v.adminId, v.userId, -v.consumed, -v.adminConsumed)
+	if err == nil {
+		v.consumed = 0
+		v.adminConsumed = 0
+		v.syncRelayInfo()
+	}
+	return err
+}
+
+func (v *VirtualWalletFunding) syncRelayInfo() {
+	if v.relayInfo == nil {
+		return
+	}
+	v.relayInfo.VirtualBilling = true
+	v.relayInfo.VirtualAdminId = v.adminId
+	v.relayInfo.VirtualUserRatio = v.userRatio
+	v.relayInfo.VirtualAdminRatio = v.adminRatio
+	v.relayInfo.VirtualQuota = v.consumed
+	v.relayInfo.VirtualActualQuota = v.adminConsumed
 }
 
 // ---------------------------------------------------------------------------

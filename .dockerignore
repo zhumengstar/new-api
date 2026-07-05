@@ -19,4 +19,6 @@ antigravity-stats-dashboard
 .tmp-*
 *.jpg
 *.png
+!web/default/public/**/*.png
+!web/classic/public/**/*.png
 !THIRD-PARTY-LICENSES.md

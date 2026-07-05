@@ -27,14 +27,17 @@ func GetGroupDetails(c *gin.Context) {
 	groupNames := make([]string, 0)
 	groupRatios := ratio_setting.GetGroupRatioCopy()
 	userUsableGroups := setting.GetUserUsableGroupsCopy()
+	userId := c.GetInt("id")
+	userGroup, _ := model.GetUserGroup(userId, false)
 	groupMeta := make(map[string]map[string]interface{}, len(groupRatios))
 	for groupName, ratio := range groupRatios {
 		groupNames = append(groupNames, groupName)
 		_, isPublic := userUsableGroups[groupName]
 		groupMeta[groupName] = map[string]interface{}{
-			"ratio":     ratio,
-			"is_public": isPublic,
-			"desc":      setting.GetUsableGroupDescription(groupName),
+			"ratio":       ratio,
+			"admin_ratio": service.GetUserGroupRatioForUser(userId, userGroup, groupName),
+			"is_public":   isPublic,
+			"desc":        setting.GetUsableGroupDescription(groupName),
 		}
 	}
 	c.JSON(http.StatusOK, gin.H{

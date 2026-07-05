@@ -29,3 +29,8 @@ export function useIsAdmin(): boolean {
   const { user } = useAuthStore((state) => state.auth)
   return (user?.role ?? 0) >= ROLE.ADMIN
 }
+
+export function useIsRoot(): boolean {
+  const { user } = useAuthStore((state) => state.auth)
+  return (user?.role ?? 0) >= ROLE.SUPER_ADMIN
+}

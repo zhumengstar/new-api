@@ -24,6 +24,7 @@ import {
   API,
   getTodayStartTimestamp,
   isAdmin,
+  isRoot,
   showError,
   showSuccess,
   timestamp2string,
@@ -55,11 +56,18 @@ const renderGeneratedImages = (images, t, openGeneratedImagePreview) => {
       {validImages.map((image, index) => {
         const downloadUrl = `${image.url}${image.url.includes('?') ? '&' : '?'}download=1`;
         return (
-          <div key={`${image.url}-${index}`} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <div
+            key={`${image.url}-${index}`}
+            style={{ display: 'flex', flexDirection: 'column', gap: 4 }}
+          >
             <button
               type='button'
               onClick={() => openGeneratedImagePreview(image.url)}
-              title={image.expires_at ? `${t('有效期至')} ${timestamp2string(image.expires_at)}` : t('查看图片')}
+              title={
+                image.expires_at
+                  ? `${t('有效期至')} ${timestamp2string(image.expires_at)}`
+                  : t('查看图片')
+              }
               style={{
                 display: 'block',
                 border: 0,
@@ -115,6 +123,8 @@ export const useLogsData = () => {
     USE_TIME: 'use_time',
     PROMPT: 'prompt',
     COMPLETION: 'completion',
+    VIRTUAL_RATIO: 'virtual_ratio',
+    VIRTUAL_COST: 'virtual_cost',
     COST: 'cost',
     REQUEST_BODY: 'request_body',
     RETRY: 'retry',
@@ -132,11 +142,13 @@ export const useLogsData = () => {
   const [logCount, setLogCount] = useState(0);
   const [pageSize, setPageSize] = useState(ITEMS_PER_PAGE);
   const [logType, setLogType] = useState(0);
-  const [isGeneratedImagePreviewOpen, setIsGeneratedImagePreviewOpen] = useState(false);
+  const [isGeneratedImagePreviewOpen, setIsGeneratedImagePreviewOpen] =
+    useState(false);
   const [generatedImagePreviewUrl, setGeneratedImagePreviewUrl] = useState('');
 
   // User and admin
   const isAdminUser = isAdmin();
+  const isRootUser = isRoot();
   // Role-specific storage key to prevent different roles from overwriting each other
   const STORAGE_KEY = isAdminUser
     ? 'logs-table-columns-admin'
@@ -181,8 +193,10 @@ export const useLogsData = () => {
       [COLUMN_KEYS.USE_TIME]: true,
       [COLUMN_KEYS.PROMPT]: true,
       [COLUMN_KEYS.COMPLETION]: true,
+      [COLUMN_KEYS.VIRTUAL_RATIO]: isAdminUser,
+      [COLUMN_KEYS.VIRTUAL_COST]: isAdminUser,
       [COLUMN_KEYS.COST]: true,
-      [COLUMN_KEYS.REQUEST_BODY]: true,
+      [COLUMN_KEYS.REQUEST_BODY]: isRootUser,
       [COLUMN_KEYS.RETRY]: isAdminUser,
       [COLUMN_KEYS.IP]: true,
       [COLUMN_KEYS.DETAILS]: true,
@@ -206,6 +220,9 @@ export const useLogsData = () => {
         merged[COLUMN_KEYS.USERNAME] = false;
         merged[COLUMN_KEYS.RETRY] = false;
       }
+      if (!isRootUser) {
+        merged[COLUMN_KEYS.REQUEST_BODY] = false;
+      }
 
       return merged;
     } catch (e) {
@@ -225,7 +242,9 @@ export const useLogsData = () => {
   };
 
   // Column visibility state
-  const [visibleColumns, setVisibleColumns] = useState(getInitialVisibleColumns);
+  const [visibleColumns, setVisibleColumns] = useState(
+    getInitialVisibleColumns,
+  );
   const [showColumnSelector, setShowColumnSelector] = useState(false);
   const [billingDisplayMode, setBillingDisplayMode] = useState(
     getInitialBillingDisplayMode,
@@ -449,7 +468,10 @@ export const useLogsData = () => {
       let other = getLogOther(logs[i].other);
       let expandDataLocal = [];
 
-      if (isAdminUser && (logs[i].type === 0 || logs[i].type === 2 || logs[i].type === 6)) {
+      if (
+        isAdminUser &&
+        (logs[i].type === 0 || logs[i].type === 2 || logs[i].type === 6)
+      ) {
         expandDataLocal.push({
           key: t('渠道信息'),
           value: `${logs[i].channel} - ${logs[i].channel_name || '[未知]'}`,
@@ -496,7 +518,10 @@ export const useLogsData = () => {
           expandDataLocal.push({
             key: t('日志详情'),
             value: other?.claude
-              ? renderClaudeLogContent({ ...other, displayMode: billingDisplayMode })
+              ? renderClaudeLogContent({
+                  ...other,
+                  displayMode: billingDisplayMode,
+                })
               : renderLogContent({ ...other, displayMode: billingDisplayMode }),
           });
         }
@@ -586,17 +611,31 @@ export const useLogsData = () => {
           expandDataLocal.push({
             key: t('失败原因'),
             value: (
-              <div style={{ maxWidth: 600, whiteSpace: 'normal', wordBreak: 'break-word', lineHeight: 1.6 }}>
+              <div
+                style={{
+                  maxWidth: 600,
+                  whiteSpace: 'normal',
+                  wordBreak: 'break-word',
+                  lineHeight: 1.6,
+                }}
+              >
                 {other.reason}
               </div>
             ),
           });
         }
       }
-      if (Array.isArray(other?.generated_images) && other.generated_images.length > 0) {
+      if (
+        Array.isArray(other?.generated_images) &&
+        other.generated_images.length > 0
+      ) {
         expandDataLocal.push({
           key: t('生成图片'),
-          value: renderGeneratedImages(other.generated_images, t, openGeneratedImagePreview),
+          value: renderGeneratedImages(
+            other.generated_images,
+            t,
+            openGeneratedImagePreview,
+          ),
         });
       }
       if (other?.request_path) {
@@ -609,7 +648,8 @@ export const useLogsData = () => {
         const ss = other.stream_status;
         const isOk = ss.status === 'ok';
         const statusLabel = isOk ? '✓ ' + t('正常') : '✗ ' + t('异常');
-        let streamValue = statusLabel + ' (' + (ss.end_reason || 'unknown') + ')';
+        let streamValue =
+          statusLabel + ' (' + (ss.end_reason || 'unknown') + ')';
         if (ss.error_count > 0) {
           streamValue += ` [${t('软错误')}: ${ss.error_count}]`;
         }
@@ -624,7 +664,14 @@ export const useLogsData = () => {
           expandDataLocal.push({
             key: t('流错误详情'),
             value: (
-              <div style={{ maxWidth: 600, whiteSpace: 'pre-line', wordBreak: 'break-word', lineHeight: 1.6 }}>
+              <div
+                style={{
+                  maxWidth: 600,
+                  whiteSpace: 'pre-line',
+                  wordBreak: 'break-word',
+                  lineHeight: 1.6,
+                }}
+              >
                 {ss.errors.join('\n')}
               </div>
             ),
@@ -917,6 +964,7 @@ export const useLogsData = () => {
     logType,
     stat,
     isAdminUser,
+    isRootUser,
     isGeneratedImagePreviewOpen,
     setIsGeneratedImagePreviewOpen,
     generatedImagePreviewUrl,

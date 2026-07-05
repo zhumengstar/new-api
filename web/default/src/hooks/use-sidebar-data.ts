@@ -26,6 +26,7 @@ import {
   LayoutDashboard,
   ListTodo,
   MessageSquare,
+  PanelsTopLeft,
   Radio,
   ServerCog,
   Settings,
@@ -35,8 +36,9 @@ import {
   Wallet,
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+
+import type { SidebarData } from '@/components/layout/types'
 import { ROLE } from '@/lib/roles'
-import { type SidebarData } from '@/components/layout/types'
 
 /**
  * Root navigation groups for the application sidebar.
@@ -90,6 +92,11 @@ export function useSidebarData(): SidebarData {
             icon: FileText,
           },
           {
+            title: t('Infinite Canvas'),
+            url: '/canvas',
+            icon: PanelsTopLeft,
+          },
+          {
             title: t('Task Logs'),
             url: '/usage-logs/task',
             activeUrls: ['/usage-logs/drawing'],
@@ -122,11 +129,13 @@ export function useSidebarData(): SidebarData {
             title: t('Channels'),
             url: '/channels',
             icon: Radio,
+            requiredRole: ROLE.SUPER_ADMIN,
           },
           {
             title: t('Models'),
             url: '/models/metadata',
             icon: Box,
+            requiredRole: ROLE.SUPER_ADMIN,
           },
           {
             title: t('Users'),
@@ -137,11 +146,13 @@ export function useSidebarData(): SidebarData {
             title: t('Redemption Codes'),
             url: '/redemption-codes',
             icon: Ticket,
+            requiredRole: ROLE.SUPER_ADMIN,
           },
           {
             title: t('Subscriptions'),
             url: '/subscriptions',
             icon: CreditCard,
+            requiredRole: ROLE.SUPER_ADMIN,
           },
           {
             title: t('System Info'),
@@ -154,6 +165,7 @@ export function useSidebarData(): SidebarData {
             url: '/system-settings/site',
             activeUrls: ['/system-settings'],
             icon: Settings,
+            requiredRole: ROLE.SUPER_ADMIN,
           },
         ],
       },

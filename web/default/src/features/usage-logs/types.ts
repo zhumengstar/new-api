@@ -133,6 +133,12 @@ export interface LogOtherData {
   model_price?: number
   group_ratio?: number
   user_group_ratio?: number
+  virtual_billing?: boolean
+  virtual_admin_id?: number
+  virtual_group_ratio?: number
+  virtual_quota?: number
+  actual_group_ratio?: number
+  actual_quota?: number
   cache_ratio?: number
   cache_creation_ratio?: number
   cache_creation_ratio_5m?: number

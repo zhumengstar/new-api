@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -87,7 +88,7 @@ func TestGetFlowQuotaDataUsesQuotaDataRoleSpecificDimensions(t *testing.T) {
 		TokenUsed: 999,
 	})
 
-	rootRows, err := GetFlowQuotaData(900, 2000, "", 0, common.RoleRootUser)
+	rootRows, err := GetFlowQuotaData(900, 2000, "", 0, common.RoleRootUser, nil, false)
 	require.NoError(t, err)
 	require.Len(t, rootRows, 3)
 	// Token 11 was soft-deleted, so its name is intentionally left empty for the
@@ -110,7 +111,7 @@ func TestGetFlowQuotaDataUsesQuotaDataRoleSpecificDimensions(t *testing.T) {
 	require.Equal(t, 22, rootRows[1].TokenID)
 	require.Equal(t, "backup", rootRows[1].TokenName)
 
-	adminRows, err := GetFlowQuotaData(900, 2000, "alice", 0, common.RoleAdminUser)
+	adminRows, err := GetFlowQuotaData(900, 2000, "alice", 0, common.RoleAdminUser, []int{1}, true)
 	require.NoError(t, err)
 	require.Len(t, adminRows, 2)
 	require.Equal(t, 0, adminRows[0].TokenID)
@@ -121,7 +122,7 @@ func TestGetFlowQuotaDataUsesQuotaDataRoleSpecificDimensions(t *testing.T) {
 	require.Equal(t, "east", adminRows[0].ChannelName)
 	require.Equal(t, 150, adminRows[0].Quota)
 
-	selfRows, err := GetFlowQuotaData(900, 2000, "", 1, common.RoleCommonUser)
+	selfRows, err := GetFlowQuotaData(900, 2000, "", 1, common.RoleCommonUser, []int{1}, true)
 	require.NoError(t, err)
 	require.Len(t, selfRows, 1)
 	require.Empty(t, selfRows[0].Username)
@@ -130,6 +131,88 @@ func TestGetFlowQuotaDataUsesQuotaDataRoleSpecificDimensions(t *testing.T) {
 	require.Empty(t, selfRows[0].TokenName)
 	require.Equal(t, "vip", selfRows[0].UseGroup)
 	require.Equal(t, 175, selfRows[0].Quota)
+}
+
+func TestAdminScopedUsageDataOnlyIncludesScopedUsers(t *testing.T) {
+	truncateTables(t)
+	require.NoError(t, DB.Create(&Log{
+		UserId:       1,
+		Username:     "admin_owner",
+		Type:         LogTypeConsume,
+		CreatedAt:    1000,
+		ModelName:    "gpt-a",
+		Quota:        10,
+		PromptTokens: 2,
+	}).Error)
+	require.NoError(t, DB.Create(&Log{
+		UserId:       2,
+		Username:     "invited_user",
+		Type:         LogTypeConsume,
+		CreatedAt:    1001,
+		ModelName:    "gpt-a",
+		Quota:        20,
+		PromptTokens: 3,
+		Other:        common.MapToJsonStr(map[string]interface{}{"generated_images": []string{"a.png"}}),
+	}).Error)
+	require.NoError(t, DB.Create(&Log{
+		UserId:       3,
+		Username:     "outside_user",
+		Type:         LogTypeConsume,
+		CreatedAt:    1002,
+		ModelName:    "gpt-a",
+		Quota:        40,
+		PromptTokens: 5,
+		Other:        common.MapToJsonStr(map[string]interface{}{"generated_images": []string{"b.png"}}),
+	}).Error)
+	require.NoError(t, DB.Create(&QuotaData{
+		UserID:    1,
+		Username:  "admin_owner",
+		ModelName: "gpt-a",
+		CreatedAt: 1000,
+		UseGroup:  "default",
+		Quota:     10,
+		Count:     1,
+	}).Error)
+	require.NoError(t, DB.Create(&QuotaData{
+		UserID:    2,
+		Username:  "invited_user",
+		ModelName: "gpt-a",
+		CreatedAt: 1000,
+		UseGroup:  "default",
+		Quota:     20,
+		Count:     1,
+	}).Error)
+	require.NoError(t, DB.Create(&QuotaData{
+		UserID:    3,
+		Username:  "outside_user",
+		ModelName: "gpt-a",
+		CreatedAt: 1000,
+		UseGroup:  "default",
+		Quota:     40,
+		Count:     1,
+	}).Error)
+
+	scopedUserIDs := []int{1, 2}
+	logs, total, err := GetAllLogs(LogTypeConsume, 900, 1100, "", "", "", 0, 20, 0, "", "", "", scopedUserIDs, true)
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), total)
+	require.Len(t, logs, 2)
+	assert.NotEqual(t, 3, logs[0].UserId)
+	assert.NotEqual(t, 3, logs[1].UserId)
+
+	stat, err := SumUsedQuota(LogTypeConsume, 900, 1100, "", "", "", 0, "", scopedUserIDs, true)
+	require.NoError(t, err)
+	assert.Equal(t, 30, stat.Quota)
+
+	quotaRows, err := GetAllQuotaDates(900, 1100, "", scopedUserIDs, true)
+	require.NoError(t, err)
+	require.Len(t, quotaRows, 1)
+	assert.Equal(t, 30, quotaRows[0].Quota)
+
+	generatedLogs, generatedTotal := GetAllGeneratedImageLogs(0, 20, TaskQueryParams{UserIDs: scopedUserIDs})
+	assert.Equal(t, int64(1), generatedTotal)
+	require.Len(t, generatedLogs, 1)
+	assert.Equal(t, 2, generatedLogs[0].UserId)
 }
 
 func TestLogQuotaDataSplitsRowsByUseGroupTokenChannelAndNode(t *testing.T) {

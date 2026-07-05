@@ -198,10 +198,7 @@ function renderType(type, t) {
 
 function buildStreamStatusTooltip(ss, t) {
   if (!ss) return null;
-  const lines = [
-    t('流状态') + '：' + t('异常'),
-    (ss.end_reason || 'unknown'),
-  ];
+  const lines = [t('流状态') + '：' + t('异常'), ss.end_reason || 'unknown'];
   if (ss.error_count > 0) {
     lines.push(`${t('软错误')}: ${ss.error_count}`);
   }
@@ -239,11 +236,7 @@ function renderIsStream(bool, t, streamStatus) {
                 userSelect: 'none',
               }}
             >
-              <CircleAlert
-                size={14}
-                strokeWidth={2.5}
-                color='currentColor'
-              />
+              <CircleAlert size={14} strokeWidth={2.5} color='currentColor' />
             </span>
           </Tooltip>
         )}
@@ -515,7 +508,11 @@ function getUsageLogDetailSummary(record, text, billingDisplayMode, t) {
     };
   }
 
-  const summaryOpts = { ...other, displayMode: billingDisplayMode, outputMode: 'segments' };
+  const summaryOpts = {
+    ...other,
+    displayMode: billingDisplayMode,
+    outputMode: 'segments',
+  };
 
   if (other?.billing_mode === 'tiered_expr') {
     return { segments: renderTieredModelPriceSimple(summaryOpts) };
@@ -535,9 +532,10 @@ export const getLogsColumns = ({
   showUserInfoFunc,
   openChannelAffinityUsageCacheModal,
   isAdminUser,
+  isRootUser,
   billingDisplayMode = 'price',
 }) => {
-  return [
+  const columns = [
     {
       key: COLUMN_KEYS.TIME,
       title: t('时间'),
@@ -856,6 +854,30 @@ export const getLogsColumns = ({
       },
     },
     {
+      key: COLUMN_KEYS.VIRTUAL_RATIO,
+      title: t('虚拟倍率'),
+      dataIndex: 'other',
+      render: (text, record) => {
+        const other = getLogOther(record.other);
+        if (!other?.virtual_billing) {
+          return <></>;
+        }
+        return <>{formatRatio(other.virtual_group_ratio)}x</>;
+      },
+    },
+    {
+      key: COLUMN_KEYS.VIRTUAL_COST,
+      title: t('虚拟费用'),
+      dataIndex: 'other',
+      render: (text, record) => {
+        const other = getLogOther(record.other);
+        if (!other?.virtual_billing) {
+          return <></>;
+        }
+        return <>{renderQuota(other.virtual_quota ?? record.quota, 6)}</>;
+      },
+    },
+    {
       key: COLUMN_KEYS.COST,
       title: t('花费'),
       dataIndex: 'quota',
@@ -885,6 +907,7 @@ export const getLogsColumns = ({
     },
     {
       key: COLUMN_KEYS.REQUEST_BODY,
+      hidden: !isRootUser,
       title: t('请求体'),
       dataIndex: 'other',
       render: (text, record, index) => {
@@ -1003,4 +1026,5 @@ export const getLogsColumns = ({
       },
     },
   ];
+  return columns.filter((column) => !column.hidden);
 };

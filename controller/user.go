@@ -23,6 +23,7 @@ import (
 
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 type LoginRequest struct {
@@ -273,7 +274,7 @@ func Register(c *gin.Context) {
 
 func GetAllUsers(c *gin.Context) {
 	pageInfo := common.GetPageQuery(c)
-	users, total, err := model.GetAllUsers(pageInfo, c.Query("sort_by"), c.Query("sort_order"))
+	users, total, err := model.GetAllUsers(pageInfo, c.Query("sort_by"), c.Query("sort_order"), c.GetInt("id"), c.GetInt("role"))
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -302,7 +303,7 @@ func SearchUsers(c *gin.Context) {
 		}
 	}
 	pageInfo := common.GetPageQuery(c)
-	users, total, err := model.SearchUsers(keyword, group, role, status, pageInfo.GetStartIdx(), pageInfo.GetPageSize(), c.Query("sort_by"), c.Query("sort_order"))
+	users, total, err := model.SearchUsers(keyword, group, role, status, pageInfo.GetStartIdx(), pageInfo.GetPageSize(), c.Query("sort_by"), c.Query("sort_order"), c.GetInt("id"), c.GetInt("role"))
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -318,6 +319,34 @@ func canManageTargetRole(myRole int, targetRole int) bool {
 	return myRole == common.RoleRootUser || myRole > targetRole
 }
 
+func canViewUserInScope(c *gin.Context, user *model.User) bool {
+	myRole := c.GetInt("role")
+	if myRole >= common.RoleRootUser {
+		return true
+	}
+	if user.Id == c.GetInt("id") {
+		return true
+	}
+	if myRole >= common.RoleAdminUser {
+		return user.InviterId == c.GetInt("id")
+	}
+	return false
+}
+
+func canManageUserInScope(c *gin.Context, user *model.User) bool {
+	myRole := c.GetInt("role")
+	if !canManageTargetRole(myRole, user.Role) {
+		return false
+	}
+	if myRole >= common.RoleRootUser {
+		return true
+	}
+	if myRole >= common.RoleAdminUser {
+		return user.InviterId == c.GetInt("id")
+	}
+	return user.Id == c.GetInt("id")
+}
+
 func GetUser(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
@@ -329,10 +358,15 @@ func GetUser(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	myRole := c.GetInt("role")
-	if !canManageTargetRole(myRole, user.Role) {
+	if !canViewUserInScope(c, user) {
 		common.ApiErrorI18n(c, i18n.MsgUserNoPermissionSameLevel)
 		return
+	}
+	if c.GetInt("role") == common.RoleAdminUser {
+		if err := model.ApplyAdminVirtualQuotaToUser(c.GetInt("id"), user); err != nil {
+			common.ApiError(c, err)
+			return
+		}
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
@@ -446,6 +480,15 @@ func GetSelf(c *gin.Context) {
 
 	// 获取用户设置并提取sidebar_modules
 	userSetting := user.GetSetting()
+	displayQuota := user.Quota
+	displayUsedQuota := user.UsedQuota
+	if virtualQuota, err := model.GetUserVirtualQuota(user.Id); err == nil && user.Quota <= 0 {
+		displayQuota = virtualQuota.RemainingQuota()
+		displayUsedQuota = virtualQuota.UsedQuota
+	} else if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		common.ApiError(c, err)
+		return
+	}
 
 	// 构建响应数据，包含用户信息和权限
 	responseData := map[string]interface{}{
@@ -461,8 +504,8 @@ func GetSelf(c *gin.Context) {
 		"wechat_id":         user.WeChatId,
 		"telegram_id":       user.TelegramId,
 		"group":             user.Group,
-		"quota":             user.Quota,
-		"used_quota":        user.UsedQuota,
+		"quota":             displayQuota,
+		"used_quota":        displayUsedQuota,
 		"request_count":     user.RequestCount,
 		"aff_code":          user.AffCode,
 		"aff_count":         user.AffCount,
@@ -494,11 +537,15 @@ func calculateUserPermissions(userRole int) map[string]interface{} {
 		permissions["sidebar_settings"] = false
 		permissions["sidebar_modules"] = map[string]interface{}{}
 	} else if userRole == common.RoleAdminUser {
-		// 管理员可以设置边栏，但不包含系统设置功能
+		// 管理员可以设置边栏，但不包含 root-only 管理功能
 		permissions["sidebar_settings"] = true
 		permissions["sidebar_modules"] = map[string]interface{}{
 			"admin": map[string]interface{}{
-				"setting": false, // 管理员不能访问系统设置
+				"channel":      false,
+				"models":       false,
+				"redemption":   false,
+				"subscription": false,
+				"setting":      false,
 			},
 		}
 	} else {
@@ -542,24 +589,28 @@ func generateDefaultSidebarConfig(userRole int) string {
 
 	// 管理员区域 - 根据角色决定
 	if userRole == common.RoleAdminUser {
-		// 管理员可以访问管理员区域，但不能访问系统设置
+		// 管理员可以访问部分管理员区域，渠道/模型/订阅/兑换码/系统设置为 root-only
 		defaultConfig["admin"] = map[string]interface{}{
-			"enabled":    true,
-			"channel":    true,
-			"models":     true,
-			"redemption": true,
-			"user":       true,
-			"setting":    false, // 管理员不能访问系统设置
+			"enabled":      true,
+			"channel":      false,
+			"models":       false,
+			"deployment":   true,
+			"redemption":   false,
+			"subscription": false,
+			"user":         true,
+			"setting":      false,
 		}
 	} else if userRole == common.RoleRootUser {
 		// 超级管理员可以访问所有功能
 		defaultConfig["admin"] = map[string]interface{}{
-			"enabled":    true,
-			"channel":    true,
-			"models":     true,
-			"redemption": true,
-			"user":       true,
-			"setting":    true,
+			"enabled":      true,
+			"channel":      true,
+			"models":       true,
+			"deployment":   true,
+			"redemption":   true,
+			"subscription": true,
+			"user":         true,
+			"setting":      true,
 		}
 	}
 	// 普通用户不包含admin区域
@@ -625,7 +676,7 @@ func UpdateUser(c *gin.Context) {
 		return
 	}
 	myRole := c.GetInt("role")
-	if !canManageTargetRole(myRole, originUser.Role) {
+	if !canManageUserInScope(c, originUser) {
 		common.ApiErrorI18n(c, i18n.MsgUserNoPermissionHigherLevel)
 		return
 	}
@@ -652,6 +703,10 @@ func UpdateUser(c *gin.Context) {
 			if _, ok := allowedRatioGroups[group]; !ok {
 				delete(request.UserGroupRatios, group)
 			}
+		}
+		if err := validateManagedUserGroupRatios(c, request.UserGroupRatios); err != nil {
+			common.ApiError(c, err)
+			return
 		}
 		currentSetting := originUser.GetSetting()
 		currentSetting.UserGroupRatios = request.UserGroupRatios
@@ -701,8 +756,7 @@ func AdminClearUserBinding(c *gin.Context) {
 		return
 	}
 
-	myRole := c.GetInt("role")
-	if !canManageTargetRole(myRole, user.Role) {
+	if !canManageUserInScope(c, user) {
 		common.ApiErrorI18n(c, i18n.MsgUserNoPermissionSameLevel)
 		return
 	}
@@ -866,8 +920,7 @@ func DeleteUser(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	myRole := c.GetInt("role")
-	if myRole <= originUser.Role {
+	if !canManageUserInScope(c, originUser) {
 		common.ApiErrorI18n(c, i18n.MsgUserNoPermissionHigherLevel)
 		return
 	}
@@ -937,6 +990,10 @@ func CreateUser(c *gin.Context) {
 		common.ApiErrorI18n(c, i18n.MsgUserCannotCreateHigherLevel)
 		return
 	}
+	inviterId := 0
+	if myRole < common.RoleRootUser {
+		inviterId = c.GetInt("id")
+	}
 	// Even for admin users, we cannot fully trust them!
 	cleanUser := model.User{
 		Username:    user.Username,
@@ -944,6 +1001,7 @@ func CreateUser(c *gin.Context) {
 		DisplayName: user.DisplayName,
 		Role:        user.Role, // 保持管理员设置的角色
 		Group:       user.Group,
+		InviterId:   inviterId,
 	}
 	if err := cleanUser.Insert(0); err != nil {
 		common.ApiError(c, err)
@@ -959,6 +1017,10 @@ func CreateUser(c *gin.Context) {
 			if _, ok := allowedRatioGroups[group]; !ok {
 				delete(request.UserGroupRatios, group)
 			}
+		}
+		if err := validateManagedUserGroupRatios(c, request.UserGroupRatios); err != nil {
+			common.ApiError(c, err)
+			return
 		}
 		if len(request.UserGroupRatios) > 0 {
 			setting := cleanUser.GetSetting()
@@ -992,6 +1054,24 @@ func allowedUserRatioGroups(userGroup string) map[string]struct{} {
 	return allowedGroups
 }
 
+func validateManagedUserGroupRatios(c *gin.Context, ratios map[string]float64) error {
+	if len(ratios) == 0 || c.GetInt("role") != common.RoleAdminUser {
+		return nil
+	}
+	admin, err := model.GetUserById(c.GetInt("id"), true)
+	if err != nil {
+		return err
+	}
+	adminSetting := admin.GetSetting()
+	for group, userRatio := range ratios {
+		adminRatio := service.GetUserGroupRatioWithSetting(adminSetting, admin.Group, group)
+		if userRatio <= adminRatio {
+			return fmt.Errorf("user group ratio for %s must be greater than admin ratio %.6g", group, adminRatio)
+		}
+	}
+	return nil
+}
+
 type ManageRequest struct {
 	Id     int    `json:"id"`
 	Action string `json:"action"`
@@ -1018,7 +1098,7 @@ func ManageUser(c *gin.Context) {
 		return
 	}
 	myRole := c.GetInt("role")
-	if !canManageTargetRole(myRole, user.Role) {
+	if !canManageUserInScope(c, &user) {
 		common.ApiErrorI18n(c, i18n.MsgUserNoPermissionHigherLevel)
 		return
 	}
@@ -1069,6 +1149,17 @@ func ManageUser(c *gin.Context) {
 		}
 		user.Role = common.RoleCommonUser
 	case "add_quota":
+		if myRole == common.RoleAdminUser {
+			if err := manageVirtualQuotaForInvitedUser(c, user.Id, req); err != nil {
+				common.ApiError(c, err)
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{
+				"success": true,
+				"message": "",
+			})
+			return
+		}
 		switch req.Mode {
 		case "add":
 			if req.Value <= 0 {
@@ -1146,6 +1237,43 @@ func ManageUser(c *gin.Context) {
 		"data":    clearUser,
 	})
 	return
+}
+
+func manageVirtualQuotaForInvitedUser(c *gin.Context, userId int, req ManageRequest) error {
+	adminId := c.GetInt("id")
+	virtualQuota, err := model.GetUserVirtualQuota(userId)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		virtualQuota = &model.UserVirtualQuota{AdminId: adminId, UserId: userId}
+	} else if err != nil {
+		return err
+	}
+	currentQuota := virtualQuota.Quota
+	nextQuota := currentQuota
+	switch req.Mode {
+	case "add":
+		if req.Value <= 0 {
+			return errors.New("quota change must be greater than 0")
+		}
+		nextQuota += req.Value
+	case "subtract":
+		if req.Value <= 0 {
+			return errors.New("quota change must be greater than 0")
+		}
+		nextQuota -= req.Value
+	case "override":
+		nextQuota = req.Value
+	default:
+		return errors.New("invalid quota mode")
+	}
+	if err := model.SetUserVirtualQuota(adminId, userId, nextQuota); err != nil {
+		return err
+	}
+	recordManageAuditFor(c, userId, "user.virtual_quota_update", map[string]interface{}{
+		"from": logger.LogQuota(currentQuota),
+		"to":   logger.LogQuota(nextQuota),
+		"mode": req.Mode,
+	})
+	return nil
 }
 
 type emailBindRequest struct {

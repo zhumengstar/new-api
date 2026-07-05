@@ -332,6 +332,14 @@ func appendBillingInfo(relayInfo *relaycommon.RelayInfo, other map[string]interf
 	if relayInfo.UserSetting.BillingPreference != "" {
 		other["billing_preference"] = relayInfo.UserSetting.BillingPreference
 	}
+	if relayInfo.VirtualBilling {
+		other["virtual_billing"] = true
+		other["virtual_admin_id"] = relayInfo.VirtualAdminId
+		other["virtual_group_ratio"] = relayInfo.VirtualUserRatio
+		other["virtual_quota"] = relayInfo.VirtualQuota
+		other["actual_group_ratio"] = relayInfo.VirtualAdminRatio
+		other["actual_quota"] = relayInfo.VirtualActualQuota
+	}
 	if relayInfo.BillingSource == "subscription" {
 		if relayInfo.SubscriptionId != 0 {
 			other["subscription_id"] = relayInfo.SubscriptionId

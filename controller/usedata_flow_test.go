@@ -21,6 +21,8 @@ func setupFlowControllerTestDB(t *testing.T) {
 	t.Helper()
 	db := setupModelListControllerTestDB(t)
 	require.NoError(t, db.AutoMigrate(&model.Token{}, &model.QuotaData{}))
+	require.NoError(t, model.DB.Create(&model.User{Id: 9, Username: "admin", Role: common.RoleAdminUser, Status: common.UserStatusEnabled, AffCode: "admin_aff"}).Error)
+	require.NoError(t, model.DB.Create(&model.User{Id: 2, Username: "bob", Role: common.RoleCommonUser, Status: common.UserStatusEnabled, InviterId: 9, AffCode: "bob_aff"}).Error)
 	require.NoError(t, model.DB.Create(&model.Channel{Id: 1, Name: "east"}).Error)
 	require.NoError(t, model.DB.Create(&model.Token{Id: 11, UserId: 1, Key: "sk-primary", Name: "primary"}).Error)
 	require.NoError(t, model.DB.Create(&model.Token{Id: 22, UserId: 2, Key: "sk-backup", Name: "backup"}).Error)
@@ -66,6 +68,7 @@ func TestGetAllFlowQuotaDatesUsesAdminDimensions(t *testing.T) {
 
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Set("id", 9)
 	ctx.Set("role", common.RoleAdminUser)
 	ctx.Request = httptest.NewRequest(http.MethodGet, "/api/data/flow?start_timestamp=1000&end_timestamp=2000&username=bob", nil)
 

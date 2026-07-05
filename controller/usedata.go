@@ -32,7 +32,12 @@ func GetAllQuotaDates(c *gin.Context) {
 	startTimestamp, _ := strconv.ParseInt(c.Query("start_timestamp"), 10, 64)
 	endTimestamp, _ := strconv.ParseInt(c.Query("end_timestamp"), 10, 64)
 	username := c.Query("username")
-	dates, err := model.GetAllQuotaDates(startTimestamp, endTimestamp, username)
+	scopedUserIDs, scoped, err := model.GetScopedUserIDs(c.GetInt("id"), c.GetInt("role"))
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	dates, err := model.GetAllQuotaDates(startTimestamp, endTimestamp, username, scopedUserIDs, scoped)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -48,7 +53,12 @@ func GetAllQuotaDates(c *gin.Context) {
 func GetQuotaDatesByUser(c *gin.Context) {
 	startTimestamp, _ := strconv.ParseInt(c.Query("start_timestamp"), 10, 64)
 	endTimestamp, _ := strconv.ParseInt(c.Query("end_timestamp"), 10, 64)
-	dates, err := model.GetQuotaDataGroupByUser(startTimestamp, endTimestamp)
+	scopedUserIDs, scoped, err := model.GetScopedUserIDs(c.GetInt("id"), c.GetInt("role"))
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	dates, err := model.GetQuotaDataGroupByUser(startTimestamp, endTimestamp, scopedUserIDs, scoped)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -91,7 +101,12 @@ func GetAllFlowQuotaDates(c *gin.Context) {
 		return
 	}
 	username := c.Query("username")
-	dates, err := model.GetFlowQuotaData(startTimestamp, endTimestamp, username, 0, c.GetInt("role"))
+	scopedUserIDs, scoped, err := model.GetScopedUserIDs(c.GetInt("id"), c.GetInt("role"))
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	dates, err := model.GetFlowQuotaData(startTimestamp, endTimestamp, username, c.GetInt("id"), c.GetInt("role"), scopedUserIDs, scoped)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -117,7 +132,7 @@ func GetUserFlowQuotaDates(c *gin.Context) {
 		})
 		return
 	}
-	dates, err := model.GetFlowQuotaData(startTimestamp, endTimestamp, "", userId, common.RoleCommonUser)
+	dates, err := model.GetFlowQuotaData(startTimestamp, endTimestamp, "", userId, common.RoleCommonUser, []int{userId}, true)
 	if err != nil {
 		common.ApiError(c, err)
 		return

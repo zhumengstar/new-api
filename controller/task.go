@@ -28,6 +28,14 @@ func GetAllTask(c *gin.Context) {
 		EndTimestamp:   endTimestamp,
 		ChannelID:      c.Query("channel_id"),
 	}
+	scopedUserIDs, scoped, err := model.GetScopedUserIDs(c.GetInt("id"), c.GetInt("role"))
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if scoped {
+		queryParams.UserIDs = scopedUserIDs
+	}
 
 	items := model.TaskGetAllTasks(pageInfo.GetStartIdx(), pageInfo.GetPageSize(), queryParams)
 	total := model.TaskCountAllTasks(queryParams)

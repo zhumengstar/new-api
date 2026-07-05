@@ -37,10 +37,14 @@ func GetGeneratedImageAsset(c *gin.Context) {
 		return
 	}
 	role, _ := session.Get("role").(int)
+	scopedUserIDs, scoped, err := model.GetScopedUserIDs(userId, role)
+	if err != nil {
+		c.Status(http.StatusInternalServerError)
+		return
+	}
 
 	assetURL := service.GeneratedImageAssetURL(date, filename)
-	isAdmin := role >= common.RoleAdminUser
-	if !model.CanAccessGeneratedImageAsset(userId, isAdmin, assetURL) {
+	if !model.CanAccessGeneratedImageAsset(userId, scopedUserIDs, scoped, assetURL) {
 		c.Status(http.StatusNotFound)
 		return
 	}
@@ -68,11 +72,17 @@ func GetAllLogs(c *gin.Context) {
 	group := c.Query("group")
 	requestId := c.Query("request_id")
 	upstreamRequestId := c.Query("upstream_request_id")
-	logs, total, err := model.GetAllLogs(logType, startTimestamp, endTimestamp, modelName, username, tokenName, pageInfo.GetStartIdx(), pageInfo.GetPageSize(), channel, group, requestId, upstreamRequestId)
+	scopedUserIDs, scoped, err := model.GetScopedUserIDs(c.GetInt("id"), c.GetInt("role"))
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
+	logs, total, err := model.GetAllLogs(logType, startTimestamp, endTimestamp, modelName, username, tokenName, pageInfo.GetStartIdx(), pageInfo.GetPageSize(), channel, group, requestId, upstreamRequestId, scopedUserIDs, scoped)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	stripRequestBodyFromLogs(c, logs)
 	pageInfo.SetTotal(int(total))
 	pageInfo.SetItems(logs)
 	common.ApiSuccess(c, pageInfo)
@@ -95,10 +105,35 @@ func GetUserLogs(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	stripRequestBodyFromLogs(c, logs)
 	pageInfo.SetTotal(int(total))
 	pageInfo.SetItems(logs)
 	common.ApiSuccess(c, pageInfo)
 	return
+}
+
+func stripRequestBodyFromLogs(c *gin.Context, logs []*model.Log) {
+	if c.GetInt("role") >= common.RoleRootUser {
+		return
+	}
+	for _, log := range logs {
+		if log == nil || log.Other == "" {
+			continue
+		}
+		other := map[string]interface{}{}
+		if err := common.UnmarshalJsonStr(log.Other, &other); err != nil {
+			continue
+		}
+		if _, ok := other["request_body"]; !ok {
+			continue
+		}
+		delete(other, "request_body")
+		otherBytes, err := common.Marshal(other)
+		if err != nil {
+			continue
+		}
+		log.Other = string(otherBytes)
+	}
 }
 
 // Deprecated: SearchAllLogs 已废弃，前端未使用该接口。
@@ -150,7 +185,12 @@ func GetLogsStat(c *gin.Context) {
 	modelName := c.Query("model_name")
 	channel, _ := strconv.Atoi(c.Query("channel"))
 	group := c.Query("group")
-	stat, err := model.SumUsedQuota(logType, startTimestamp, endTimestamp, modelName, username, tokenName, channel, group)
+	scopedUserIDs, scoped, err := model.GetScopedUserIDs(c.GetInt("id"), c.GetInt("role"))
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	stat, err := model.SumUsedQuota(logType, startTimestamp, endTimestamp, modelName, username, tokenName, channel, group, scopedUserIDs, scoped)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -177,7 +217,7 @@ func GetLogsSelfStat(c *gin.Context) {
 	modelName := c.Query("model_name")
 	channel, _ := strconv.Atoi(c.Query("channel"))
 	group := c.Query("group")
-	quotaNum, err := model.SumUsedQuota(logType, startTimestamp, endTimestamp, modelName, username, tokenName, channel, group)
+	quotaNum, err := model.SumUsedQuota(logType, startTimestamp, endTimestamp, modelName, username, tokenName, channel, group, []int{c.GetInt("id")}, true)
 	if err != nil {
 		common.ApiError(c, err)
 		return

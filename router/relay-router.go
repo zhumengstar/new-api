@@ -167,6 +167,61 @@ func SetRelayRouter(router *gin.Engine) {
 		httpRouter.DELETE("/models/:model", controller.RelayNotImplemented)
 	}
 
+	canvasV1Router := router.Group("/canvas/v1")
+	canvasV1Router.Use(middleware.RouteTag("relay"))
+	canvasV1Router.Use(middleware.SystemPerformanceCheck())
+	canvasV1Router.Use(middleware.UserAuth())
+	canvasV1Router.Use(middleware.CanvasTokenNameAuth())
+	canvasV1Router.Use(middleware.TokenAuth())
+	canvasV1Router.Use(middleware.ModelRequestRateLimit())
+	{
+		canvasHTTPRouter := canvasV1Router.Group("")
+		canvasHTTPRouter.Use(middleware.Distribute())
+
+		canvasHTTPRouter.POST("/messages", func(c *gin.Context) {
+			controller.Relay(c, types.RelayFormatClaude)
+		})
+		canvasHTTPRouter.POST("/completions", func(c *gin.Context) {
+			controller.Relay(c, types.RelayFormatOpenAI)
+		})
+		canvasHTTPRouter.POST("/chat/completions", func(c *gin.Context) {
+			controller.Relay(c, types.RelayFormatOpenAI)
+		})
+		canvasHTTPRouter.POST("/responses", func(c *gin.Context) {
+			controller.Relay(c, types.RelayFormatOpenAIResponses)
+		})
+		canvasHTTPRouter.POST("/responses/compact", func(c *gin.Context) {
+			controller.Relay(c, types.RelayFormatOpenAIResponsesCompaction)
+		})
+		canvasHTTPRouter.POST("/edits", func(c *gin.Context) {
+			controller.Relay(c, types.RelayFormatOpenAIImage)
+		})
+		canvasHTTPRouter.POST("/images/generations", func(c *gin.Context) {
+			controller.Relay(c, types.RelayFormatOpenAIImage)
+		})
+		canvasHTTPRouter.POST("/images/edits", func(c *gin.Context) {
+			controller.Relay(c, types.RelayFormatOpenAIImage)
+		})
+		canvasHTTPRouter.POST("/embeddings", func(c *gin.Context) {
+			controller.Relay(c, types.RelayFormatEmbedding)
+		})
+		canvasHTTPRouter.POST("/audio/transcriptions", func(c *gin.Context) {
+			controller.Relay(c, types.RelayFormatOpenAIAudio)
+		})
+		canvasHTTPRouter.POST("/audio/translations", func(c *gin.Context) {
+			controller.Relay(c, types.RelayFormatOpenAIAudio)
+		})
+		canvasHTTPRouter.POST("/audio/speech", func(c *gin.Context) {
+			controller.Relay(c, types.RelayFormatOpenAIAudio)
+		})
+		canvasHTTPRouter.POST("/rerank", func(c *gin.Context) {
+			controller.Relay(c, types.RelayFormatRerank)
+		})
+		canvasHTTPRouter.POST("/moderations", func(c *gin.Context) {
+			controller.Relay(c, types.RelayFormatOpenAI)
+		})
+	}
+
 	relayMjRouter := router.Group("/mj")
 	relayMjRouter.Use(middleware.RouteTag("relay"))
 	relayMjRouter.Use(middleware.SystemPerformanceCheck())

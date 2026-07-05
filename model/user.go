@@ -143,24 +143,28 @@ func generateDefaultSidebarConfigForRole(userRole int) string {
 
 	// 管理员区域 - 根据角色决定
 	if userRole == common.RoleAdminUser {
-		// 管理员可以访问管理员区域，但不能访问系统设置
+		// 管理员可以访问部分管理员区域，渠道/模型/订阅/兑换码/系统设置为 root-only
 		defaultConfig["admin"] = map[string]interface{}{
-			"enabled":    true,
-			"channel":    true,
-			"models":     true,
-			"redemption": true,
-			"user":       true,
-			"setting":    false, // 管理员不能访问系统设置
+			"enabled":      true,
+			"channel":      false,
+			"models":       false,
+			"deployment":   true,
+			"redemption":   false,
+			"subscription": false,
+			"user":         true,
+			"setting":      false,
 		}
 	} else if userRole == common.RoleRootUser {
 		// 超级管理员可以访问所有功能
 		defaultConfig["admin"] = map[string]interface{}{
-			"enabled":    true,
-			"channel":    true,
-			"models":     true,
-			"redemption": true,
-			"user":       true,
-			"setting":    true,
+			"enabled":      true,
+			"channel":      true,
+			"models":       true,
+			"deployment":   true,
+			"redemption":   true,
+			"subscription": true,
+			"user":         true,
+			"setting":      true,
 		}
 	}
 	// 普通用户不包含admin区域
@@ -235,7 +239,36 @@ func applyUserManagementDefaultVisibility(tx *gorm.DB) *gorm.DB {
 	)
 }
 
-func GetAllUsers(pageInfo *common.PageInfo, sortBy string, sortOrder string) (users []*User, total int64, err error) {
+func applyUserManagementScope(tx *gorm.DB, viewerId int, viewerRole int) *gorm.DB {
+	if viewerRole >= common.RoleRootUser {
+		return tx
+	}
+	if viewerRole >= common.RoleAdminUser {
+		return tx.Where("id = ? OR inviter_id = ?", viewerId, viewerId)
+	}
+	return tx.Where("id = ?", viewerId)
+}
+
+func GetScopedUserIDs(viewerId int, viewerRole int) ([]int, bool, error) {
+	if viewerRole >= common.RoleRootUser {
+		return nil, false, nil
+	}
+	if viewerId <= 0 {
+		return []int{}, true, nil
+	}
+	if viewerRole < common.RoleAdminUser {
+		return []int{viewerId}, true, nil
+	}
+	userIDs := []int{viewerId}
+	var invitedIDs []int
+	if err := DB.Model(&User{}).Where("inviter_id = ?", viewerId).Pluck("id", &invitedIDs).Error; err != nil {
+		return nil, true, err
+	}
+	userIDs = append(userIDs, invitedIDs...)
+	return userIDs, true, nil
+}
+
+func GetAllUsers(pageInfo *common.PageInfo, sortBy string, sortOrder string, viewerId int, viewerRole int) (users []*User, total int64, err error) {
 	// Start transaction
 	tx := DB.Begin()
 	if tx.Error != nil {
@@ -247,7 +280,7 @@ func GetAllUsers(pageInfo *common.PageInfo, sortBy string, sortOrder string) (us
 		}
 	}()
 
-	query := applyUserManagementDefaultVisibility(tx.Unscoped().Model(&User{}))
+	query := applyUserManagementScope(applyUserManagementDefaultVisibility(tx.Unscoped().Model(&User{})), viewerId, viewerRole)
 
 	// Get total count within transaction
 	err = query.Count(&total).Error
@@ -267,11 +300,16 @@ func GetAllUsers(pageInfo *common.PageInfo, sortBy string, sortOrder string) (us
 	if err = tx.Commit().Error; err != nil {
 		return nil, 0, err
 	}
+	if viewerRole == common.RoleAdminUser {
+		if err := ApplyAdminVirtualQuotaView(viewerId, users); err != nil {
+			return nil, 0, err
+		}
+	}
 
 	return users, total, nil
 }
 
-func SearchUsers(keyword string, group string, role *int, status *int, startIdx int, num int, sortBy string, sortOrder string) ([]*User, int64, error) {
+func SearchUsers(keyword string, group string, role *int, status *int, startIdx int, num int, sortBy string, sortOrder string, viewerId int, viewerRole int) ([]*User, int64, error) {
 	var users []*User
 	var total int64
 	var err error
@@ -288,7 +326,7 @@ func SearchUsers(keyword string, group string, role *int, status *int, startIdx 
 	}()
 
 	// 构建基础查询
-	query := tx.Unscoped().Model(&User{})
+	query := applyUserManagementScope(tx.Unscoped().Model(&User{}), viewerId, viewerRole)
 
 	// 构建搜索条件
 	likeCondition := "username LIKE ? OR email LIKE ? OR display_name LIKE ?"
@@ -334,6 +372,11 @@ func SearchUsers(keyword string, group string, role *int, status *int, startIdx 
 	// 提交事务
 	if err = tx.Commit().Error; err != nil {
 		return nil, 0, err
+	}
+	if viewerRole == common.RoleAdminUser {
+		if err := ApplyAdminVirtualQuotaView(viewerId, users); err != nil {
+			return nil, 0, err
+		}
 	}
 
 	return users, total, nil

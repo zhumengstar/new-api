@@ -59,6 +59,7 @@ const NotificationSettings = ({
   const [statusState] = useContext(StatusContext);
   const [userState] = useContext(UserContext);
   const isAdminOrRoot = (userState?.user?.role || 0) >= 10;
+  const isRootUser = (userState?.user?.role || 0) >= 100;
 
   // 左侧边栏设置相关状态
   const [sidebarLoading, setSidebarLoading] = useState(false);
@@ -84,13 +85,13 @@ const NotificationSettings = ({
     },
     admin: {
       enabled: true,
-      channel: true,
-      models: true,
+      channel: isRootUser,
+      models: isRootUser,
       deployment: true,
-      subscription: true,
-      redemption: true,
+      subscription: isRootUser,
+      redemption: isRootUser,
       user: true,
-      setting: true,
+      setting: isRootUser,
     },
   });
   const [adminConfig, setAdminConfig] = useState(null);
@@ -137,8 +138,24 @@ const NotificationSettings = ({
   const saveSidebarSettings = async () => {
     setSidebarLoading(true);
     try {
+      const nextSidebarModules = JSON.parse(JSON.stringify(sidebarModulesUser));
+      const sidebarModulePermissions = permissions?.sidebar_modules || {};
+      for (const [sectionKey, sectionPerms] of Object.entries(
+        sidebarModulePermissions,
+      )) {
+        if (sectionPerms === false) {
+          delete nextSidebarModules[sectionKey];
+          continue;
+        }
+        if (!sectionPerms || typeof sectionPerms !== 'object') continue;
+        for (const [moduleKey, allowed] of Object.entries(sectionPerms)) {
+          if (allowed === false && nextSidebarModules[sectionKey]) {
+            nextSidebarModules[sectionKey][moduleKey] = false;
+          }
+        }
+      }
       const res = await API.put('/api/user/self', {
-        sidebar_modules: JSON.stringify(sidebarModulesUser),
+        sidebar_modules: JSON.stringify(nextSidebarModules),
       });
       if (res.data.success) {
         showSuccess(t('侧边栏设置保存成功'));
@@ -168,13 +185,13 @@ const NotificationSettings = ({
       personal: { enabled: true, topup: true, personal: true },
       admin: {
         enabled: true,
-        channel: true,
-        models: true,
+        channel: isRootUser,
+        models: isRootUser,
         deployment: true,
-        subscription: true,
-        redemption: true,
+        subscription: isRootUser,
+        redemption: isRootUser,
         user: true,
-        setting: true,
+        setting: isRootUser,
       },
     };
     setSidebarModulesUser(defaultConfig);
@@ -478,7 +495,10 @@ const NotificationSettings = ({
                     checkedText={t('开')}
                     uncheckedText={t('关')}
                     onChange={(value) =>
-                      handleFormChange('upstreamModelUpdateNotifyEnabled', value)
+                      handleFormChange(
+                        'upstreamModelUpdateNotifyEnabled',
+                        value,
+                      )
                     }
                     extraText={t(
                       '仅管理员可用。开启后，当系统定时检测全部渠道发现上游模型变更或检测异常时，将按你选择的通知方式发送汇总通知；渠道或模型过多时会自动省略部分明细。',

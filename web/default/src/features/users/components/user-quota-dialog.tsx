@@ -19,13 +19,16 @@ For commercial licensing, please contact support@quantumnous.com
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
-import { getCurrencyDisplay, getCurrencyLabel } from '@/lib/currency'
-import { formatQuota, parseQuotaFromDollars } from '@/lib/format'
-import { cn } from '@/lib/utils'
+
+import { Dialog } from '@/components/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Dialog } from '@/components/dialog'
+import { useIsRoot } from '@/hooks/use-admin'
+import { getCurrencyDisplay, getCurrencyLabel } from '@/lib/currency'
+import { formatQuota, parseQuotaFromDollars } from '@/lib/format'
+import { cn } from '@/lib/utils'
+
 import { adjustUserQuota } from '../api'
 import type { QuotaAdjustMode } from '../types'
 
@@ -39,6 +42,7 @@ interface UserQuotaDialogProps {
 
 export function UserQuotaDialog(props: UserQuotaDialogProps) {
   const { t } = useTranslation()
+  const isRoot = useIsRoot()
   const [mode, setMode] = useState<QuotaAdjustMode>('add')
   const [amount, setAmount] = useState('')
   const [loading, setLoading] = useState(false)
@@ -46,8 +50,9 @@ export function UserQuotaDialog(props: UserQuotaDialogProps) {
   const { meta: currencyMeta } = getCurrencyDisplay()
   const currencyLabel = getCurrencyLabel()
   const tokensOnly = currencyMeta.kind === 'tokens'
+  const quotaLabel = isRoot ? t('Quota') : t('Virtual Quota')
 
-  const amountValue = parseFloat(amount) || 0
+  const amountValue = Number.parseFloat(amount) || 0
   const quotaValue = parseQuotaFromDollars(Math.abs(amountValue))
 
   const getPreviewText = () => {
@@ -55,12 +60,12 @@ export function UserQuotaDialog(props: UserQuotaDialogProps) {
     const val = quotaValue
     switch (mode) {
       case 'add':
-        return `${t('Current quota')}: ${formatQuota(current)}  +${formatQuota(val)} = ${formatQuota(current + val)}`
+        return `${t('Current {{quota}}', { quota: quotaLabel })}: ${formatQuota(current)}  +${formatQuota(val)} = ${formatQuota(current + val)}`
       case 'subtract':
-        return `${t('Current quota')}: ${formatQuota(current)}  -${formatQuota(val)} = ${formatQuota(current - val)}`
+        return `${t('Current {{quota}}', { quota: quotaLabel })}: ${formatQuota(current)}  -${formatQuota(val)} = ${formatQuota(current - val)}`
       case 'override': {
         const overrideQuota = parseQuotaFromDollars(amountValue)
-        return `${t('Current quota')}: ${formatQuota(current)} → ${formatQuota(overrideQuota)}`
+        return `${t('Current {{quota}}', { quota: quotaLabel })}: ${formatQuota(current)} → ${formatQuota(overrideQuota)}`
       }
       default:
         return ''
@@ -82,7 +87,11 @@ export function UserQuotaDialog(props: UserQuotaDialogProps) {
         value: mode === 'override' ? value : Math.abs(value),
       })
       if (result.success) {
-        toast.success(t('Quota adjusted successfully'))
+        toast.success(
+          isRoot
+            ? t('Quota adjusted successfully')
+            : t('Virtual quota adjusted successfully')
+        )
         setAmount('')
         setMode('add')
         props.onOpenChange(false)
@@ -106,13 +115,22 @@ export function UserQuotaDialog(props: UserQuotaDialogProps) {
   const placeholder = tokensOnly
     ? t('Enter amount in tokens')
     : t('Enter amount in {{currency}}', { currency: currencyLabel })
+  const getModeLabel = (value: QuotaAdjustMode) => {
+    if (value === 'add') return t('Add')
+    if (value === 'subtract') return t('Subtract')
+    return t('Override')
+  }
 
   return (
     <Dialog
       open={props.open}
       onOpenChange={props.onOpenChange}
-      title={t('Adjust Quota')}
-      description={t('Select an operation mode and enter the amount')}
+      title={isRoot ? t('Adjust Quota') : t('Adjust Virtual Quota')}
+      description={
+        isRoot
+          ? t('Select an operation mode and enter the amount')
+          : t('Adjust the virtual quota allocated to this user')
+      }
       contentHeight='auto'
       bodyClassName='space-y-4'
       footer={
@@ -147,11 +165,7 @@ export function UserQuotaDialog(props: UserQuotaDialogProps) {
                   setAmount('')
                 }}
               >
-                {m === 'add'
-                  ? t('Add')
-                  : m === 'subtract'
-                    ? t('Subtract')
-                    : t('Override')}
+                {getModeLabel(m)}
               </Button>
             ))}
           </div>

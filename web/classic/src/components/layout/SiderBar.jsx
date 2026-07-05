@@ -39,6 +39,7 @@ const routerMap = {
   user: '/console/user',
   subscription: '/console/subscription',
   log: '/console/log',
+  canvas: '/console/canvas',
   midjourney: '/console/midjourney',
   setting: '/console/setting',
   about: '/about',
@@ -88,6 +89,11 @@ const SiderBar = ({ onNavigate = () => {} }) => {
         text: t('使用日志'),
         itemKey: 'log',
         to: '/log',
+      },
+      {
+        text: t('无限画布'),
+        itemKey: 'canvas',
+        to: '/canvas',
       },
       {
         text: t('绘图日志'),
@@ -151,19 +157,19 @@ const SiderBar = ({ onNavigate = () => {} }) => {
         text: t('渠道管理'),
         itemKey: 'channel',
         to: '/channel',
-        className: isAdmin() ? '' : 'tableHiddle',
+        className: isRoot() ? '' : 'tableHiddle',
       },
       {
         text: t('订阅管理'),
         itemKey: 'subscription',
         to: '/subscription',
-        className: isAdmin() ? '' : 'tableHiddle',
+        className: isRoot() ? '' : 'tableHiddle',
       },
       {
         text: t('模型管理'),
         itemKey: 'models',
         to: '/console/models',
-        className: isAdmin() ? '' : 'tableHiddle',
+        className: isRoot() ? '' : 'tableHiddle',
       },
       {
         text: t('模型部署'),
@@ -175,7 +181,7 @@ const SiderBar = ({ onNavigate = () => {} }) => {
         text: t('兑换码管理'),
         itemKey: 'redemption',
         to: '/redemption',
-        className: isAdmin() ? '' : 'tableHiddle',
+        className: isRoot() ? '' : 'tableHiddle',
       },
       {
         text: t('用户管理'),

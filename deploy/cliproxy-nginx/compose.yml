@@ -1,0 +1,17 @@
+services:
+  cliproxy-nginx:
+    image: nginx:1.27-alpine
+    container_name: cliproxy-nginx
+    restart: unless-stopped
+    environment:
+      PEER_ONE: ${PEER_ONE:?set PEER_ONE}
+      PEER_TWO: ${PEER_TWO:?set PEER_TWO}
+    volumes:
+      - ./default.conf.template:/etc/nginx/templates/default.conf.template:ro
+    networks:
+      - new-api-network
+
+networks:
+  new-api-network:
+    external: true
+    name: new-api_new-api-network

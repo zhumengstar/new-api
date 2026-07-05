@@ -1,6 +1,7 @@
 package service
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/bytedance/gopkg/util/gopool"
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 // ---------------------------------------------------------------------------
@@ -237,6 +239,11 @@ func (s *BillingSession) reserveFunding(delta int) error {
 		}
 		funding.consumed += delta
 		return nil
+	case *VirtualWalletFunding:
+		if err := funding.Settle(delta); err != nil {
+			return types.NewError(err, types.ErrorCodeUpdateDataError, types.ErrOptionWithSkipRetry())
+		}
+		return nil
 	case *SubscriptionFunding:
 		if err := model.PostConsumeUserSubscriptionDelta(funding.subscriptionId, int64(delta)); err != nil {
 			return types.NewErrorWithStatusCode(
@@ -260,6 +267,10 @@ func (s *BillingSession) rollbackFundingReserve(delta int) {
 			common.SysLog("error rolling back wallet funding reserve: " + err.Error())
 		} else {
 			funding.consumed -= delta
+		}
+	case *VirtualWalletFunding:
+		if err := funding.Settle(-delta); err != nil {
+			common.SysLog("error rolling back virtual wallet funding reserve: " + err.Error())
 		}
 	case *SubscriptionFunding:
 		if err := model.PostConsumeUserSubscriptionDelta(funding.subscriptionId, -int64(delta)); err != nil {
@@ -299,6 +310,9 @@ func (s *BillingSession) shouldTrust(c *gin.Context) bool {
 	if !tokenTrusted {
 		return false
 	}
+	if _, ok := s.funding.(*VirtualWalletFunding); ok {
+		return false
+	}
 
 	switch s.funding.Source() {
 	case BillingSourceWallet:
@@ -332,6 +346,9 @@ func (s *BillingSession) syncRelayInfo() {
 		info.SubscriptionId = 0
 		info.SubscriptionPreConsumed = 0
 	}
+	if virtualFunding, ok := s.funding.(*VirtualWalletFunding); ok {
+		virtualFunding.syncRelayInfo()
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -352,6 +369,63 @@ func NewBillingSession(c *gin.Context, relayInfo *relaycommon.RelayInfo, preCons
 		if err != nil {
 			return nil, types.NewError(err, types.ErrorCodeQueryDataError, types.ErrOptionWithSkipRetry())
 		}
+		if userQuota > 0 && userQuota-preConsumedQuota >= 0 {
+			relayInfo.UserQuota = userQuota
+
+			session := &BillingSession{
+				relayInfo: relayInfo,
+				funding:   &WalletFunding{userId: relayInfo.UserId},
+			}
+			if apiErr := session.preConsume(c, preConsumedQuota); apiErr != nil {
+				return nil, apiErr
+			}
+			return session, nil
+		}
+
+		virtualQuota, virtualErr := model.GetUserVirtualQuota(relayInfo.UserId)
+		if virtualErr != nil && !errors.Is(virtualErr, gorm.ErrRecordNotFound) {
+			return nil, types.NewError(virtualErr, types.ErrorCodeQueryDataError, types.ErrOptionWithSkipRetry())
+		}
+		if virtualErr == nil {
+			remainingQuota := virtualQuota.RemainingQuota()
+			if remainingQuota <= 0 {
+				return nil, types.NewErrorWithStatusCode(
+					fmt.Errorf("用户虚拟额度不足, 剩余额度: %s", logger.FormatQuota(remainingQuota)),
+					types.ErrorCodeInsufficientUserQuota, http.StatusForbidden,
+					types.ErrOptionWithSkipRetry(), types.ErrOptionWithNoRecordErrorLog())
+			}
+			if remainingQuota-preConsumedQuota < 0 {
+				return nil, types.NewErrorWithStatusCode(
+					fmt.Errorf("预扣费额度失败, 用户虚拟剩余额度: %s, 需要预扣费额度: %s", logger.FormatQuota(remainingQuota), logger.FormatQuota(preConsumedQuota)),
+					types.ErrorCodeInsufficientUserQuota, http.StatusForbidden,
+					types.ErrOptionWithSkipRetry(), types.ErrOptionWithNoRecordErrorLog())
+			}
+			admin, err := model.GetUserById(virtualQuota.AdminId, true)
+			if err != nil {
+				return nil, types.NewError(err, types.ErrorCodeQueryDataError, types.ErrOptionWithSkipRetry())
+			}
+			adminSetting := admin.GetSetting()
+			adminRatio := GetUserGroupRatioWithSetting(adminSetting, admin.Group, relayInfo.UsingGroup)
+			userRatio := relayInfo.PriceData.GroupRatioInfo.GroupRatio
+			if userRatio <= 0 {
+				userRatio = adminRatio
+			}
+			relayInfo.UserQuota = remainingQuota
+			session := &BillingSession{
+				relayInfo: relayInfo,
+				funding: &VirtualWalletFunding{
+					relayInfo:  relayInfo,
+					adminId:    virtualQuota.AdminId,
+					userId:     relayInfo.UserId,
+					adminRatio: adminRatio,
+					userRatio:  userRatio,
+				},
+			}
+			if apiErr := session.preConsume(c, preConsumedQuota); apiErr != nil {
+				return nil, apiErr
+			}
+			return session, nil
+		}
 		if userQuota <= 0 {
 			return nil, types.NewErrorWithStatusCode(
 				fmt.Errorf("用户额度不足, 剩余额度: %s", logger.FormatQuota(userQuota)),
@@ -364,16 +438,10 @@ func NewBillingSession(c *gin.Context, relayInfo *relaycommon.RelayInfo, preCons
 				types.ErrorCodeInsufficientUserQuota, http.StatusForbidden,
 				types.ErrOptionWithSkipRetry(), types.ErrOptionWithNoRecordErrorLog())
 		}
-		relayInfo.UserQuota = userQuota
-
-		session := &BillingSession{
-			relayInfo: relayInfo,
-			funding:   &WalletFunding{userId: relayInfo.UserId},
-		}
-		if apiErr := session.preConsume(c, preConsumedQuota); apiErr != nil {
-			return nil, apiErr
-		}
-		return session, nil
+		return nil, types.NewErrorWithStatusCode(
+			fmt.Errorf("用户额度不足, 剩余额度: %s", logger.FormatQuota(userQuota)),
+			types.ErrorCodeInsufficientUserQuota, http.StatusForbidden,
+			types.ErrOptionWithSkipRetry(), types.ErrOptionWithNoRecordErrorLog())
 	}
 
 	trySubscription := func() (*BillingSession, *types.NewAPIError) {

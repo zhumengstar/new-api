@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React, { useEffect, useState, useRef } from 'react';
-import { API, showError, showSuccess } from '../../../../helpers';
+import { API, isRoot, showError, showSuccess } from '../../../../helpers';
 import { useIsMobile } from '../../../../hooks/common/useIsMobile';
 import {
   Button,
@@ -75,19 +75,24 @@ const formatRatio = (ratio) => {
 };
 
 const getPublicGroups = (groupOptions) =>
-  groupOptions.filter((option) => option.isPublic).map((option) => option.value);
+  groupOptions
+    .filter((option) => option.isPublic)
+    .map((option) => option.value);
 
-const collectUserGroupRatios = (selectedGroups, groupOptions, userGroupRatios) =>
-  Array.from(new Set([...selectedGroups, ...getPublicGroups(groupOptions)])).reduce(
-    (ratios, group) => {
-      const ratio = Number(userGroupRatios[group]);
-      if (Number.isFinite(ratio) && ratio >= 0) {
-        ratios[group] = ratio;
-      }
-      return ratios;
-    },
-    {},
-  );
+const collectUserGroupRatios = (
+  selectedGroups,
+  groupOptions,
+  userGroupRatios,
+) =>
+  Array.from(
+    new Set([...selectedGroups, ...getPublicGroups(groupOptions)]),
+  ).reduce((ratios, group) => {
+    const ratio = Number(userGroupRatios[group]);
+    if (Number.isFinite(ratio) && ratio >= 0) {
+      ratios[group] = ratio;
+    }
+    return ratios;
+  }, {});
 
 const AddUserModal = (props) => {
   const { t } = useTranslation();
@@ -96,6 +101,7 @@ const AddUserModal = (props) => {
   const [groupOptions, setGroupOptions] = useState([]);
   const [userGroupRatios, setUserGroupRatios] = useState({});
   const isMobile = useIsMobile();
+  const isRootUser = isRoot();
 
   const getInitValues = () => ({
     username: '',
@@ -116,6 +122,7 @@ const AddUserModal = (props) => {
           label: g,
           value: g,
           ratio: meta[g]?.ratio,
+          adminRatio: meta[g]?.admin_ratio,
           isPublic: Boolean(meta[g]?.is_public),
         })),
       );
@@ -145,6 +152,25 @@ const AddUserModal = (props) => {
         userGroupRatios,
       ),
     };
+    if (!isRootUser) {
+      const invalidGroup = Object.entries(payload.user_group_ratios).find(
+        ([group, ratio]) => {
+          const option = groupOptions.find((item) => item.value === group);
+          const adminRatio = Number(option?.adminRatio);
+          return Number.isFinite(adminRatio) && Number(ratio) <= adminRatio;
+        },
+      );
+      if (invalidGroup) {
+        const option = groupOptions.find(
+          (item) => item.value === invalidGroup[0],
+        );
+        showError(
+          `${invalidGroup[0]}：${t('用户倍率必须大于管理员自身倍率')} ${formatRatio(option?.adminRatio)}`,
+        );
+        setLoading(false);
+        return;
+      }
+    }
     const res = await API.post(`/api/user/`, payload);
     const { success, message } = res.data;
     if (success) {
@@ -269,6 +295,17 @@ const AddUserModal = (props) => {
                     <Col span={24}>
                       <Form.Slot label={t('分组')}>
                         <div className='border border-gray-200 rounded-lg p-3'>
+                          {!isRootUser && (
+                            <Text
+                              type='tertiary'
+                              size='small'
+                              className='block mb-2'
+                            >
+                              {t(
+                                '管理员设置的用户倍率必须严格大于管理员自身对应分组倍率',
+                              )}
+                            </Text>
+                          )}
                           <div className='flex flex-wrap gap-2'>
                             {groupOptions.map((option) => {
                               const selectedGroups = parseUserGroups(

@@ -1,3 +1,5 @@
+import type { ColumnDef } from '@tanstack/react-table'
+import { CircleAlert, Sparkles, KeyRound, FileJson } from 'lucide-react'
 /*
 Copyright (C) 2023-2026 QuantumNous
 
@@ -17,17 +19,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useState } from 'react'
-import { type ColumnDef } from '@tanstack/react-table'
-import { CircleAlert, Sparkles, KeyRound, FileJson } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import { getUserAvatarFallback, getUserAvatarStyle } from '@/lib/avatar'
-import { formatBillingCurrencyFromUSD } from '@/lib/currency'
-import {
-  formatUseTime,
-  formatLogQuota,
-  formatTimestampToDate,
-} from '@/lib/format'
-import { cn } from '@/lib/utils'
+
+import { DataTableColumnHeader } from '@/components/data-table'
+import { StatusBadge, type StatusBadgeProps } from '@/components/status-badge'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import {
@@ -42,8 +37,15 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
-import { DataTableColumnHeader } from '@/components/data-table'
-import { StatusBadge, type StatusBadgeProps } from '@/components/status-badge'
+import { getUserAvatarFallback, getUserAvatarStyle } from '@/lib/avatar'
+import { formatBillingCurrencyFromUSD } from '@/lib/currency'
+import {
+  formatUseTime,
+  formatLogQuota,
+  formatTimestampToDate,
+} from '@/lib/format'
+import { cn } from '@/lib/utils'
+
 import { LOG_TYPE_ALL_VALUE } from '../../constants'
 import type { UsageLog } from '../../data/schema'
 import {
@@ -72,6 +74,7 @@ interface DetailSegment {
   danger?: boolean
 }
 
+/* oxlint-disable react/only-export-components */
 function RequestBodyCell(props: { requestBody: unknown }) {
   const { t } = useTranslation()
   const [dialogOpen, setDialogOpen] = useState(false)
@@ -100,7 +103,7 @@ function RequestBodyCell(props: { requestBody: unknown }) {
           <DialogHeader>
             <DialogTitle>{t('Request Body')}</DialogTitle>
           </DialogHeader>
-          <pre className='bg-muted/40 border-border max-h-[70vh] overflow-auto rounded-md border p-3 text-xs whitespace-pre-wrap break-words'>
+          <pre className='bg-muted/40 border-border max-h-[70vh] overflow-auto rounded-md border p-3 text-xs break-words whitespace-pre-wrap'>
             {bodyText}
           </pre>
         </DialogContent>
@@ -236,10 +239,11 @@ function buildDetailSegments(
       })
     }
   } else {
-    const isPerCall = isPerCallBilling(other.model_price)
+    const modelPrice = other.model_price ?? 0
+    const isPerCall = isPerCallBilling(modelPrice)
     if (isPerCall) {
       segments.push({
-        text: `${t('Per-call')} · ${formatBillingCurrencyFromUSD(other.model_price!, priceOpts)}`,
+        text: `${t('Per-call')} · ${formatBillingCurrencyFromUSD(modelPrice, priceOpts)}`,
       })
     } else if (other.model_ratio != null) {
       const inputPriceUSD = other.model_ratio * 2.0
@@ -304,8 +308,70 @@ function buildDetailSegments(
   return segments
 }
 
-export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
+export function useCommonLogsColumns(
+  isAdmin: boolean,
+  isRoot: boolean
+): ColumnDef<UsageLog>[] {
   const { t } = useTranslation()
+  const virtualBillingColumns: ColumnDef<UsageLog>[] = isAdmin
+    ? [
+        {
+          id: 'virtual_ratio',
+          header: ({ column }) => (
+            <DataTableColumnHeader column={column} title={t('Virtual Ratio')} />
+          ),
+          cell: ({ row }) => {
+            const other = parseLogOther(row.original.other)
+            if (!other?.virtual_billing) {
+              return <span className='text-muted-foreground/40'>-</span>
+            }
+            return (
+              <span className='font-mono text-xs tabular-nums'>
+                {formatRatioCompact(other.virtual_group_ratio)}x
+              </span>
+            )
+          },
+          meta: { label: t('Virtual Ratio') },
+        },
+        {
+          id: 'virtual_cost',
+          header: ({ column }) => (
+            <DataTableColumnHeader column={column} title={t('Virtual Cost')} />
+          ),
+          cell: ({ row }) => {
+            const log = row.original
+            const other = parseLogOther(log.other)
+            if (!other?.virtual_billing) {
+              return <span className='text-muted-foreground/40'>-</span>
+            }
+            return (
+              <span className='font-mono text-xs tabular-nums'>
+                {formatLogQuota(other.virtual_quota ?? log.quota)}
+              </span>
+            )
+          },
+          meta: { label: t('Virtual Cost') },
+        },
+      ]
+    : []
+  const requestBodyColumns: ColumnDef<UsageLog>[] = isRoot
+    ? [
+        {
+          id: 'request_body',
+          header: t('Request Body'),
+          cell: ({ row }) => {
+            const log = row.original
+            if (!(log.type === 2 || log.type === 5)) {
+              return <span className='text-muted-foreground/40'>—</span>
+            }
+            const other = parseLogOther(log.other)
+            return <RequestBodyCell requestBody={other?.request_body} />
+          },
+          meta: { label: t('Request Body') },
+          size: 130,
+        },
+      ]
+    : []
   const columns: ColumnDef<UsageLog>[] = [
     {
       accessorKey: 'created_at',
@@ -677,7 +743,7 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
                     <Tooltip>
                       <TooltipTrigger
                         render={<CircleAlert className='size-3 text-red-500' />}
-                      ></TooltipTrigger>
+                      />
                       <TooltipContent>
                         <div className='space-y-0.5 text-xs'>
                           <p>
@@ -753,6 +819,8 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
       meta: { label: 'Tokens' },
     },
 
+    ...virtualBillingColumns,
+
     {
       accessorKey: 'quota',
       header: ({ column }) => (
@@ -796,7 +864,7 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
 
         return (
           <div className='flex flex-col gap-0.5'>
-            <span className='border-border/80 bg-muted/60 inline-flex h-6 w-fit items-center rounded-md border px-2 text-sm leading-none [font-family:var(--font-body)] font-semibold tabular-nums'>
+            <span className='border-border/80 bg-muted/60 inline-flex h-6 w-fit items-center rounded-md border px-2 [font-family:var(--font-body)] text-sm leading-none font-semibold tabular-nums'>
               {quotaDisplay.prefix && (
                 <span className='mr-1'>{quotaDisplay.prefix}</span>
               )}
@@ -808,20 +876,7 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
       meta: { label: t('Cost') },
     },
 
-    {
-      id: 'request_body',
-      header: t('Request Body'),
-      cell: ({ row }) => {
-        const log = row.original
-        if (!(log.type === 2 || log.type === 5)) {
-          return <span className='text-muted-foreground/40'>—</span>
-        }
-        const other = parseLogOther(log.other)
-        return <RequestBodyCell requestBody={other?.request_body} />
-      },
-      meta: { label: t('Request Body') },
-      size: 130,
-    },
+    ...requestBodyColumns,
 
     {
       accessorKey: 'content',
@@ -834,6 +889,37 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
         const segments = buildDetailSegments(log, other, t)
         const primary = segments[0]
         const hasMore = segments.length > 1
+        let primaryClassName = 'text-foreground'
+        if (primary?.muted) {
+          primaryClassName = 'text-muted-foreground/60'
+        } else if (primary?.danger) {
+          primaryClassName = 'text-red-600 dark:text-red-400'
+        }
+        let detailContent = <span className='text-muted-foreground/40'>—</span>
+        if (log.content) {
+          detailContent = (
+            <span className='text-muted-foreground truncate group-hover:underline'>
+              {log.content}
+            </span>
+          )
+        }
+        if (primary) {
+          detailContent = (
+            <span
+              className={cn(
+                'truncate leading-snug group-hover:underline',
+                primaryClassName
+              )}
+            >
+              {primary.text}
+              {hasMore && (
+                <span className='text-muted-foreground/40 ml-0.5'>
+                  +{segments.length - 1}
+                </span>
+              )}
+            </span>
+          )
+        }
 
         return (
           <>
@@ -843,31 +929,7 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
               onClick={() => setDialogOpen(true)}
               title={t('Click to view full details')}
             >
-              {primary ? (
-                <span
-                  className={cn(
-                    'truncate leading-snug group-hover:underline',
-                    primary.muted
-                      ? 'text-muted-foreground/60'
-                      : primary.danger
-                        ? 'text-red-600 dark:text-red-400'
-                        : 'text-foreground'
-                  )}
-                >
-                  {primary.text}
-                  {hasMore && (
-                    <span className='text-muted-foreground/40 ml-0.5'>
-                      +{segments.length - 1}
-                    </span>
-                  )}
-                </span>
-              ) : log.content ? (
-                <span className='text-muted-foreground truncate group-hover:underline'>
-                  {log.content}
-                </span>
-              ) : (
-                <span className='text-muted-foreground/40'>—</span>
-              )}
+              {detailContent}
             </button>
             <DetailsDialog
               log={log}
