@@ -80,6 +80,14 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 	} else {
 		convertedRequest, err := adaptor.ConvertOpenAIResponsesRequest(c, info, *request)
 		if err != nil {
+			if shouldFallbackResponsesConvertError(err, request) {
+				usageDto, newAPIError := responsesViaChatCompletions(c, info, adaptor, request)
+				if newAPIError != nil {
+					return newAPIError
+				}
+				service.PostTextConsumeQuota(c, info, usageDto, nil)
+				return nil
+			}
 			return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
 		}
 		relaycommon.AppendRequestConversionFromRequest(info, convertedRequest)
@@ -125,6 +133,15 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 		httpResp = resp.(*http.Response)
 
 		if httpResp.StatusCode != http.StatusOK {
+			if shouldFallbackResponsesHTTPError(httpResp, request) {
+				service.CloseResponseBodyGracefully(httpResp)
+				usageDto, newAPIError := responsesViaChatCompletions(c, info, adaptor, request)
+				if newAPIError != nil {
+					return newAPIError
+				}
+				service.PostTextConsumeQuota(c, info, usageDto, nil)
+				return nil
+			}
 			newAPIError = service.RelayErrorHandler(c.Request.Context(), httpResp, false)
 			// reset status code 重置状态码
 			service.ResetStatusCode(newAPIError, statusCodeMappingStr)
