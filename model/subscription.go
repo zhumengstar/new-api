@@ -41,6 +41,7 @@ var (
 const (
 	subscriptionPlanCacheNamespace     = "new-api:subscription_plan:v1"
 	subscriptionPlanInfoCacheNamespace = "new-api:subscription_plan_info:v1"
+	activeUserSubscriptionCachePrefix  = "new-api:active_user_subscription:v1:"
 )
 
 var (
@@ -63,6 +64,20 @@ func subscriptionPlanInfoCacheTTL() time.Duration {
 	ttlSeconds := common.GetEnvOrDefault("SUBSCRIPTION_PLAN_INFO_CACHE_TTL", 120)
 	if ttlSeconds <= 0 {
 		ttlSeconds = 120
+	}
+	return time.Duration(ttlSeconds) * time.Second
+}
+
+func activeUserSubscriptionCacheTTL(active bool) time.Duration {
+	envName := "ACTIVE_USER_SUBSCRIPTION_CACHE_TTL"
+	defaultSeconds := 30
+	if !active {
+		envName = "INACTIVE_USER_SUBSCRIPTION_CACHE_TTL"
+		defaultSeconds = 5
+	}
+	ttlSeconds := common.GetEnvOrDefault(envName, defaultSeconds)
+	if ttlSeconds <= 0 {
+		ttlSeconds = defaultSeconds
 	}
 	return time.Duration(ttlSeconds) * time.Second
 }
@@ -140,6 +155,43 @@ func InvalidateSubscriptionPlanCache(planId int) {
 	_, _ = cache.DeleteMany([]string{subscriptionPlanCacheKey(planId)})
 	infoCache := getSubscriptionPlanInfoCache()
 	_ = infoCache.Purge()
+}
+
+func activeUserSubscriptionCacheKey(userId int) string {
+	return activeUserSubscriptionCachePrefix + strconv.Itoa(userId)
+}
+
+func InvalidateActiveUserSubscriptionCache(userId int) {
+	if userId <= 0 || !common.RedisEnabled {
+		return
+	}
+	if err := common.RedisDelKey(activeUserSubscriptionCacheKey(userId)); err != nil {
+		common.SysLog("failed to invalidate active user subscription cache: " + err.Error())
+	}
+}
+
+func getActiveUserSubscriptionCache(userId int) (bool, error) {
+	if !common.RedisEnabled {
+		return false, errors.New("redis is not enabled")
+	}
+	value, err := common.RedisGet(activeUserSubscriptionCacheKey(userId))
+	if err != nil {
+		return false, err
+	}
+	return value == "1", nil
+}
+
+func setActiveUserSubscriptionCache(userId int, active bool) {
+	if userId <= 0 || !common.RedisEnabled {
+		return
+	}
+	value := "0"
+	if active {
+		value = "1"
+	}
+	if err := common.RedisSet(activeUserSubscriptionCacheKey(userId), value, activeUserSubscriptionCacheTTL(active)); err != nil {
+		common.SysLog("failed to set active user subscription cache: " + err.Error())
+	}
 }
 
 // Subscription plan
@@ -616,6 +668,9 @@ func CompleteSubscriptionOrder(tradeNo string, providerPayload string, expectedP
 		_ = UpdateUserGroupCache(logUserId, upgradeGroup)
 	}
 	if logUserId > 0 {
+		InvalidateActiveUserSubscriptionCache(logUserId)
+	}
+	if logUserId > 0 {
 		msg := fmt.Sprintf("订阅购买成功，套餐: %s，支付金额: %.2f，支付方式: %s", logPlanTitle, logMoney, logPaymentMethod)
 		RecordLog(logUserId, LogTypeTopup, msg)
 	}
@@ -699,6 +754,7 @@ func AdminBindSubscription(userId int, planId int, sourceNote string) (string, e
 	if err != nil {
 		return "", err
 	}
+	InvalidateActiveUserSubscriptionCache(userId)
 	if strings.TrimSpace(plan.UpgradeGroup) != "" {
 		_ = UpdateUserGroupCache(userId, plan.UpgradeGroup)
 		return fmt.Sprintf("用户分组将升级到 %s", plan.UpgradeGroup), nil
@@ -801,6 +857,7 @@ func PurchaseSubscriptionWithBalance(userId int, planId int) error {
 			common.SysLog("failed to decrease user quota cache after subscription balance purchase: " + err.Error())
 		}
 	}
+	InvalidateActiveUserSubscriptionCache(userId)
 	if upgradeGroup != "" {
 		_ = UpdateUserGroupCache(userId, upgradeGroup)
 	}
@@ -831,6 +888,9 @@ func HasActiveUserSubscription(userId int) (bool, error) {
 	if userId <= 0 {
 		return false, errors.New("invalid userId")
 	}
+	if active, err := getActiveUserSubscriptionCache(userId); err == nil {
+		return active, nil
+	}
 	now := common.GetTimestamp()
 	var count int64
 	if err := DB.Model(&UserSubscription{}).
@@ -838,7 +898,9 @@ func HasActiveUserSubscription(userId int) (bool, error) {
 		Count(&count).Error; err != nil {
 		return false, err
 	}
-	return count > 0, nil
+	active := count > 0
+	setActiveUserSubscriptionCache(userId, active)
+	return active, nil
 }
 
 // UserActiveSubscriptionsAllowWalletOverflow returns whether wallet balance may be used
@@ -927,6 +989,7 @@ func AdminInvalidateUserSubscription(userSubscriptionId int) (string, error) {
 	if cacheGroup != "" && userId > 0 {
 		_ = UpdateUserGroupCache(userId, cacheGroup)
 	}
+	InvalidateActiveUserSubscriptionCache(userId)
 	if downgradeGroup != "" {
 		return fmt.Sprintf("用户分组将回退到 %s", downgradeGroup), nil
 	}
@@ -968,6 +1031,7 @@ func AdminDeleteUserSubscription(userSubscriptionId int) (string, error) {
 	if cacheGroup != "" && userId > 0 {
 		_ = UpdateUserGroupCache(userId, cacheGroup)
 	}
+	InvalidateActiveUserSubscriptionCache(userId)
 	if downgradeGroup != "" {
 		return fmt.Sprintf("用户分组将回退到 %s", downgradeGroup), nil
 	}
@@ -1076,6 +1140,7 @@ func ExpireDueSubscriptions(limit int) (int, error) {
 		if cacheGroup != "" {
 			_ = UpdateUserGroupCache(userId, cacheGroup)
 		}
+		InvalidateActiveUserSubscriptionCache(userId)
 	}
 	return expiredCount, nil
 }

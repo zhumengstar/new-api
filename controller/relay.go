@@ -125,9 +125,10 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 
 	needSensitiveCheck := setting.ShouldCheckPromptSensitive()
 	needCountToken := constant.CountToken
+	fastPreConsumeTokenEstimate := shouldUseFastPreConsumeTokenEstimate(needSensitiveCheck, request)
 	// Avoid building huge CombineText (strings.Join) when token counting and sensitive check are both disabled.
 	var meta *types.TokenCountMeta
-	if needSensitiveCheck || needCountToken {
+	if needSensitiveCheck || (needCountToken && !fastPreConsumeTokenEstimate) {
 		meta = request.GetTokenCountMeta()
 	} else {
 		meta = fastTokenCountMetaForPricing(request)
@@ -142,10 +143,16 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		}
 	}
 
-	tokens, err := service.EstimateRequestToken(c, meta, relayInfo)
-	if err != nil {
-		newAPIError = types.NewError(err, types.ErrorCodeCountTokenFailed)
-		return
+	tokens := 0
+	if fastPreConsumeTokenEstimate {
+		tokens = fastPreConsumePromptTokens(c)
+		c.Set("fast_preconsume_token_estimate", true)
+	} else {
+		tokens, err = service.EstimateRequestToken(c, meta, relayInfo)
+		if err != nil {
+			newAPIError = types.NewError(err, types.ErrorCodeCountTokenFailed)
+			return
+		}
 	}
 
 	relayInfo.SetEstimatePromptTokens(tokens)
@@ -295,6 +302,46 @@ func fastTokenCountMetaForPricing(request dto.Request) *types.TokenCountMeta {
 		// Best-effort: leave CombineText empty to avoid large allocations.
 	}
 	return meta
+}
+
+func shouldUseFastPreConsumeTokenEstimate(needSensitiveCheck bool, request dto.Request) bool {
+	if needSensitiveCheck || request == nil {
+		return false
+	}
+	if !common.GetEnvOrDefaultBool("FAST_PRECONSUME_TOKEN_ESTIMATE", true) {
+		return false
+	}
+	switch request.(type) {
+	case *dto.ImageRequest:
+		// Image request pricing may depend on ImagePriceRatio from GetTokenCountMeta.
+		return false
+	default:
+		return true
+	}
+}
+
+func fastPreConsumePromptTokens(c *gin.Context) int {
+	minTokens := common.GetEnvOrDefault("FAST_PRECONSUME_MIN_PROMPT_TOKENS", common.PreConsumedQuota)
+	maxTokens := common.GetEnvOrDefault("FAST_PRECONSUME_MAX_PROMPT_TOKENS", common.PreConsumedQuota)
+	if minTokens < 0 {
+		minTokens = 0
+	}
+	if maxTokens < minTokens {
+		maxTokens = minTokens
+	}
+
+	estimated := minTokens
+	if c != nil && c.Request != nil && c.Request.ContentLength > 0 {
+		// Cheap upper-bounded body-size estimate. It avoids tokenizer work and media fetches on the pre-first-token path.
+		bodyEstimate := int(c.Request.ContentLength / 4)
+		if bodyEstimate > estimated {
+			estimated = bodyEstimate
+		}
+	}
+	if estimated > maxTokens {
+		estimated = maxTokens
+	}
+	return estimated
 }
 
 func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service.RetryParam) (*model.Channel, *types.NewAPIError) {

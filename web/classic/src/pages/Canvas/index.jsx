@@ -27,7 +27,7 @@ const Canvas = () => {
     <iframe
       src='https://canvas.muling.store/'
       title={t('无限画布')}
-      className='h-[calc(100vh-64px)] w-full border-0'
+      className='block h-[calc(100dvh-64px)] w-full border-0 md:h-[100dvh]'
       sandbox='allow-downloads allow-forms allow-popups allow-same-origin allow-scripts'
       allow='clipboard-read; clipboard-write'
     />

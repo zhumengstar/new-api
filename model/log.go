@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -464,15 +465,85 @@ type RecordConsumeLogParams struct {
 	Other            map[string]interface{} `json:"other"`
 }
 
+type consumeLogJob struct {
+	userId            int
+	username          string
+	requestId         string
+	upstreamRequestId string
+	clientIP          string
+	createdAt         int64
+	params            RecordConsumeLogParams
+}
+
+var (
+	consumeLogQueue     chan consumeLogJob
+	consumeLogQueueOnce sync.Once
+)
+
+func asyncConsumeLogEnabled() bool {
+	return common.GetEnvOrDefaultBool("ASYNC_CONSUME_LOG_ENABLED", true)
+}
+
+func consumeLogQueueSize() int {
+	size := common.GetEnvOrDefault("ASYNC_CONSUME_LOG_QUEUE_SIZE", 4096)
+	if size <= 0 {
+		size = 4096
+	}
+	return size
+}
+
+func consumeLogWorkerCount() int {
+	count := common.GetEnvOrDefault("ASYNC_CONSUME_LOG_WORKERS", 2)
+	if count <= 0 {
+		count = 2
+	}
+	return count
+}
+
+func getConsumeLogQueue() chan consumeLogJob {
+	consumeLogQueueOnce.Do(func() {
+		consumeLogQueue = make(chan consumeLogJob, consumeLogQueueSize())
+		for i := 0; i < consumeLogWorkerCount(); i++ {
+			gopool.Go(func() {
+				for job := range consumeLogQueue {
+					recordConsumeLogJob(job)
+				}
+			})
+		}
+	})
+	return consumeLogQueue
+}
+
 func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams) {
 	if !common.LogConsumeEnabled {
 		return
 	}
-	logger.LogInfo(c, fmt.Sprintf("record consume log: userId=%d, params=%s", userId, common.GetJsonString(params)))
-	username := c.GetString("username")
-	requestId := c.GetString(common.RequestIdKey)
-	upstreamRequestId := c.GetString(common.UpstreamRequestIdKey)
-	createdAt := common.GetTimestamp()
+	logger.LogInfo(c, fmt.Sprintf("record consume log: userId=%d, model=%s, quota=%d, channel=%d, stream=%t",
+		userId, params.ModelName, params.Quota, params.ChannelId, params.IsStream))
+	job := consumeLogJob{
+		userId:            userId,
+		username:          c.GetString("username"),
+		requestId:         c.GetString(common.RequestIdKey),
+		upstreamRequestId: c.GetString(common.UpstreamRequestIdKey),
+		clientIP:          c.ClientIP(),
+		createdAt:         common.GetTimestamp(),
+		params:            params,
+	}
+	if asyncConsumeLogEnabled() {
+		queue := getConsumeLogQueue()
+		select {
+		case queue <- job:
+			return
+		default:
+			common.SysLog("consume log queue is full, writing synchronously")
+		}
+	}
+	recordConsumeLogJob(job)
+}
+
+func recordConsumeLogJob(job consumeLogJob) {
+	userId := job.userId
+	params := job.params
 	otherStr := common.MapToJsonStr(params.Other)
 	// 判断是否需要记录 IP
 	needRecordIp := false
@@ -483,8 +554,8 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 	}
 	log := &Log{
 		UserId:           userId,
-		Username:         username,
-		CreatedAt:        createdAt,
+		Username:         job.username,
+		CreatedAt:        job.createdAt,
 		Type:             LogTypeConsume,
 		Content:          params.Content,
 		PromptTokens:     params.PromptTokens,
@@ -499,26 +570,26 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 		Group:            params.Group,
 		Ip: func() string {
 			if needRecordIp {
-				return c.ClientIP()
+				return job.clientIP
 			}
 			return ""
 		}(),
-		RequestId:         requestId,
-		UpstreamRequestId: upstreamRequestId,
+		RequestId:         job.requestId,
+		UpstreamRequestId: job.upstreamRequestId,
 		Other:             otherStr,
 	}
 	err := createLog(log)
 	if err != nil {
-		logger.LogError(c, "failed to record log: "+err.Error())
+		common.SysError("failed to record log: " + err.Error())
 	}
 	if common.DataExportEnabled {
 		gopool.Go(func() {
 			LogQuotaData(QuotaDataLogParams{
 				UserID:    userId,
-				Username:  username,
+				Username:  job.username,
 				ModelName: params.ModelName,
 				Quota:     params.Quota,
-				CreatedAt: createdAt,
+				CreatedAt: job.createdAt,
 				TokenUsed: params.PromptTokens + params.CompletionTokens,
 				UseGroup:  params.Group,
 				TokenID:   params.TokenId,

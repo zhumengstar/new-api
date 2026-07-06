@@ -69,6 +69,14 @@ func appendRequestBodyInfo(ctx *gin.Context, other map[string]interface{}) {
 		info["path"] = ctx.Request.URL.Path
 	}
 
+	if !common.GetEnvOrDefaultBool("LOG_REQUEST_BODY_DETAIL", false) {
+		if size > 0 {
+			info["truncated"] = true
+		}
+		other["request_body"] = info
+		return
+	}
+
 	mediaType, params, _ := mime.ParseMediaType(contentType)
 	mediaType = strings.ToLower(mediaType)
 	switch {
@@ -277,7 +285,7 @@ func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, m
 	appendRequestPath(ctx, relayInfo, other)
 	appendRequestBodyInfo(ctx, other)
 	if enhancedPrompt := strings.TrimSpace(common.GetContextKeyString(ctx, "enhanced_image_prompt")); enhancedPrompt != "" {
-		other["enhanced_image_prompt"] = truncateLoggedString(enhancedPrompt, maxLoggedRequestBodyBytes)
+		other["enhanced_image_prompt"] = truncateLoggedString(enhancedPrompt, maxLoggedFormFieldBytes)
 	}
 	appendRequestConversionChain(relayInfo, other)
 	appendFinalRequestFormat(relayInfo, other)

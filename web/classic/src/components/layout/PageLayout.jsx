@@ -71,6 +71,9 @@ const PageLayout = () => {
     location.pathname !== '/console/canvas' &&
     location.pathname !== '/console/playground';
 
+  const isCanvasRoute = location.pathname === '/console/canvas';
+  const shouldShowHeader = !isCanvasRoute || isMobile;
+  const headerOffset = shouldShowHeader ? 64 : 0;
   const isConsoleRoute = location.pathname.startsWith('/console');
   const showSider = isConsoleRoute && (!isMobile || drawerOpen);
   const isFixedLayout = isConsoleRoute || location.pathname === '/pricing';
@@ -156,22 +159,24 @@ const PageLayout = () => {
         overflow: isFixedLayout && !isMobile ? 'hidden' : 'visible',
       }}
     >
-      <Header
-        style={{
-          padding: 0,
-          height: 'auto',
-          lineHeight: 'normal',
-          position: 'fixed',
-          width: '100%',
-          top: 0,
-          zIndex: 100,
-        }}
-      >
-        <HeaderBar
-          onMobileMenuToggle={() => setDrawerOpen((prev) => !prev)}
-          drawerOpen={drawerOpen}
-        />
-      </Header>
+      {shouldShowHeader && (
+        <Header
+          style={{
+            padding: 0,
+            height: 'auto',
+            lineHeight: 'normal',
+            position: 'fixed',
+            width: '100%',
+            top: 0,
+            zIndex: 100,
+          }}
+        >
+          <HeaderBar
+            onMobileMenuToggle={() => setDrawerOpen((prev) => !prev)}
+            drawerOpen={drawerOpen}
+          />
+        </Header>
+      )}
       <Layout
         style={{
           overflow: isFixedLayout && !isMobile ? 'auto' : 'visible',
@@ -186,7 +191,8 @@ const PageLayout = () => {
             style={{
               position: 'fixed',
               left: 0,
-              top: '64px',
+              top: `${headerOffset}px`,
+              height: `calc(100dvh - ${headerOffset}px)`,
               zIndex: 99,
               border: 'none',
               paddingRight: '0',
