@@ -105,22 +105,30 @@ func SyncChannelCache(frequency int) {
 	}
 }
 
-func GetRandomSatisfiedChannel(group string, model string, retry int, requestPath string) (*Channel, error) {
+func GetRandomSatisfiedChannel(group string, model string, retry int, requestPath ...string) (*Channel, error) {
+	path := ""
+	if len(requestPath) > 0 {
+		path = requestPath[0]
+	}
+	return GetRandomSatisfiedChannelExcluding(group, model, retry, path, nil)
+}
+
+func GetRandomSatisfiedChannelExcluding(group string, model string, retry int, requestPath string, excludedChannelIds map[int]bool) (*Channel, error) {
 	// if memory cache is disabled, get channel directly from database
 	if !common.MemoryCacheEnabled {
-		return GetChannel(group, model, retry, requestPath)
+		return GetChannelExcluding(group, model, retry, requestPath, excludedChannelIds)
 	}
 
 	channelSyncLock.RLock()
 	defer channelSyncLock.RUnlock()
 
 	// First, try to find channels with the exact model name.
-	channels := filterChannelsByRequestPath(group2model2channels[group][model], requestPath)
+	channels := filterChannelsByExcludedChannelIds(filterChannelsByRequestPath(group2model2channels[group][model], requestPath), excludedChannelIds)
 
 	// If no channels found, try to find channels with the normalized model name.
 	if len(channels) == 0 {
 		normalizedModel := ratio_setting.FormatMatchingModelName(model)
-		channels = filterChannelsByRequestPath(group2model2channels[group][normalizedModel], requestPath)
+		channels = filterChannelsByExcludedChannelIds(filterChannelsByRequestPath(group2model2channels[group][normalizedModel], requestPath), excludedChannelIds)
 	}
 
 	if len(channels) == 0 {
@@ -202,6 +210,20 @@ func GetRandomSatisfiedChannel(group string, model string, retry int, requestPat
 	return nil, errors.New("channel not found")
 }
 
+func filterChannelsByExcludedChannelIds(channels []int, excludedChannelIds map[int]bool) []int {
+	if len(channels) == 0 || len(excludedChannelIds) == 0 {
+		return channels
+	}
+	filtered := make([]int, 0, len(channels))
+	for _, channelId := range channels {
+		if excludedChannelIds[channelId] {
+			continue
+		}
+		filtered = append(filtered, channelId)
+	}
+	return filtered
+}
+
 // filterChannelsByRequestPath restricts candidates by request path. Only Advanced
 // Custom (type 58) channels are path-checked: they are kept only when one of their
 // configured routes matches requestPath. All other channel types always pass.
@@ -268,9 +290,11 @@ func CacheUpdateChannelStatus(id int, status int) {
 	}
 	channelSyncLock.Lock()
 	defer channelSyncLock.Unlock()
-	if channel, ok := channelsIDM[id]; ok {
-		channel.Status = status
+	channel, ok := channelsIDM[id]
+	if !ok {
+		return
 	}
+	channel.Status = status
 	if status != common.ChannelStatusEnabled {
 		// delete the channel from group2model2channels
 		for group, model2channels := range group2model2channels {
@@ -283,6 +307,44 @@ func CacheUpdateChannelStatus(id int, status int) {
 					}
 				}
 			}
+		}
+		return
+	}
+
+	if group2model2channels == nil {
+		group2model2channels = make(map[string]map[string][]int)
+	}
+	groups := strings.Split(channel.Group, ",")
+	models := strings.Split(channel.Models, ",")
+	for _, group := range groups {
+		group = strings.TrimSpace(group)
+		if group == "" {
+			continue
+		}
+		if group2model2channels[group] == nil {
+			group2model2channels[group] = make(map[string][]int)
+		}
+		for _, model := range models {
+			model = strings.TrimSpace(model)
+			if model == "" {
+				continue
+			}
+			channels := group2model2channels[group][model]
+			exists := false
+			for _, channelId := range channels {
+				if channelId == id {
+					exists = true
+					break
+				}
+			}
+			if exists {
+				continue
+			}
+			channels = append(channels, id)
+			sort.Slice(channels, func(i, j int) bool {
+				return channelsIDM[channels[i]].GetPriority() > channelsIDM[channels[j]].GetPriority()
+			})
+			group2model2channels[group][model] = channels
 		}
 	}
 }

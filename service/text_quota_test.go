@@ -364,8 +364,8 @@ func TestComposeTieredTextQuotaKeepsToolCallSurcharges(t *testing.T) {
 		ActualQuotaAfterGroup:  1000,
 	})
 
-	require.Equal(t, int64(13000), summary.ToolCallSurchargeQuota.Round(0).IntPart())
-	require.Equal(t, 14000, quota)
+	require.Equal(t, int64(7500), summary.ToolCallSurchargeQuota.Round(0).IntPart())
+	require.Equal(t, 8500, quota)
 }
 
 func TestComposeTieredTextQuotaFallbackKeepsToolCallSurcharges(t *testing.T) {
@@ -491,7 +491,7 @@ func TestCalculateTextQuotaSummaryUsesOnlyModelPriceForPricedImageGeneration(t *
 		PromptTokens:     1,
 		CompletionTokens: 1400,
 		TotalTokens:      1401,
-		CompletionTokenDetails: dto.CompletionTokenDetails{
+		CompletionTokenDetails: dto.OutputTokenDetails{
 			ImageTokens: 1400,
 		},
 	}

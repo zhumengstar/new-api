@@ -248,6 +248,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		if !shouldRetry(c, newAPIError, common.RetryTimes-retryParam.GetRetry()) {
 			break
 		}
+		retryParam.MarkChannelTried(channel.Id)
 	}
 
 	useChannel := c.GetStringSlice("use_channel")
@@ -393,14 +394,14 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) b
 	if service.ShouldSkipRetryAfterChannelAffinityFailure(c) {
 		return false
 	}
-	if types.IsChannelError(openaiErr) {
-		return true
-	}
 	if types.IsSkipRetryError(openaiErr) {
 		return false
 	}
 	if retryTimes <= 0 {
 		return false
+	}
+	if types.IsChannelError(openaiErr) {
+		return true
 	}
 	if _, ok := c.Get("specific_channel_id"); ok {
 		return false
@@ -627,6 +628,7 @@ func RelayTask(c *gin.Context) {
 		if !shouldRetryTaskRelay(c, channel.Id, taskErr, common.RetryTimes-retryParam.GetRetry()) {
 			break
 		}
+		retryParam.MarkChannelTried(channel.Id)
 	}
 
 	useChannel := c.GetStringSlice("use_channel")

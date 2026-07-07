@@ -3,14 +3,11 @@ package openai
 import "testing"
 
 func TestExtractGeminiCompatibleImageResponseAcceptsOpenAIImageResponse(t *testing.T) {
-	imageResponse, _, err := extractGeminiCompatibleImageResponse([]byte(`{"created":1,"data":[{"b64_json":"aGVsbG8="}]}`))
-	if err != nil {
-		t.Fatalf("extractGeminiCompatibleImageResponse() error = %v", err)
+	images := collectOpenAIChatImages([]byte(`{"choices":[{"message":{"images":[{"type":"image_url","image_url":{"url":"data:image/png;base64,aGVsbG8="}}]}}]}`))
+	if len(images) != 1 {
+		t.Fatalf("image count = %d, want 1", len(images))
 	}
-	if len(imageResponse.Data) != 1 {
-		t.Fatalf("image count = %d, want 1", len(imageResponse.Data))
-	}
-	if imageResponse.Data[0].B64Json != "aGVsbG8=" {
-		t.Fatalf("b64_json = %q, want aGVsbG8=", imageResponse.Data[0].B64Json)
+	if images[0].B64Json != "aGVsbG8=" {
+		t.Fatalf("b64_json = %q, want aGVsbG8=", images[0].B64Json)
 	}
 }

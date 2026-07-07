@@ -235,6 +235,7 @@ func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayIn
 	if request == nil {
 		return nil, errors.New("request is nil")
 	}
+	sanitizeOpenAICompatibleGeminiRequest(info, request)
 	if info.ChannelType != constant.ChannelTypeOpenAI && info.ChannelType != constant.ChannelTypeAzure {
 		request.StreamOptions = nil
 	}
@@ -354,6 +355,59 @@ func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayIn
 	return request, nil
 }
 
+func sanitizeOpenAICompatibleGeminiRequest(info *relaycommon.RelayInfo, request *dto.GeneralOpenAIRequest) {
+	if info == nil || request == nil || info.ChannelType != constant.ChannelTypeOpenAI {
+		return
+	}
+	model := strings.ToLower(strings.TrimSpace(info.UpstreamModelName))
+	if !strings.HasPrefix(model, "gemini-") {
+		return
+	}
+
+	request.ResponseFormat = nil
+	request.ParallelTooCalls = nil
+	request.ToolChoice = nil
+	request.LogProbs = nil
+	request.TopLogProbs = nil
+	request.Store = nil
+	request.Metadata = nil
+	request.Reasoning = nil
+	request.ReasoningEffort = ""
+
+	for i := range request.Messages {
+		message := &request.Messages[i]
+		message.Name = nil
+		message.ReasoningContent = nil
+		message.Reasoning = nil
+		clearOpenRouterCacheControl(message.Content)
+	}
+}
+
+func clearOpenRouterCacheControl(content any) {
+	switch items := content.(type) {
+	case []any:
+		for _, item := range items {
+			if block, ok := item.(map[string]any); ok {
+				delete(block, "cache_control")
+			}
+		}
+	case []dto.MediaContent:
+		for i := range items {
+			items[i].CacheControl = nil
+		}
+	case []*dto.MediaContent:
+		for _, item := range items {
+			if item != nil {
+				item.CacheControl = nil
+			}
+		}
+	case []map[string]any:
+		for _, block := range items {
+			delete(block, "cache_control")
+		}
+	}
+}
+
 func (a *Adaptor) ConvertRerankRequest(c *gin.Context, relayMode int, request dto.RerankRequest) (any, error) {
 	return request, nil
 }
@@ -429,7 +483,7 @@ func (a *Adaptor) ConvertAudioRequest(c *gin.Context, info *relaycommon.RelayInf
 }
 
 func shouldUseGeminiImageChatCompatibility(info *relaycommon.RelayInfo) bool {
-	if info == nil || info.ChannelType != constant.ChannelTypeOpenAI {
+	if info == nil || info.ChannelMeta == nil || info.ChannelType != constant.ChannelTypeOpenAI {
 		return false
 	}
 	if info.RelayMode != relayconstant.RelayModeImagesGenerations && info.RelayMode != relayconstant.RelayModeImagesEdits {

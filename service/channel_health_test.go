@@ -17,13 +17,14 @@ func setupChannelHealthTestDB(t *testing.T) {
 	t.Helper()
 	oldDB := model.DB
 	oldLogDB := model.LOG_DB
-	oldUsingSQLite := common.UsingSQLite
+	oldMainDatabaseType := common.MainDatabaseType()
+	oldLogDatabaseType := common.LogDatabaseType()
 	oldMemoryCacheEnabled := common.MemoryCacheEnabled
 	oldRedisEnabled := common.RedisEnabled
 	t.Cleanup(func() {
 		model.DB = oldDB
 		model.LOG_DB = oldLogDB
-		common.UsingSQLite = oldUsingSQLite
+		common.SetDatabaseTypes(oldMainDatabaseType, oldLogDatabaseType)
 		common.MemoryCacheEnabled = oldMemoryCacheEnabled
 		common.RedisEnabled = oldRedisEnabled
 	})
@@ -36,7 +37,7 @@ func setupChannelHealthTestDB(t *testing.T) {
 
 	model.DB = db
 	model.LOG_DB = db
-	common.UsingSQLite = true
+	common.SetDatabaseTypes(common.DatabaseTypeSQLite, common.DatabaseTypeSQLite)
 	common.MemoryCacheEnabled = false
 	common.RedisEnabled = false
 	require.NoError(t, db.AutoMigrate(&model.Channel{}, &model.Ability{}, &model.User{}))
