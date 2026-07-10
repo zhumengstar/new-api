@@ -404,49 +404,133 @@ func RecordTopupLog(userId int, content string, callerIp string, paymentMethod s
 	}
 }
 
+type errorLogJob struct {
+	userId            int
+	channelId         int
+	modelName         string
+	tokenName         string
+	content           string
+	tokenId           int
+	useTimeSeconds    int
+	isStream          bool
+	group             string
+	other             map[string]interface{}
+	username          string
+	requestId         string
+	upstreamRequestId string
+	clientIP          string
+	createdAt         int64
+}
+
+var (
+	errorLogQueue     chan errorLogJob
+	errorLogQueueOnce sync.Once
+)
+
+func asyncErrorLogEnabled() bool {
+	return common.GetEnvOrDefaultBool("ASYNC_ERROR_LOG_ENABLED", true)
+}
+
+func errorLogQueueSize() int {
+	size := common.GetEnvOrDefault("ASYNC_ERROR_LOG_QUEUE_SIZE", 2048)
+	if size <= 0 {
+		size = 2048
+	}
+	return size
+}
+
+func errorLogWorkerCount() int {
+	count := common.GetEnvOrDefault("ASYNC_ERROR_LOG_WORKERS", 2)
+	if count <= 0 {
+		count = 2
+	}
+	return count
+}
+
+func getErrorLogQueue() chan errorLogJob {
+	errorLogQueueOnce.Do(func() {
+		errorLogQueue = make(chan errorLogJob, errorLogQueueSize())
+		for i := 0; i < errorLogWorkerCount(); i++ {
+			gopool.Go(func() {
+				for job := range errorLogQueue {
+					recordErrorLogJob(job)
+				}
+			})
+		}
+	})
+	return errorLogQueue
+}
+
 func RecordErrorLog(c *gin.Context, userId int, channelId int, modelName string, tokenName string, content string, tokenId int, useTimeSeconds int,
 	isStream bool, group string, other map[string]interface{}) {
 	logger.LogInfo(c, fmt.Sprintf("record error log: userId=%d, channelId=%d, modelName=%s, tokenName=%s, content=%s", userId, channelId, modelName, tokenName, common.LocalLogPreview(content)))
-	username := c.GetString("username")
-	requestId := c.GetString(common.RequestIdKey)
-	upstreamRequestId := c.GetString(common.UpstreamRequestIdKey)
-	otherStr := common.MapToJsonStr(other)
+	job := errorLogJob{
+		userId:            userId,
+		channelId:         channelId,
+		modelName:         modelName,
+		tokenName:         tokenName,
+		content:           content,
+		tokenId:           tokenId,
+		useTimeSeconds:    useTimeSeconds,
+		isStream:          isStream,
+		group:             group,
+		other:             other,
+		username:          c.GetString("username"),
+		requestId:         c.GetString(common.RequestIdKey),
+		upstreamRequestId: c.GetString(common.UpstreamRequestIdKey),
+		clientIP:          c.ClientIP(),
+		createdAt:         common.GetTimestamp(),
+	}
+	if asyncErrorLogEnabled() {
+		queue := getErrorLogQueue()
+		select {
+		case queue <- job:
+			return
+		default:
+			common.SysLog("error log queue is full, writing synchronously")
+		}
+	}
+	recordErrorLogJob(job)
+}
+
+func recordErrorLogJob(job errorLogJob) {
+	otherStr := common.MapToJsonStr(job.other)
 	// 判断是否需要记录 IP
 	needRecordIp := false
-	if settingMap, err := GetUserSetting(userId, false); err == nil {
+	if settingMap, err := GetUserSetting(job.userId, false); err == nil {
 		if settingMap.RecordIpLog {
 			needRecordIp = true
 		}
 	}
 	log := &Log{
-		UserId:           userId,
-		Username:         username,
-		CreatedAt:        common.GetTimestamp(),
+		UserId:           job.userId,
+		Username:         job.username,
+		CreatedAt:        job.createdAt,
 		Type:             LogTypeError,
-		Content:          content,
+		Content:          job.content,
 		PromptTokens:     0,
 		CompletionTokens: 0,
-		TokenName:        tokenName,
-		ModelName:        modelName,
+		TokenName:        job.tokenName,
+		ModelName:        job.modelName,
 		Quota:            0,
-		ChannelId:        channelId,
-		TokenId:          tokenId,
-		UseTime:          useTimeSeconds,
-		IsStream:         isStream,
-		Group:            group,
+		ChannelId:        job.channelId,
+		TokenId:          job.tokenId,
+		UseTime:          job.useTimeSeconds,
+		IsStream:         job.isStream,
+		Group:            job.group,
 		Ip: func() string {
 			if needRecordIp {
-				return c.ClientIP()
+				return job.clientIP
 			}
 			return ""
 		}(),
-		RequestId:         requestId,
-		UpstreamRequestId: upstreamRequestId,
+		RequestId:         job.requestId,
+		UpstreamRequestId: job.upstreamRequestId,
 		Other:             otherStr,
 	}
 	err := createLog(log)
 	if err != nil {
-		logger.LogError(c, "failed to record log: "+err.Error())
+		common.SysError("failed to record error log: " + err.Error())
 	}
 }
 

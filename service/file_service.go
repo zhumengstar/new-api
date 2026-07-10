@@ -320,6 +320,11 @@ func loadFromBase64(base64String string, providedMimeType string) (*types.Cached
 	var mimeType string
 	var cleanBase64 string
 
+	base64String = strings.TrimSpace(base64String)
+	if strings.HasPrefix(strings.ToLower(base64String), "base64:data:") {
+		base64String = base64String[len("base64:"):]
+	}
+
 	// 处理 data: 前缀
 	if strings.HasPrefix(base64String, "data:") {
 		idx := strings.Index(base64String, ",")
@@ -344,6 +349,8 @@ func loadFromBase64(base64String string, providedMimeType string) (*types.Cached
 	if providedMimeType != "" {
 		mimeType = providedMimeType
 	}
+
+	cleanBase64 = normalizeBase64Payload(cleanBase64)
 
 	decodedData, err := base64.StdEncoding.DecodeString(cleanBase64)
 	if err != nil {
@@ -381,6 +388,17 @@ func loadFromBase64(base64String string, providedMimeType string) (*types.Cached
 	}
 
 	return cachedData, nil
+}
+
+func normalizeBase64Payload(payload string) string {
+	return strings.Map(func(r rune) rune {
+		switch r {
+		case ' ', '\n', '\r', '\t':
+			return -1
+		default:
+			return r
+		}
+	}, strings.TrimSpace(payload))
 }
 
 // GetImageConfig 获取图片配置

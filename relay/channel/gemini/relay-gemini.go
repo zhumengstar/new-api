@@ -50,6 +50,25 @@ var geminiSupportedMimeTypes = map[string]bool{
 	"video/flv":       true,
 }
 
+var geminiMimeTypeAliases = map[string]string{
+	"audio/wave":        "audio/wav",
+	"audio/x-wav":       "audio/wav",
+	"image/pjpeg":       "image/jpeg",
+	"video/quicktime":   "video/mov",
+	"video/x-msvideo":   "video/avi",
+	"video/x-ms-wmv":    "video/wmv",
+	"video/x-flv":       "video/flv",
+	"application/x-pdf": "application/pdf",
+}
+
+func normalizeGeminiMimeType(mimeType string) string {
+	normalized := strings.ToLower(strings.TrimSpace(mimeType))
+	if alias, ok := geminiMimeTypeAliases[normalized]; ok {
+		return alias
+	}
+	return normalized
+}
+
 const thoughtSignatureBypassValue = "context_engineering_is_the_way_to_go"
 
 // Gemini 允许的思考预算范围
@@ -596,13 +615,14 @@ func CovertOpenAI2Gemini(c *gin.Context, textRequest dto.GeneralOpenAIRequest, i
 				}
 
 				// 校验 MimeType 是否在 Gemini 支持的白名单中
-				if _, ok := geminiSupportedMimeTypes[strings.ToLower(mimeType)]; !ok {
+				geminiMimeType := normalizeGeminiMimeType(mimeType)
+				if _, ok := geminiSupportedMimeTypes[geminiMimeType]; !ok {
 					return nil, fmt.Errorf("mime type is not supported by Gemini: '%s', url: '%s', supported types are: %v", mimeType, source.GetIdentifier(), getSupportedMimeTypesList())
 				}
 
 				parts = append(parts, dto.GeminiPart{
 					InlineData: &dto.GeminiInlineData{
-						MimeType: mimeType,
+						MimeType: geminiMimeType,
 						Data:     base64Data,
 					},
 				})

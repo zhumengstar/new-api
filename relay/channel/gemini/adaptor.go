@@ -315,11 +315,12 @@ func multipartImageToDataURL(fileHeader *multipart.FileHeader) (string, error) {
 	if mimeType == "" || mimeType == "application/octet-stream" {
 		mimeType = detectGeminiImageMimeType(fileHeader.Filename, fileBytes)
 	}
-	if _, ok := geminiSupportedMimeTypes[strings.ToLower(mimeType)]; !ok {
+	geminiMimeType := normalizeGeminiMimeType(mimeType)
+	if _, ok := geminiSupportedMimeTypes[geminiMimeType]; !ok {
 		return "", fmt.Errorf("mime type is not supported by Gemini: '%s', file: '%s'", mimeType, fileHeader.Filename)
 	}
 
-	return fmt.Sprintf("data:%s;base64,%s", mimeType, base64.StdEncoding.EncodeToString(fileBytes)), nil
+	return fmt.Sprintf("data:%s;base64,%s", geminiMimeType, base64.StdEncoding.EncodeToString(fileBytes)), nil
 }
 
 func detectGeminiImageMimeType(filename string, data []byte) string {

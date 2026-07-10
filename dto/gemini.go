@@ -44,9 +44,9 @@ func (r *GeminiChatRequest) UnmarshalJSON(data []byte) error {
 }
 
 type ToolConfig struct {
-	FunctionCallingConfig *FunctionCallingConfig `json:"functionCallingConfig,omitempty"`
-	RetrievalConfig       *RetrievalConfig       `json:"retrievalConfig,omitempty"`
-	IncludeServerSideToolInvocations *bool       `json:"includeServerSideToolInvocations,omitempty"`
+	FunctionCallingConfig            *FunctionCallingConfig `json:"functionCallingConfig,omitempty"`
+	RetrievalConfig                  *RetrievalConfig       `json:"retrievalConfig,omitempty"`
+	IncludeServerSideToolInvocations *bool                  `json:"includeServerSideToolInvocations,omitempty"`
 }
 
 type FunctionCallingConfig struct {
@@ -266,6 +266,29 @@ type GeminiFileData struct {
 	FileUri  string `json:"fileUri,omitempty"`
 }
 
+// UnmarshalJSON allows Gemini fileData to accept both snake_case and camelCase fields.
+func (f *GeminiFileData) UnmarshalJSON(data []byte) error {
+	type Alias GeminiFileData
+	var aux struct {
+		Alias
+		MimeTypeSnake string `json:"mime_type,omitempty"`
+		FileURISnake  string `json:"file_uri,omitempty"`
+	}
+
+	if err := common.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+
+	*f = GeminiFileData(aux.Alias)
+	if aux.MimeTypeSnake != "" {
+		f.MimeType = aux.MimeTypeSnake
+	}
+	if aux.FileURISnake != "" {
+		f.FileUri = aux.FileURISnake
+	}
+	return nil
+}
+
 type GeminiPart struct {
 	Text             string                  `json:"text,omitempty"`
 	Thought          bool                    `json:"thought,omitempty"`
@@ -281,13 +304,21 @@ type GeminiPart struct {
 	CodeExecutionResult *GeminiPartCodeExecutionResult `json:"codeExecutionResult,omitempty"`
 }
 
-// UnmarshalJSON custom unmarshaler for GeminiPart to support snake_case and camelCase for InlineData
+// UnmarshalJSON allows Gemini parts to accept both snake_case and camelCase fields.
 func (p *GeminiPart) UnmarshalJSON(data []byte) error {
 	// Alias to avoid recursion during unmarshalling
 	type Alias GeminiPart
 	var aux struct {
 		Alias
-		InlineDataSnake *GeminiInlineData `json:"inline_data,omitempty"` // snake_case variant
+		InlineDataSnake          *GeminiInlineData              `json:"inline_data,omitempty"`
+		FunctionCallSnake        *FunctionCall                  `json:"function_call,omitempty"`
+		ThoughtSignatureSnake    json.RawMessage                `json:"thought_signature,omitempty"`
+		FunctionResponseSnake    *GeminiFunctionResponse        `json:"function_response,omitempty"`
+		MediaResolutionSnake     json.RawMessage                `json:"media_resolution,omitempty"`
+		VideoMetadataSnake       json.RawMessage                `json:"video_metadata,omitempty"`
+		FileDataSnake            *GeminiFileData                `json:"file_data,omitempty"`
+		ExecutableCodeSnake      *GeminiPartExecutableCode      `json:"executable_code,omitempty"`
+		CodeExecutionResultSnake *GeminiPartCodeExecutionResult `json:"code_execution_result,omitempty"`
 	}
 
 	if err := common.Unmarshal(data, &aux); err != nil {
@@ -303,7 +334,30 @@ func (p *GeminiPart) UnmarshalJSON(data []byte) error {
 	} else if aux.InlineData != nil { // Fallback to camelCase from Alias
 		p.InlineData = aux.InlineData
 	}
-	// Other fields like Text, FunctionCall etc. are already populated via aux.Alias
+	if aux.FunctionCallSnake != nil {
+		p.FunctionCall = aux.FunctionCallSnake
+	}
+	if len(aux.ThoughtSignatureSnake) > 0 {
+		p.ThoughtSignature = aux.ThoughtSignatureSnake
+	}
+	if aux.FunctionResponseSnake != nil {
+		p.FunctionResponse = aux.FunctionResponseSnake
+	}
+	if len(aux.MediaResolutionSnake) > 0 {
+		p.MediaResolution = aux.MediaResolutionSnake
+	}
+	if len(aux.VideoMetadataSnake) > 0 {
+		p.VideoMetadata = aux.VideoMetadataSnake
+	}
+	if aux.FileDataSnake != nil {
+		p.FileData = aux.FileDataSnake
+	}
+	if aux.ExecutableCodeSnake != nil {
+		p.ExecutableCode = aux.ExecutableCodeSnake
+	}
+	if aux.CodeExecutionResultSnake != nil {
+		p.CodeExecutionResult = aux.CodeExecutionResultSnake
+	}
 
 	return nil
 }
