@@ -316,6 +316,7 @@ export const getUsersColumns = ({
   showResetPasskeyModal,
   showResetTwoFAModal,
   showUserSubscriptionsModal,
+  showWeChatContact,
 }) => {
   return [
     {
@@ -327,6 +328,15 @@ export const getUsersColumns = ({
       dataIndex: 'username',
       render: (text, record) => renderUsername(text, record),
     },
+    ...(showWeChatContact
+      ? [
+          {
+            title: t('微信号'),
+            dataIndex: 'wechat_contact',
+            render: (text) => text || '-',
+          },
+        ]
+      : []),
     {
       title: t('状态'),
       dataIndex: 'info',

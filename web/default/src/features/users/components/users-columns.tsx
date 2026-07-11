@@ -32,6 +32,7 @@ import { GroupBadge } from '@/components/group-badge'
 import { LongText } from '@/components/long-text'
 import { StatusBadge } from '@/components/status-badge'
 import { TableId } from '@/components/table-id'
+import { useIsRoot } from '@/hooks/use-admin'
 import {
   USER_STATUS,
   USER_STATUSES,
@@ -49,6 +50,7 @@ function getQuotaProgressColor(percentage: number): string {
 
 export function useUsersColumns(): ColumnDef<User>[] {
   const { t } = useTranslation()
+  const isRoot = useIsRoot()
   return [
     {
       id: 'select',
@@ -123,6 +125,21 @@ export function useUsersColumns(): ColumnDef<User>[] {
       size: 220,
       meta: { mobileTitle: true },
     },
+    ...(isRoot
+      ? [
+          {
+            accessorKey: 'wechat_contact',
+            header: t('WeChat'),
+            cell: ({ row }) => (
+              <LongText className='max-w-[160px]'>
+                {(row.getValue('wechat_contact') as string) || '-'}
+              </LongText>
+            ),
+            enableSorting: false,
+            size: 180,
+          } satisfies ColumnDef<User>,
+        ]
+      : []),
     {
       accessorKey: 'status',
       header: t('Status'),
