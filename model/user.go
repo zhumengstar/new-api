@@ -416,7 +416,8 @@ func applyUserTotalConsumedQuota(users []*User) {
 
 func getUsersSortedByTotalConsumedQuota(query *gorm.DB, startIdx int, num int, sortOrder string) ([]*User, error) {
 	var userIDs []int
-	if err := query.Select("id").Find(&userIDs).Error; err != nil {
+	// Keep the ID-only selection isolated: GORM reuses statement state on this query.
+	if err := query.Session(&gorm.Session{}).Select("id").Find(&userIDs).Error; err != nil {
 		return nil, err
 	}
 	if len(userIDs) == 0 || startIdx >= len(userIDs) || num <= 0 {
@@ -445,7 +446,7 @@ func getUsersSortedByTotalConsumedQuota(query *gorm.DB, startIdx int, num int, s
 	}
 	pageUserIDs := userIDs[startIdx:endIdx]
 	var fetchedUsers []*User
-	if err := query.Omit("password").Where("id IN ?", pageUserIDs).Find(&fetchedUsers).Error; err != nil {
+	if err := query.Session(&gorm.Session{}).Select("*").Omit("password").Where("id IN ?", pageUserIDs).Find(&fetchedUsers).Error; err != nil {
 		return nil, err
 	}
 	usersByID := make(map[int]*User, len(fetchedUsers))

@@ -213,6 +213,7 @@ func TestGetAllUsersSortsByTotalConsumedQuota(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, users, 2)
 	assert.Equal(t, "higher_consumed", users[0].Username)
+	assert.Equal(t, common.UserStatusEnabled, users[0].Status)
 	assert.Equal(t, "lower_consumed", users[1].Username)
 }
 
