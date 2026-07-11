@@ -48,6 +48,7 @@ const UsersTable = (usersData) => {
     setEditingUser,
     setShowEditUser,
     manageUser,
+    handleSortChange,
     refresh,
     resetUserPasskey,
     resetUserTwoFA,
@@ -193,6 +194,7 @@ const UsersTable = (usersData) => {
         hidePagination={true}
         loading={loading}
         onRow={handleRow}
+        onChange={handleSortChange}
         empty={
           <Empty
             image={<IllustrationNoResult style={{ width: 150, height: 150 }} />}

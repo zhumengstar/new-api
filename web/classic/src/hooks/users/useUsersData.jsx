@@ -35,6 +35,8 @@ export const useUsersData = () => {
   const [searching, setSearching] = useState(false);
   const [groupOptions, setGroupOptions] = useState([]);
   const [userCount, setUserCount] = useState(0);
+  const [sortBy, setSortBy] = useState('');
+  const [sortOrder, setSortOrder] = useState('');
 
   // Modal states
   const [showAddUser, setShowAddUser] = useState(false);
@@ -70,9 +72,20 @@ export const useUsersData = () => {
   };
 
   // Load users data
-  const loadUsers = async (startIdx, pageSize) => {
+  const loadUsers = async (
+    startIdx,
+    pageSize,
+    nextSortBy = sortBy,
+    nextSortOrder = sortOrder,
+  ) => {
     setLoading(true);
-    const res = await API.get(`/api/user/?p=${startIdx}&page_size=${pageSize}`);
+    const params = new URLSearchParams({
+      p: String(startIdx),
+      page_size: String(pageSize),
+    });
+    if (nextSortBy) params.set('sort_by', nextSortBy);
+    if (nextSortOrder) params.set('sort_order', nextSortOrder);
+    const res = await API.get(`/api/user/?${params.toString()}`);
     const { success, message, data } = res.data;
     if (success) {
       const newPageData = data.items;
@@ -91,6 +104,8 @@ export const useUsersData = () => {
     pageSize,
     searchKeyword = null,
     searchGroup = null,
+    nextSortBy = sortBy,
+    nextSortOrder = sortOrder,
   ) => {
     // If no parameters passed, get values from form
     if (searchKeyword === null || searchGroup === null) {
@@ -101,13 +116,19 @@ export const useUsersData = () => {
 
     if (searchKeyword === '' && searchGroup === '') {
       // If keyword is blank, load files instead
-      await loadUsers(startIdx, pageSize);
+      await loadUsers(startIdx, pageSize, nextSortBy, nextSortOrder);
       return;
     }
     setSearching(true);
-    const res = await API.get(
-      `/api/user/search?keyword=${searchKeyword}&group=${searchGroup}&p=${startIdx}&page_size=${pageSize}`,
-    );
+    const params = new URLSearchParams({
+      keyword: searchKeyword,
+      group: searchGroup,
+      p: String(startIdx),
+      page_size: String(pageSize),
+    });
+    if (nextSortBy) params.set('sort_by', nextSortBy);
+    if (nextSortOrder) params.set('sort_order', nextSortOrder);
+    const res = await API.get(`/api/user/search?${params.toString()}`);
     const { success, message, data } = res.data;
     if (success) {
       const newPageData = data.items;
@@ -216,6 +237,35 @@ export const useUsersData = () => {
       });
   };
 
+  const handleSortChange = (_pagination, _filters, sorter) => {
+    const activeSorter = Array.isArray(sorter) ? sorter[0] : sorter;
+    const field = activeSorter?.field || activeSorter?.dataIndex;
+    if (field !== 'quota') return;
+
+    const nextSortOrder =
+      activeSorter?.sortOrder === 'ascend'
+        ? 'asc'
+        : activeSorter?.sortOrder === 'descend'
+          ? 'desc'
+          : '';
+    const nextSortBy = nextSortOrder ? 'quota' : '';
+    setSortBy(nextSortBy);
+    setSortOrder(nextSortOrder);
+    const { searchKeyword, searchGroup } = getFormValues();
+    if (searchKeyword === '' && searchGroup === '') {
+      loadUsers(1, pageSize, nextSortBy, nextSortOrder).then();
+    } else {
+      searchUsers(
+        1,
+        pageSize,
+        searchKeyword,
+        searchGroup,
+        nextSortBy,
+        nextSortOrder,
+      ).then();
+    }
+  };
+
   // Handle table row styling for disabled/deleted users
   const handleRow = (record, index) => {
     if (record.DeletedAt !== null || record.status !== 1) {
@@ -314,6 +364,7 @@ export const useUsersData = () => {
     resetUserTwoFA,
     handlePageChange,
     handlePageSizeChange,
+    handleSortChange,
     handleRow,
     refresh,
     closeAddUser,

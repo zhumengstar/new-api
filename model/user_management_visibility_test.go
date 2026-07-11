@@ -162,3 +162,8 @@ func TestAdminUserManagementShowsAllNonHiddenUsers(t *testing.T) {
 	require.Len(t, selfSearchUsers, 1)
 	assert.Equal(t, "admin_owner", selfSearchUsers[0].Username)
 }
+
+func TestGetUserOrderSupportsQuota(t *testing.T) {
+	assert.Equal(t, "quota asc, id desc", GetUserOrder("quota", "asc"))
+	assert.Equal(t, "quota desc, id desc", GetUserOrder("quota", "desc"))
+}

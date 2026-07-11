@@ -224,6 +224,8 @@ func GetUserOrder(sortBy string, sortOrder string) string {
 		return "created_at " + order + ", id desc"
 	case "last_login_at":
 		return "last_login_at " + order + ", id desc"
+	case "quota":
+		return "quota " + order + ", id desc"
 	default:
 		return DefaultUserOrder
 	}
