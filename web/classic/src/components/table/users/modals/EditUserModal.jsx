@@ -168,6 +168,7 @@ const EditUserModal = (props) => {
     quota_amount: 0,
     group: ['default'],
     remark: '',
+    wechat_contact: '',
   });
 
   const fetchGroups = async () => {
@@ -430,6 +431,18 @@ const EditUserModal = (props) => {
                         showClear
                       />
                     </Col>
+
+                    {isRootUser && (
+                      <Col span={24}>
+                        <Form.Input
+                          field='wechat_contact'
+                          label={t('微信号')}
+                          placeholder={t('请输入微信号')}
+                          maxLength={64}
+                          showClear
+                        />
+                      </Col>
+                    )}
 
                     <Col span={24}>
                       <Form.Input

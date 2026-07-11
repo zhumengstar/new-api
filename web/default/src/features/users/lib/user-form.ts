@@ -32,7 +32,8 @@ export const userFormSchema = z.object({
   role: z.number().optional(),
   quota_dollars: z.number().min(0).optional(),
   group: z.array(z.string()).min(1, 'Group is required').optional(),
-  remark: z.string().optional()
+  remark: z.string().optional(),
+  wechat_contact: z.string().max(64).optional()
 })
 
 export type UserFormValues = z.infer<typeof userFormSchema>
@@ -48,7 +49,8 @@ export const USER_FORM_DEFAULT_VALUES: UserFormValues = {
   role: 1, // Default to common user
   quota_dollars: 0,
   group: [DEFAULT_GROUP],
-  remark: ''
+  remark: '',
+  wechat_contact: ''
 }
 
 // ============================================================================
@@ -75,6 +77,7 @@ export function transformFormDataToPayload(
   } else {
     // For update: quota is adjusted atomically via /api/user/manage, not sent here
     payload.remark = data.remark || undefined
+    payload.wechat_contact = data.wechat_contact ?? ''
     payload.id = userId
   }
 
@@ -92,7 +95,8 @@ export function transformUserToFormDefaults(user: User): UserFormValues {
     role: user.role,
     quota_dollars: quotaUnitsToDollars(user.quota),
     group: normalizeUserGroups(user.group),
-    remark: user.remark || ''
+    remark: user.remark || '',
+    wechat_contact: user.wechat_contact || ''
   }
 }
 

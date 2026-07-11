@@ -239,6 +239,29 @@ export function UsersMutateDrawer({
                   )}
                 />
 
+                {isUpdate && isRoot && (
+                  <FormField
+                    control={form.control}
+                    name='wechat_contact'
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>{t('WeChat')}</FormLabel>
+                        <FormControl>
+                          <Input
+                            {...field}
+                            placeholder={t('Enter WeChat ID')}
+                            maxLength={64}
+                          />
+                        </FormControl>
+                        <FormDescription>
+                          {t('Only visible to super admins')}
+                        </FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                )}
+
                 {!isUpdate && (
                   <FormField
                     control={form.control}

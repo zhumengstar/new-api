@@ -279,6 +279,7 @@ func GetAllUsers(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	hideWeChatContactsForNonRoot(c.GetInt("role"), users)
 
 	pageInfo.SetTotal(int(total))
 	pageInfo.SetItems(users)
@@ -308,6 +309,7 @@ func SearchUsers(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	hideWeChatContactsForNonRoot(c.GetInt("role"), users)
 
 	pageInfo.SetTotal(int(total))
 	pageInfo.SetItems(users)
@@ -317,6 +319,15 @@ func SearchUsers(c *gin.Context) {
 
 func canManageTargetRole(myRole int, targetRole int) bool {
 	return myRole == common.RoleRootUser || myRole > targetRole
+}
+
+func hideWeChatContactsForNonRoot(role int, users []*model.User) {
+	if role >= common.RoleRootUser {
+		return
+	}
+	for _, user := range users {
+		user.WeChatContact = ""
+	}
 }
 
 func canViewUserInScope(c *gin.Context, user *model.User) bool {
@@ -367,6 +378,9 @@ func GetUser(c *gin.Context) {
 			common.ApiError(c, err)
 			return
 		}
+	}
+	if c.GetInt("role") < common.RoleRootUser {
+		user.WeChatContact = ""
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
@@ -679,6 +693,9 @@ func UpdateUser(c *gin.Context) {
 	if !canManageUserInScope(c, originUser) {
 		common.ApiErrorI18n(c, i18n.MsgUserNoPermissionHigherLevel)
 		return
+	}
+	if myRole < common.RoleRootUser {
+		updatedUser.WeChatContact = originUser.WeChatContact
 	}
 	if !canManageTargetRole(myRole, updatedUser.Role) {
 		common.ApiErrorI18n(c, i18n.MsgUserCannotCreateHigherLevel)

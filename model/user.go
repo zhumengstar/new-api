@@ -53,6 +53,7 @@ type User struct {
 	LinuxDOId        string         `json:"linux_do_id" gorm:"column:linux_do_id;index"`
 	Setting          string         `json:"setting" gorm:"type:text;column:setting"`
 	Remark           string         `json:"remark,omitempty" gorm:"type:varchar(255)" validate:"max=255"`
+	WeChatContact    string         `json:"wechat_contact,omitempty" gorm:"type:varchar(64);column:wechat_contact" validate:"max=64"`
 	StripeCustomer   string         `json:"stripe_customer" gorm:"type:varchar(64);column:stripe_customer;index"`
 	CreatedAt        int64          `json:"created_at" gorm:"autoCreateTime;column:created_at"`
 	LastLoginAt      int64          `json:"last_login_at" gorm:"default:0;column:last_login_at"`
@@ -617,10 +618,11 @@ func (user *User) Edit(updatePassword bool) error {
 
 	newUser := *user
 	updates := map[string]interface{}{
-		"username":     newUser.Username,
-		"display_name": newUser.DisplayName,
-		"group":        newUser.Group,
-		"remark":       newUser.Remark,
+		"username":       newUser.Username,
+		"display_name":   newUser.DisplayName,
+		"group":          newUser.Group,
+		"remark":         newUser.Remark,
+		"wechat_contact": newUser.WeChatContact,
 	}
 	if updatePassword {
 		updates["password"] = newUser.Password
