@@ -33,15 +33,25 @@ const UsersDescription = ({ compactMode, setCompactMode, incomeStats, t }) => {
           <IconUserAdd className='mr-2' />
           <Text>{t('用户管理')}</Text>
         </div>
-        <div className='flex flex-wrap items-center gap-x-3 gap-y-1'>
-          <Text type='tertiary' size='small'>
-            {t('近7天消耗额度（非管理员）')}
+        <div className='flex flex-wrap items-center gap-2'>
+          <Text type='tertiary' size='small' className='whitespace-nowrap'>
+            {t('近7天消耗（非管理员）')}
           </Text>
-          {incomeStats.map((item) => (
-            <Text key={item.date} type='tertiary' size='small'>
-              {item.date.slice(5)} {renderQuota(item.quota || 0)}
-            </Text>
-          ))}
+          <div className='flex max-w-full overflow-x-auto rounded-md border border-[var(--semi-color-border)] bg-[var(--semi-color-fill-0)]'>
+            {incomeStats.map((item, index) => (
+              <div
+                key={item.date}
+                className={`flex min-w-[76px] flex-col px-2 py-1 ${index > 0 ? 'border-l border-[var(--semi-color-border)]' : ''}`}
+              >
+                <Text type='tertiary' size='small'>
+                  {item.date.slice(5)}
+                </Text>
+                <Text size='small' className='whitespace-nowrap font-medium'>
+                  {renderQuota(item.quota || 0)}
+                </Text>
+              </div>
+            ))}
+          </div>
         </div>
       </div>
       <CompactModeToggle

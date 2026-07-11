@@ -447,6 +447,15 @@ export const getUsersColumns = ({
         renderStatistics(text, record, showEnableDisableModal, t),
     },
     {
+      title: t('总消耗金额'),
+      dataIndex: 'total_consumed_quota',
+      render: (text) => (
+        <Tag color='white' shape='circle'>
+          {renderQuota(text || 0)}
+        </Tag>
+      ),
+    },
+    {
       title: t('剩余额度/总额度'),
       dataIndex: 'quota',
       key: 'quota_usage',

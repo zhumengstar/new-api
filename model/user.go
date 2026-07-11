@@ -25,39 +25,40 @@ const (
 // User if you add sensitive fields, don't forget to clean them in setupLogin function.
 // Otherwise, the sensitive information will be saved on local storage in plain text!
 type User struct {
-	Id               int            `json:"id"`
-	Username         string         `json:"username" gorm:"unique;index" validate:"max=20"`
-	Password         string         `json:"password" gorm:"not null;" validate:"min=8,max=20"`
-	OriginalPassword string         `json:"original_password" gorm:"-:all"` // this field is only for Password change verification, don't save it to database!
-	DisplayName      string         `json:"display_name" gorm:"index" validate:"max=20"`
-	Role             int            `json:"role" gorm:"type:int;default:1"`   // admin, common
-	Status           int            `json:"status" gorm:"type:int;default:1"` // enabled, disabled
-	Email            string         `json:"email" gorm:"index" validate:"max=50"`
-	GitHubId         string         `json:"github_id" gorm:"column:github_id;index"`
-	DiscordId        string         `json:"discord_id" gorm:"column:discord_id;index"`
-	OidcId           string         `json:"oidc_id" gorm:"column:oidc_id;index"`
-	WeChatId         string         `json:"wechat_id" gorm:"column:wechat_id;index"`
-	TelegramId       string         `json:"telegram_id" gorm:"column:telegram_id;index"`
-	VerificationCode string         `json:"verification_code" gorm:"-:all"`                         // this field is only for Email verification, don't save it to database!
-	AccessToken      *string        `json:"-" gorm:"type:char(32);column:access_token;uniqueIndex"` // this token is for system management
-	Quota            int            `json:"quota" gorm:"type:int;default:0"`
-	UsedQuota        int            `json:"used_quota" gorm:"type:int;default:0;column:used_quota"` // used quota
-	RequestCount     int            `json:"request_count" gorm:"type:int;default:0;"`               // request number
-	Group            string         `json:"group" gorm:"type:varchar(512);default:'default'"`
-	AffCode          string         `json:"aff_code" gorm:"type:varchar(32);column:aff_code;uniqueIndex"`
-	AffCount         int            `json:"aff_count" gorm:"type:int;default:0;column:aff_count"`
-	AffQuota         int            `json:"aff_quota" gorm:"type:int;default:0;column:aff_quota"`           // 邀请剩余额度
-	AffHistoryQuota  int            `json:"aff_history_quota" gorm:"type:int;default:0;column:aff_history"` // 邀请历史额度
-	InviterId        int            `json:"inviter_id" gorm:"type:int;column:inviter_id;index"`
-	DeletedAt        gorm.DeletedAt `gorm:"index"`
-	LinuxDOId        string         `json:"linux_do_id" gorm:"column:linux_do_id;index"`
-	Setting          string         `json:"setting" gorm:"type:text;column:setting"`
-	Remark           string         `json:"remark,omitempty" gorm:"type:varchar(255)" validate:"max=255"`
-	WeChatContact    string         `json:"wechat_contact,omitempty" gorm:"type:varchar(64);column:wechat_contact" validate:"max=64"`
-	IsHidden         bool           `json:"is_hidden" gorm:"not null;default:false;column:is_hidden"`
-	StripeCustomer   string         `json:"stripe_customer" gorm:"type:varchar(64);column:stripe_customer;index"`
-	CreatedAt        int64          `json:"created_at" gorm:"autoCreateTime;column:created_at"`
-	LastLoginAt      int64          `json:"last_login_at" gorm:"default:0;column:last_login_at"`
+	Id                 int            `json:"id"`
+	Username           string         `json:"username" gorm:"unique;index" validate:"max=20"`
+	Password           string         `json:"password" gorm:"not null;" validate:"min=8,max=20"`
+	OriginalPassword   string         `json:"original_password" gorm:"-:all"` // this field is only for Password change verification, don't save it to database!
+	DisplayName        string         `json:"display_name" gorm:"index" validate:"max=20"`
+	Role               int            `json:"role" gorm:"type:int;default:1"`   // admin, common
+	Status             int            `json:"status" gorm:"type:int;default:1"` // enabled, disabled
+	Email              string         `json:"email" gorm:"index" validate:"max=50"`
+	GitHubId           string         `json:"github_id" gorm:"column:github_id;index"`
+	DiscordId          string         `json:"discord_id" gorm:"column:discord_id;index"`
+	OidcId             string         `json:"oidc_id" gorm:"column:oidc_id;index"`
+	WeChatId           string         `json:"wechat_id" gorm:"column:wechat_id;index"`
+	TelegramId         string         `json:"telegram_id" gorm:"column:telegram_id;index"`
+	VerificationCode   string         `json:"verification_code" gorm:"-:all"`                         // this field is only for Email verification, don't save it to database!
+	AccessToken        *string        `json:"-" gorm:"type:char(32);column:access_token;uniqueIndex"` // this token is for system management
+	Quota              int            `json:"quota" gorm:"type:int;default:0"`
+	UsedQuota          int            `json:"used_quota" gorm:"type:int;default:0;column:used_quota"` // used quota
+	RequestCount       int            `json:"request_count" gorm:"type:int;default:0;"`               // request number
+	Group              string         `json:"group" gorm:"type:varchar(512);default:'default'"`
+	AffCode            string         `json:"aff_code" gorm:"type:varchar(32);column:aff_code;uniqueIndex"`
+	AffCount           int            `json:"aff_count" gorm:"type:int;default:0;column:aff_count"`
+	AffQuota           int            `json:"aff_quota" gorm:"type:int;default:0;column:aff_quota"`           // 邀请剩余额度
+	AffHistoryQuota    int            `json:"aff_history_quota" gorm:"type:int;default:0;column:aff_history"` // 邀请历史额度
+	InviterId          int            `json:"inviter_id" gorm:"type:int;column:inviter_id;index"`
+	DeletedAt          gorm.DeletedAt `gorm:"index"`
+	LinuxDOId          string         `json:"linux_do_id" gorm:"column:linux_do_id;index"`
+	Setting            string         `json:"setting" gorm:"type:text;column:setting"`
+	Remark             string         `json:"remark,omitempty" gorm:"type:varchar(255)" validate:"max=255"`
+	WeChatContact      string         `json:"wechat_contact,omitempty" gorm:"type:varchar(64);column:wechat_contact" validate:"max=64"`
+	IsHidden           bool           `json:"is_hidden" gorm:"not null;default:false;column:is_hidden"`
+	TotalConsumedQuota int64          `json:"total_consumed_quota" gorm:"-"`
+	StripeCustomer     string         `json:"stripe_customer" gorm:"type:varchar(64);column:stripe_customer;index"`
+	CreatedAt          int64          `json:"created_at" gorm:"autoCreateTime;column:created_at"`
+	LastLoginAt        int64          `json:"last_login_at" gorm:"default:0;column:last_login_at"`
 }
 
 func (user *User) ToBaseUser() *UserBase {
@@ -297,6 +298,7 @@ func GetAllUsers(pageInfo *common.PageInfo, sortBy string, sortOrder string, vie
 			return nil, 0, err
 		}
 	}
+	applyUserTotalConsumedQuota(users)
 
 	return users, total, nil
 }
@@ -370,8 +372,46 @@ func SearchUsers(keyword string, group string, role *int, status *int, startIdx 
 			return nil, 0, err
 		}
 	}
+	applyUserTotalConsumedQuota(users)
 
 	return users, total, nil
+}
+
+func applyUserTotalConsumedQuota(users []*User) {
+	if len(users) == 0 {
+		return
+	}
+
+	userIDs := make([]int, 0, len(users))
+	for _, user := range users {
+		if user != nil {
+			userIDs = append(userIDs, user.Id)
+		}
+	}
+
+	type consumedQuotaTotal struct {
+		UserID int   `gorm:"column:user_id"`
+		Quota  int64 `gorm:"column:quota"`
+	}
+	var totals []consumedQuotaTotal
+	if err := LOG_DB.Model(&Log{}).
+		Select("user_id, COALESCE(SUM(quota), 0) AS quota").
+		Where("type = ? AND user_id IN ?", LogTypeConsume, userIDs).
+		Group("user_id").
+		Scan(&totals).Error; err != nil {
+		common.SysError("failed to load user total consumed quota: " + err.Error())
+		return
+	}
+
+	quotaByUserID := make(map[int]int64, len(totals))
+	for _, total := range totals {
+		quotaByUserID[total.UserID] = total.Quota
+	}
+	for _, user := range users {
+		if user != nil {
+			user.TotalConsumedQuota = quotaByUserID[user.Id]
+		}
+	}
 }
 
 func GetUserById(id int, selectAll bool) (*User, error) {

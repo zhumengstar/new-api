@@ -184,3 +184,16 @@ func TestGetRecentDailyIncomeStatsExcludesAdmins(t *testing.T) {
 	assert.Equal(t, now.In(time.FixedZone("Asia/Shanghai", 8*60*60)).Format("2006-01-02"), stats[6].Date)
 	assert.Equal(t, int64(125000), stats[6].Quota)
 }
+
+func TestGetAllUsersIncludesTotalConsumedQuota(t *testing.T) {
+	truncateTables(t)
+	insertUserForManagementVisibilityTest(t, &User{Id: 201, Username: "total_consumed_user", Role: common.RoleCommonUser, Status: common.UserStatusEnabled})
+	require.NoError(t, LOG_DB.Create(&Log{UserId: 201, Type: LogTypeConsume, Quota: 125000}).Error)
+	require.NoError(t, LOG_DB.Create(&Log{UserId: 201, Type: LogTypeConsume, Quota: 250000}).Error)
+	require.NoError(t, LOG_DB.Create(&Log{UserId: 201, Type: LogTypeTopup, Quota: 990000}).Error)
+
+	users, _, err := GetAllUsers(&common.PageInfo{Page: 1, PageSize: 20}, "", "", 1, common.RoleRootUser)
+	require.NoError(t, err)
+	require.Len(t, users, 1)
+	assert.Equal(t, int64(375000), users[0].TotalConsumedQuota)
+}
