@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React from 'react';
+import React, { useRef, useState } from 'react';
 import {
   Button,
   Space,
@@ -27,6 +27,7 @@ import {
   Popover,
   Typography,
   Dropdown,
+  Input,
 } from '@douyinfe/semi-ui';
 import { IconMore } from '@douyinfe/semi-icons';
 import {
@@ -34,6 +35,9 @@ import {
   renderNumber,
   renderQuota,
   timestamp2string,
+  API,
+  showError,
+  showSuccess,
 } from '../../../helpers';
 
 const renderTimestamp = (text) => (text ? timestamp2string(text) : '-');
@@ -96,6 +100,81 @@ const renderUsername = (text, record) => {
         </Tag>
       </Tooltip>
     </Space>
+  );
+};
+
+const EditableWeChatContact = ({ record, t, refresh }) => {
+  const originalValue = record.wechat_contact || '';
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(originalValue);
+  const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
+
+  const cancel = () => {
+    setValue(originalValue);
+    setEditing(false);
+  };
+
+  const save = async () => {
+    const nextValue = value.trim();
+    if (savingRef.current) return;
+    if (nextValue === originalValue) {
+      setEditing(false);
+      return;
+    }
+
+    savingRef.current = true;
+    setSaving(true);
+    try {
+      const res = await API.put('/api/user/', {
+        ...record,
+        wechat_contact: nextValue,
+      });
+      if (res.data.success) {
+        showSuccess(t('微信号已更新'));
+        setEditing(false);
+        refresh();
+      } else {
+        showError(res.data.message);
+      }
+    } catch (error) {
+      showError(t('微信号更新失败'));
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
+    }
+  };
+
+  if (editing) {
+    return (
+      <Input
+        autoFocus
+        value={value}
+        maxLength={64}
+        disabled={saving}
+        onChange={setValue}
+        onBlur={() => void save()}
+        onEnterPress={() => void save()}
+        onKeyDown={(event) => {
+          if (event.key === 'Escape') {
+            event.preventDefault();
+            cancel();
+          }
+        }}
+      />
+    );
+  }
+
+  return (
+    <span
+      className='cursor-text'
+      onClick={(event) => {
+        event.stopPropagation();
+        setEditing(true);
+      }}
+    >
+      {originalValue || '-'}
+    </span>
   );
 };
 
@@ -317,6 +396,7 @@ export const getUsersColumns = ({
   showResetTwoFAModal,
   showUserSubscriptionsModal,
   showWeChatContact,
+  refresh,
 }) => {
   return [
     {
@@ -333,7 +413,9 @@ export const getUsersColumns = ({
           {
             title: t('微信号'),
             dataIndex: 'wechat_contact',
-            render: (text) => text || '-',
+            render: (text, record) => (
+              <EditableWeChatContact record={record} t={t} refresh={refresh} />
+            ),
           },
         ]
       : []),

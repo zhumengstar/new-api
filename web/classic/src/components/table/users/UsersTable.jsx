@@ -143,6 +143,7 @@ const UsersTable = (usersData) => {
       showResetTwoFAModal: showResetTwoFAUserModal,
       showUserSubscriptionsModal: showUserSubscriptionsUserModal,
       showWeChatContact: isRoot(),
+      refresh,
     });
   }, [
     t,
@@ -156,6 +157,7 @@ const UsersTable = (usersData) => {
     showResetTwoFAUserModal,
     showUserSubscriptionsUserModal,
     isRoot(),
+    refresh,
   ]);
 
   // Handle compact mode by removing fixed positioning
