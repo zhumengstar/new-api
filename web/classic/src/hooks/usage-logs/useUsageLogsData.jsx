@@ -162,6 +162,7 @@ export const useLogsData = () => {
     quota: 0,
     token: 0,
   });
+  const [minuteIncome, setMinuteIncome] = useState(0);
 
   // Form state
   const [formApi, setFormApi] = useState(null);
@@ -944,6 +945,29 @@ export const useLogsData = () => {
     }
   }, [formApi]);
 
+  useEffect(() => {
+    if (!isAdminUser) return undefined;
+
+    let cancelled = false;
+    const loadMinuteIncome = async () => {
+      try {
+        const res = await API.get('/api/log/current_minute_income');
+        if (!cancelled && res.data.success) {
+          setMinuteIncome(res.data.data?.quota || 0);
+        }
+      } catch {
+        if (!cancelled) setMinuteIncome(0);
+      }
+    };
+
+    loadMinuteIncome();
+    const timer = setInterval(loadMinuteIncome, 10000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [isAdminUser]);
+
   // Check if any record has expandable content
   const hasExpandableRows = () => {
     return logs.some(
@@ -963,6 +987,7 @@ export const useLogsData = () => {
     pageSize,
     logType,
     stat,
+    minuteIncome,
     isAdminUser,
     isRootUser,
     isGeneratedImagePreviewOpen,

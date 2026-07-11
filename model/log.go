@@ -901,6 +901,35 @@ type Stat struct {
 	Tpm   int `json:"tpm"`
 }
 
+func SumCurrentMinuteIncome(scopedUserIDs []int, scoped bool) (int64, error) {
+	userQuery := DB.Unscoped().Model(&User{}).Where("role < ?", common.RoleAdminUser)
+	if scoped {
+		if len(scopedUserIDs) == 0 {
+			return 0, nil
+		}
+		userQuery = userQuery.Where("id IN ?", scopedUserIDs)
+	}
+
+	var userIDs []int
+	if err := userQuery.Pluck("id", &userIDs).Error; err != nil {
+		return 0, err
+	}
+	if len(userIDs) == 0 {
+		return 0, nil
+	}
+
+	now := time.Now().Unix()
+	minuteStart := now - now%60
+	var quota int64
+	if err := LOG_DB.Model(&Log{}).
+		Select("COALESCE(SUM(quota), 0)").
+		Where("type = ? AND created_at >= ? AND created_at < ? AND user_id IN ?", LogTypeConsume, minuteStart, minuteStart+60, userIDs).
+		Scan(&quota).Error; err != nil {
+		return 0, err
+	}
+	return quota, nil
+}
+
 func SumUsedQuota(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, channel int, group string, scopedUserIDs []int, scoped bool) (stat Stat, err error) {
 	tx := LOG_DB.Table("logs").Select("COALESCE(sum(quota), 0) quota")
 

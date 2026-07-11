@@ -29,6 +29,8 @@ const LogsActions = ({
   showStat,
   compactMode,
   setCompactMode,
+  minuteIncome,
+  isAdminUser,
   t,
 }) => {
   const showSkeleton = useMinimumLoadingTime(loadingStat);
@@ -83,11 +85,23 @@ const LogsActions = ({
         </Space>
       </Skeleton>
 
-      <CompactModeToggle
-        compactMode={compactMode}
-        setCompactMode={setCompactMode}
-        t={t}
-      />
+      <div className='flex items-center gap-2'>
+        {isAdminUser && (
+          <Tag
+            color='green'
+            title={t('当前自然分钟内非管理员用户的总消耗金额')}
+            style={{ fontWeight: 600, padding: 13 }}
+            className='!rounded-lg whitespace-nowrap'
+          >
+            MPM: {renderQuota(minuteIncome || 0)}
+          </Tag>
+        )}
+        <CompactModeToggle
+          compactMode={compactMode}
+          setCompactMode={setCompactMode}
+          t={t}
+        />
+      </div>
     </div>
   );
 };

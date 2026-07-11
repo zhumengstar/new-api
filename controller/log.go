@@ -208,6 +208,20 @@ func GetLogsStat(c *gin.Context) {
 	return
 }
 
+func GetCurrentMinuteIncome(c *gin.Context) {
+	scopedUserIDs, scoped, err := model.GetScopedUserIDs(c.GetInt("id"), c.GetInt("role"))
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	quota, err := model.SumCurrentMinuteIncome(scopedUserIDs, scoped)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, gin.H{"quota": quota})
+}
+
 func GetLogsSelfStat(c *gin.Context) {
 	username := c.GetString("username")
 	logType, _ := strconv.Atoi(c.Query("type"))

@@ -228,3 +228,17 @@ func TestGetUserConsumptionStatsExcludesAdminsFromTotal(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(125000), stats.TotalQuota)
 }
+
+func TestSumCurrentMinuteIncomeExcludesAdminsAndOldLogs(t *testing.T) {
+	truncateTables(t)
+	insertUserForManagementVisibilityTest(t, &User{Id: 501, Username: "minute_common", Role: common.RoleCommonUser, Status: common.UserStatusEnabled})
+	insertUserForManagementVisibilityTest(t, &User{Id: 502, Username: "minute_admin", Role: common.RoleAdminUser, Status: common.UserStatusEnabled})
+	now := time.Now().Unix()
+	require.NoError(t, LOG_DB.Create(&Log{UserId: 501, Type: LogTypeConsume, Quota: 125000, CreatedAt: now}).Error)
+	require.NoError(t, LOG_DB.Create(&Log{UserId: 502, Type: LogTypeConsume, Quota: 990000, CreatedAt: now}).Error)
+	require.NoError(t, LOG_DB.Create(&Log{UserId: 501, Type: LogTypeConsume, Quota: 250000, CreatedAt: now - 61}).Error)
+
+	quota, err := SumCurrentMinuteIncome(nil, false)
+	require.NoError(t, err)
+	assert.Equal(t, int64(125000), quota)
+}
