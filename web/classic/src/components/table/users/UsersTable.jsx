@@ -142,6 +142,7 @@ const UsersTable = (usersData) => {
       showResetPasskeyModal: showResetPasskeyUserModal,
       showResetTwoFAModal: showResetTwoFAUserModal,
       showUserSubscriptionsModal: showUserSubscriptionsUserModal,
+      manageUser,
       showWeChatContact: isRoot(),
       refresh,
     });
@@ -156,6 +157,7 @@ const UsersTable = (usersData) => {
     showResetPasskeyUserModal,
     showResetTwoFAUserModal,
     showUserSubscriptionsUserModal,
+    manageUser,
     isRoot(),
     refresh,
   ]);

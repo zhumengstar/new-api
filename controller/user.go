@@ -339,7 +339,7 @@ func canViewUserInScope(c *gin.Context, user *model.User) bool {
 		return true
 	}
 	if myRole >= common.RoleAdminUser {
-		return user.InviterId == c.GetInt("id")
+		return !user.IsHidden
 	}
 	return false
 }
@@ -1128,6 +1128,16 @@ func ManageUser(c *gin.Context) {
 		}
 	case "enable":
 		user.Status = common.UserStatusEnabled
+	case "hide", "unhide":
+		if myRole != common.RoleRootUser {
+			common.ApiErrorI18n(c, i18n.MsgUserNoPermissionHigherLevel)
+			return
+		}
+		user.IsHidden = req.Action == "hide"
+		if err := model.DB.Model(&model.User{}).Where("id = ?", user.Id).Update("is_hidden", user.IsHidden).Error; err != nil {
+			common.ApiError(c, err)
+			return
+		}
 	case "delete":
 		if user.Role == common.RoleRootUser {
 			common.ApiErrorI18n(c, i18n.MsgUserCannotDeleteRootUser)
@@ -1245,8 +1255,9 @@ func ManageUser(c *gin.Context) {
 		"id":       user.Id,
 	})
 	clearUser := model.User{
-		Role:   user.Role,
-		Status: user.Status,
+		Role:     user.Role,
+		Status:   user.Status,
+		IsHidden: user.IsHidden,
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,

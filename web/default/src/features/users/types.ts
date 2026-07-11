@@ -16,19 +16,19 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { z } from 'zod'
+import { z } from "zod";
 
 // ============================================================================
 // User Schema & Types
 // ============================================================================
 
 /** User status: 1 = enabled, 2 = disabled, 3+ = other states */
-export const userStatusSchema = z.number()
-export type UserStatus = z.infer<typeof userStatusSchema>
+export const userStatusSchema = z.number();
+export type UserStatus = z.infer<typeof userStatusSchema>;
 
 /** User role: 1 = common user, 10 = admin, 100 = root */
-export const userRoleSchema = z.number()
-export type UserRole = z.infer<typeof userRoleSchema>
+export const userRoleSchema = z.number();
+export type UserRole = z.infer<typeof userRoleSchema>;
 
 export const userSchema = z.object({
   id: z.number(),
@@ -58,10 +58,11 @@ export const userSchema = z.object({
   DeletedAt: z.any().nullable().optional(),
   remark: z.string().optional(),
   wechat_contact: z.string().optional(),
-})
-export type User = z.infer<typeof userSchema>
+  is_hidden: z.boolean().optional(),
+});
+export type User = z.infer<typeof userSchema>;
 
-export const userListSchema = z.array(userSchema)
+export const userListSchema = z.array(userSchema);
 
 // ============================================================================
 // API Request/Response Types
@@ -69,70 +70,72 @@ export const userListSchema = z.array(userSchema)
 
 /** Generic API response */
 export interface ApiResponse<T = unknown> {
-  success: boolean
-  message?: string
-  data?: T
+  success: boolean;
+  message?: string;
+  data?: T;
 }
 
 export interface GetUsersParams {
-  p?: number
-  page_size?: number
-  sort_by?: string
-  sort_order?: string
+  p?: number;
+  page_size?: number;
+  sort_by?: string;
+  sort_order?: string;
 }
 
 export interface GetUsersResponse {
-  success: boolean
-  message?: string
+  success: boolean;
+  message?: string;
   data?: {
-    items: User[]
-    total: number
-    page: number
-    page_size: number
-  }
+    items: User[];
+    total: number;
+    page: number;
+    page_size: number;
+  };
 }
 
 export interface SearchUsersParams {
-  keyword?: string
-  group?: string
-  role?: string
-  status?: string
-  p?: number
-  page_size?: number
-  sort_by?: string
-  sort_order?: string
+  keyword?: string;
+  group?: string;
+  role?: string;
+  status?: string;
+  p?: number;
+  page_size?: number;
+  sort_by?: string;
+  sort_order?: string;
 }
 
 export interface UserFormData {
-  username: string
-  display_name: string
-  password?: string
-  role?: number // Only used when creating user
-  quota?: number // Only used when updating user
-  group?: string // Only used when updating user
-  remark?: string // Only used when updating user
-  wechat_contact?: string // Only available to super admins when updating user
+  username: string;
+  display_name: string;
+  password?: string;
+  role?: number; // Only used when creating user
+  quota?: number; // Only used when updating user
+  group?: string; // Only used when updating user
+  remark?: string; // Only used when updating user
+  wechat_contact?: string; // Only available to super admins when updating user
 }
 
 export type ManageUserAction =
-  | 'promote'
-  | 'demote'
-  | 'enable'
-  | 'disable'
-  | 'delete'
-  | 'add_quota'
+  | "promote"
+  | "demote"
+  | "enable"
+  | "disable"
+  | "hide"
+  | "unhide"
+  | "delete"
+  | "add_quota";
 
-export type QuotaAdjustMode = 'add' | 'subtract' | 'override'
+export type QuotaAdjustMode = "add" | "subtract" | "override";
 
 export interface ManageUserQuotaPayload {
-  id: number
-  action: 'add_quota'
-  mode: QuotaAdjustMode
-  value: number
+  id: number;
+  action: "add_quota";
+  mode: QuotaAdjustMode;
+  value: number;
 }
 
 // ============================================================================
 // Dialog Types
 // ============================================================================
 
-export type UsersDialogType = 'create' | 'update' | 'delete'
+export type UsersDialogType = "create" | "update" | "delete";

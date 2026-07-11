@@ -199,9 +199,16 @@ const renderStatistics = (text, record, showEnableDisableModal, t) => {
   }
 
   const content = (
-    <Tag color={tagColor} shape='circle' size='small'>
-      {tagText}
-    </Tag>
+    <Space spacing={4}>
+      <Tag color={tagColor} shape='circle' size='small'>
+        {tagText}
+      </Tag>
+      {record.is_hidden && (
+        <Tag color='grey' shape='circle' size='small'>
+          {t('已隐藏')}
+        </Tag>
+      )}
+    </Space>
   );
 
   const tooltipContent = (
@@ -295,6 +302,8 @@ const renderOperations = (
     showResetPasskeyModal,
     showResetTwoFAModal,
     showUserSubscriptionsModal,
+    manageUser,
+    showHiddenUserAction,
     t,
   },
 ) => {
@@ -350,6 +359,17 @@ const renderOperations = (
           {t('启用')}
         </Button>
       )}
+      {showHiddenUserAction && (
+        <Button
+          type='tertiary'
+          size='small'
+          onClick={() =>
+            manageUser(record.id, record.is_hidden ? 'unhide' : 'hide', record)
+          }
+        >
+          {record.is_hidden ? t('显示') : t('隐藏')}
+        </Button>
+      )}
       <Button
         type='tertiary'
         size='small'
@@ -395,6 +415,7 @@ export const getUsersColumns = ({
   showResetPasskeyModal,
   showResetTwoFAModal,
   showUserSubscriptionsModal,
+  manageUser,
   showWeChatContact,
   refresh,
 }) => {
@@ -475,6 +496,8 @@ export const getUsersColumns = ({
           showResetPasskeyModal,
           showResetTwoFAModal,
           showUserSubscriptionsModal,
+          manageUser,
+          showHiddenUserAction: showWeChatContact,
           t,
         }),
     },

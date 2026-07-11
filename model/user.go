@@ -54,6 +54,7 @@ type User struct {
 	Setting          string         `json:"setting" gorm:"type:text;column:setting"`
 	Remark           string         `json:"remark,omitempty" gorm:"type:varchar(255)" validate:"max=255"`
 	WeChatContact    string         `json:"wechat_contact,omitempty" gorm:"type:varchar(64);column:wechat_contact" validate:"max=64"`
+	IsHidden         bool           `json:"is_hidden" gorm:"not null;default:false;column:is_hidden"`
 	StripeCustomer   string         `json:"stripe_customer" gorm:"type:varchar(64);column:stripe_customer;index"`
 	CreatedAt        int64          `json:"created_at" gorm:"autoCreateTime;column:created_at"`
 	LastLoginAt      int64          `json:"last_login_at" gorm:"default:0;column:last_login_at"`
@@ -228,24 +229,12 @@ func GetUserOrder(sortBy string, sortOrder string) string {
 	}
 }
 
-const userManagementInactiveHiddenDays = 5
-
-func applyUserManagementDefaultVisibility(tx *gorm.DB) *gorm.DB {
-	cutoff := common.GetTimestamp() - int64(userManagementInactiveHiddenDays*24*60*60)
-	return tx.Where(
-		"deleted_at IS NOT NULL OR role >= ? OR last_login_at >= ? OR (COALESCE(last_login_at, 0) = 0 AND created_at >= ?)",
-		common.RoleAdminUser,
-		cutoff,
-		cutoff,
-	)
-}
-
 func applyUserManagementScope(tx *gorm.DB, viewerId int, viewerRole int) *gorm.DB {
 	if viewerRole >= common.RoleRootUser {
 		return tx
 	}
 	if viewerRole >= common.RoleAdminUser {
-		return tx.Where("id = ? OR inviter_id = ?", viewerId, viewerId)
+		return tx.Where("is_hidden = ?", false)
 	}
 	return tx.Where("id = ?", viewerId)
 }
@@ -281,7 +270,7 @@ func GetAllUsers(pageInfo *common.PageInfo, sortBy string, sortOrder string, vie
 		}
 	}()
 
-	query := applyUserManagementScope(applyUserManagementDefaultVisibility(tx.Unscoped().Model(&User{})), viewerId, viewerRole)
+	query := applyUserManagementScope(tx.Unscoped().Model(&User{}), viewerId, viewerRole)
 
 	// Get total count within transaction
 	err = query.Count(&total).Error

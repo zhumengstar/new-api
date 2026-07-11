@@ -16,10 +16,10 @@ func insertUserForManagementVisibilityTest(t *testing.T, user *User) {
 	require.NoError(t, DB.Create(user).Error)
 }
 
-func TestGetAllUsersHidesInactiveCommonUsersOnly(t *testing.T) {
+func TestGetAllUsersShowsInactiveCommonUsers(t *testing.T) {
 	truncateTables(t)
 	now := common.GetTimestamp()
-	cutoffOlder := now - int64((userManagementInactiveHiddenDays+1)*24*60*60)
+	cutoffOlder := now - int64(6*24*60*60)
 	recent := now - int64(24*60*60)
 
 	insertUserForManagementVisibilityTest(t, &User{
@@ -59,17 +59,17 @@ func TestGetAllUsersHidesInactiveCommonUsersOnly(t *testing.T) {
 	users, total, err := GetAllUsers(pageInfo, "", "", 1, common.RoleRootUser)
 
 	require.NoError(t, err)
-	assert.Equal(t, int64(2), total)
+	assert.Equal(t, int64(4), total)
 	names := make([]string, 0, len(users))
 	for _, user := range users {
 		names = append(names, user.Username)
 	}
-	assert.ElementsMatch(t, []string{"recent_user", "inactive_admin"}, names)
+	assert.ElementsMatch(t, []string{"recent_user", "inactive_user", "never_login_old", "inactive_admin"}, names)
 }
 
 func TestSearchUsersCanFindInactiveCommonUsers(t *testing.T) {
 	truncateTables(t)
-	old := common.GetTimestamp() - int64((userManagementInactiveHiddenDays+1)*24*60*60)
+	old := common.GetTimestamp() - int64(6*24*60*60)
 	insertUserForManagementVisibilityTest(t, &User{
 		Id:          10,
 		Username:    "inactive_search_target",
@@ -87,7 +87,7 @@ func TestSearchUsersCanFindInactiveCommonUsers(t *testing.T) {
 	assert.Equal(t, "inactive_search_target", users[0].Username)
 }
 
-func TestAdminUserManagementShowsSelfAndInvitedUsers(t *testing.T) {
+func TestAdminUserManagementShowsAllNonHiddenUsers(t *testing.T) {
 	truncateTables(t)
 	now := common.GetTimestamp()
 
@@ -97,6 +97,16 @@ func TestAdminUserManagementShowsSelfAndInvitedUsers(t *testing.T) {
 		Role:        common.RoleAdminUser,
 		Status:      common.UserStatusEnabled,
 		Quota:       900,
+		CreatedAt:   now,
+		LastLoginAt: now,
+	})
+	insertUserForManagementVisibilityTest(t, &User{
+		Id:          23,
+		Username:    "hidden_user",
+		Role:        common.RoleCommonUser,
+		Status:      common.UserStatusEnabled,
+		InviterId:   99,
+		IsHidden:    true,
 		CreatedAt:   now,
 		LastLoginAt: now,
 	})
@@ -123,7 +133,7 @@ func TestAdminUserManagementShowsSelfAndInvitedUsers(t *testing.T) {
 	users, total, err := GetAllUsers(pageInfo, "", "", 20, common.RoleAdminUser)
 
 	require.NoError(t, err)
-	assert.Equal(t, int64(2), total)
+	assert.Equal(t, int64(3), total)
 	names := make([]string, 0, len(users))
 	adminQuota := 0
 	for _, user := range users {
@@ -132,13 +142,19 @@ func TestAdminUserManagementShowsSelfAndInvitedUsers(t *testing.T) {
 			adminQuota = user.Quota
 		}
 	}
-	assert.ElementsMatch(t, []string{"admin_owner", "invited_by_admin"}, names)
+	assert.ElementsMatch(t, []string{"admin_owner", "invited_by_admin", "not_invited_by_admin"}, names)
 	assert.Equal(t, 900, adminQuota)
 
 	searchUsers, searchTotal, err := SearchUsers("not_invited_by_admin", "", nil, nil, 0, 20, "", "", 20, common.RoleAdminUser)
 	require.NoError(t, err)
-	assert.Equal(t, int64(0), searchTotal)
-	assert.Empty(t, searchUsers)
+	assert.Equal(t, int64(1), searchTotal)
+	require.Len(t, searchUsers, 1)
+	assert.Equal(t, "not_invited_by_admin", searchUsers[0].Username)
+
+	hiddenUsers, hiddenTotal, err := SearchUsers("hidden_user", "", nil, nil, 0, 20, "", "", 20, common.RoleAdminUser)
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), hiddenTotal)
+	assert.Empty(t, hiddenUsers)
 
 	selfSearchUsers, selfSearchTotal, err := SearchUsers("admin_owner", "", nil, nil, 0, 20, "", "", 20, common.RoleAdminUser)
 	require.NoError(t, err)
