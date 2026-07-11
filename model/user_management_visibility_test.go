@@ -169,6 +169,10 @@ func TestGetUserOrderSupportsQuota(t *testing.T) {
 	assert.Equal(t, "quota desc, id desc", GetUserOrder("quota", "desc"))
 }
 
+func TestGetUserOrderSupportsTotalConsumedQuota(t *testing.T) {
+	assert.Equal(t, DefaultUserOrder, GetUserOrder("total_consumed_quota", "asc"))
+}
+
 func TestGetRecentDailyIncomeStatsExcludesAdmins(t *testing.T) {
 	truncateTables(t)
 	now := time.Now()
@@ -196,4 +200,30 @@ func TestGetAllUsersIncludesTotalConsumedQuota(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, users, 1)
 	assert.Equal(t, int64(375000), users[0].TotalConsumedQuota)
+}
+
+func TestGetAllUsersSortsByTotalConsumedQuota(t *testing.T) {
+	truncateTables(t)
+	insertUserForManagementVisibilityTest(t, &User{Id: 301, Username: "lower_consumed", Role: common.RoleCommonUser, Status: common.UserStatusEnabled})
+	insertUserForManagementVisibilityTest(t, &User{Id: 302, Username: "higher_consumed", Role: common.RoleCommonUser, Status: common.UserStatusEnabled})
+	require.NoError(t, LOG_DB.Create(&Log{UserId: 301, Type: LogTypeConsume, Quota: 125000}).Error)
+	require.NoError(t, LOG_DB.Create(&Log{UserId: 302, Type: LogTypeConsume, Quota: 250000}).Error)
+
+	users, _, err := GetAllUsers(&common.PageInfo{Page: 1, PageSize: 20}, "total_consumed_quota", "desc", 1, common.RoleRootUser)
+	require.NoError(t, err)
+	require.Len(t, users, 2)
+	assert.Equal(t, "higher_consumed", users[0].Username)
+	assert.Equal(t, "lower_consumed", users[1].Username)
+}
+
+func TestGetUserConsumptionStatsExcludesAdminsFromTotal(t *testing.T) {
+	truncateTables(t)
+	insertUserForManagementVisibilityTest(t, &User{Id: 401, Username: "total_common", Role: common.RoleCommonUser, Status: common.UserStatusEnabled})
+	insertUserForManagementVisibilityTest(t, &User{Id: 402, Username: "total_admin", Role: common.RoleAdminUser, Status: common.UserStatusEnabled})
+	require.NoError(t, LOG_DB.Create(&Log{UserId: 401, Type: LogTypeConsume, Quota: 125000}).Error)
+	require.NoError(t, LOG_DB.Create(&Log{UserId: 402, Type: LogTypeConsume, Quota: 990000}).Error)
+
+	stats, err := GetUserConsumptionStats(7)
+	require.NoError(t, err)
+	assert.Equal(t, int64(125000), stats.TotalQuota)
 }

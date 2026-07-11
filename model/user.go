@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -227,6 +228,9 @@ func GetUserOrder(sortBy string, sortOrder string) string {
 		return "last_login_at " + order + ", id desc"
 	case "quota":
 		return "quota " + order + ", id desc"
+	case "total_consumed_quota":
+		// This value is aggregated from LOG_DB and is sorted separately.
+		return DefaultUserOrder
 	default:
 		return DefaultUserOrder
 	}
@@ -283,7 +287,11 @@ func GetAllUsers(pageInfo *common.PageInfo, sortBy string, sortOrder string, vie
 	}
 
 	// Get paginated users within same transaction
-	err = query.Order(GetUserOrder(sortBy, sortOrder)).Limit(pageInfo.GetPageSize()).Offset(pageInfo.GetStartIdx()).Omit("password").Find(&users).Error
+	if sortBy == "total_consumed_quota" {
+		users, err = getUsersSortedByTotalConsumedQuota(query, pageInfo.GetStartIdx(), pageInfo.GetPageSize(), sortOrder)
+	} else {
+		err = query.Order(GetUserOrder(sortBy, sortOrder)).Limit(pageInfo.GetPageSize()).Offset(pageInfo.GetStartIdx()).Omit("password").Find(&users).Error
+	}
 	if err != nil {
 		tx.Rollback()
 		return nil, 0, err
@@ -357,7 +365,11 @@ func SearchUsers(keyword string, group string, role *int, status *int, startIdx 
 	}
 
 	// 获取分页数据
-	err = query.Omit("password").Order(GetUserOrder(sortBy, sortOrder)).Limit(num).Offset(startIdx).Find(&users).Error
+	if sortBy == "total_consumed_quota" {
+		users, err = getUsersSortedByTotalConsumedQuota(query, startIdx, num, sortOrder)
+	} else {
+		err = query.Omit("password").Order(GetUserOrder(sortBy, sortOrder)).Limit(num).Offset(startIdx).Find(&users).Error
+	}
 	if err != nil {
 		tx.Rollback()
 		return nil, 0, err
@@ -389,6 +401,72 @@ func applyUserTotalConsumedQuota(users []*User) {
 		}
 	}
 
+	quotaByUserID, err := getUserConsumedQuotaTotals(userIDs)
+	if err != nil {
+		common.SysError("failed to load user total consumed quota: " + err.Error())
+		return
+	}
+
+	for _, user := range users {
+		if user != nil {
+			user.TotalConsumedQuota = quotaByUserID[user.Id]
+		}
+	}
+}
+
+func getUsersSortedByTotalConsumedQuota(query *gorm.DB, startIdx int, num int, sortOrder string) ([]*User, error) {
+	var userIDs []int
+	if err := query.Select("id").Find(&userIDs).Error; err != nil {
+		return nil, err
+	}
+	if len(userIDs) == 0 || startIdx >= len(userIDs) || num <= 0 {
+		return []*User{}, nil
+	}
+
+	quotaByUserID, err := getUserConsumedQuotaTotals(userIDs)
+	if err != nil {
+		return nil, err
+	}
+	ascending := strings.EqualFold(sortOrder, "asc")
+	sort.Slice(userIDs, func(i, j int) bool {
+		left, right := quotaByUserID[userIDs[i]], quotaByUserID[userIDs[j]]
+		if left == right {
+			return userIDs[i] > userIDs[j]
+		}
+		if ascending {
+			return left < right
+		}
+		return left > right
+	})
+
+	endIdx := startIdx + num
+	if endIdx > len(userIDs) {
+		endIdx = len(userIDs)
+	}
+	pageUserIDs := userIDs[startIdx:endIdx]
+	var fetchedUsers []*User
+	if err := query.Omit("password").Where("id IN ?", pageUserIDs).Find(&fetchedUsers).Error; err != nil {
+		return nil, err
+	}
+	usersByID := make(map[int]*User, len(fetchedUsers))
+	for _, user := range fetchedUsers {
+		user.TotalConsumedQuota = quotaByUserID[user.Id]
+		usersByID[user.Id] = user
+	}
+	users := make([]*User, 0, len(pageUserIDs))
+	for _, userID := range pageUserIDs {
+		if user, ok := usersByID[userID]; ok {
+			users = append(users, user)
+		}
+	}
+	return users, nil
+}
+
+func getUserConsumedQuotaTotals(userIDs []int) (map[int]int64, error) {
+	quotaByUserID := make(map[int]int64)
+	if len(userIDs) == 0 {
+		return quotaByUserID, nil
+	}
 	type consumedQuotaTotal struct {
 		UserID int   `gorm:"column:user_id"`
 		Quota  int64 `gorm:"column:quota"`
@@ -399,19 +477,12 @@ func applyUserTotalConsumedQuota(users []*User) {
 		Where("type = ? AND user_id IN ?", LogTypeConsume, userIDs).
 		Group("user_id").
 		Scan(&totals).Error; err != nil {
-		common.SysError("failed to load user total consumed quota: " + err.Error())
-		return
+		return nil, err
 	}
-
-	quotaByUserID := make(map[int]int64, len(totals))
 	for _, total := range totals {
 		quotaByUserID[total.UserID] = total.Quota
 	}
-	for _, user := range users {
-		if user != nil {
-			user.TotalConsumedQuota = quotaByUserID[user.Id]
-		}
-	}
+	return quotaByUserID, nil
 }
 
 func GetUserById(id int, selectAll bool) (*User, error) {

@@ -449,6 +449,7 @@ export const getUsersColumns = ({
     {
       title: t('总消耗金额'),
       dataIndex: 'total_consumed_quota',
+	  sorter: true,
       render: (text) => (
         <Tag color='white' shape='circle'>
           {renderQuota(text || 0)}

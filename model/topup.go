@@ -30,10 +30,24 @@ type DailyIncomeStat struct {
 	Quota int64  `json:"quota"`
 }
 
+type UserConsumptionStats struct {
+	Daily      []DailyIncomeStat `json:"daily"`
+	TotalQuota int64             `json:"total_quota"`
+}
+
 // GetRecentDailyIncomeStats returns consumed quota for non-admin users.
 func GetRecentDailyIncomeStats(days int) ([]DailyIncomeStat, error) {
+	stats, err := GetUserConsumptionStats(days)
+	if err != nil {
+		return nil, err
+	}
+	return stats.Daily, nil
+}
+
+// GetUserConsumptionStats returns recent and all-time consumed quota for non-admin users.
+func GetUserConsumptionStats(days int) (*UserConsumptionStats, error) {
 	if days <= 0 {
-		return []DailyIncomeStat{}, nil
+		return &UserConsumptionStats{Daily: []DailyIncomeStat{}}, nil
 	}
 
 	location := time.FixedZone("Asia/Shanghai", 8*60*60)
@@ -55,15 +69,16 @@ func GetRecentDailyIncomeStats(days int) ([]DailyIncomeStat, error) {
 		Pluck("id", &userIDs).Error; err != nil {
 		return nil, err
 	}
-
 	var rows []DailyIncomeStat
-	err := LOG_DB.Table("logs").
-		Select(dateExpr+" AS date, COALESCE(SUM(logs.quota), 0) AS quota").
-		Where("logs.type = ? AND logs.created_at >= ? AND logs.user_id IN ?", LogTypeConsume, start.Unix(), userIDs).
-		Group(dateExpr).
-		Scan(&rows).Error
-	if err != nil {
-		return nil, err
+	if len(userIDs) > 0 {
+		err := LOG_DB.Table("logs").
+			Select(dateExpr+" AS date, COALESCE(SUM(logs.quota), 0) AS quota").
+			Where("logs.type = ? AND logs.created_at >= ? AND logs.user_id IN ?", LogTypeConsume, start.Unix(), userIDs).
+			Group(dateExpr).
+			Scan(&rows).Error
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	quotas := make(map[string]int64, days)
@@ -76,7 +91,16 @@ func GetRecentDailyIncomeStats(days int) ([]DailyIncomeStat, error) {
 		date := day.Format("2006-01-02")
 		stats = append(stats, DailyIncomeStat{Date: date, Quota: quotas[date]})
 	}
-	return stats, nil
+	var totalQuota int64
+	if len(userIDs) > 0 {
+		if err := LOG_DB.Model(&Log{}).
+			Select("COALESCE(SUM(quota), 0)").
+			Where("type = ? AND user_id IN ?", LogTypeConsume, userIDs).
+			Scan(&totalQuota).Error; err != nil {
+			return nil, err
+		}
+	}
+	return &UserConsumptionStats{Daily: stats, TotalQuota: totalQuota}, nil
 }
 
 const (

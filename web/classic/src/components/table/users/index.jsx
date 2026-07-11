@@ -58,6 +58,7 @@ const UsersPage = () => {
     compactMode,
     setCompactMode,
     incomeStats,
+    totalConsumedQuota,
 
     // Translation
     t,
@@ -85,6 +86,7 @@ const UsersPage = () => {
             compactMode={compactMode}
             setCompactMode={setCompactMode}
             incomeStats={incomeStats}
+            totalConsumedQuota={totalConsumedQuota}
             t={t}
           />
         }

@@ -38,6 +38,7 @@ export const useUsersData = () => {
   const [sortBy, setSortBy] = useState('');
   const [sortOrder, setSortOrder] = useState('');
   const [incomeStats, setIncomeStats] = useState([]);
+  const [totalConsumedQuota, setTotalConsumedQuota] = useState(0);
 
   // Modal states
   const [showAddUser, setShowAddUser] = useState(false);
@@ -241,7 +242,7 @@ export const useUsersData = () => {
   const handleSortChange = (changeInfo) => {
     const activeSorter = changeInfo?.sorter;
     const field = activeSorter?.field || activeSorter?.dataIndex;
-    if (field !== 'quota') return;
+    if (field !== 'quota' && field !== 'total_consumed_quota') return;
 
     const nextSortOrder =
       activeSorter?.sortOrder === 'ascend'
@@ -249,7 +250,7 @@ export const useUsersData = () => {
         : activeSorter?.sortOrder === 'descend'
           ? 'desc'
           : '';
-    const nextSortBy = nextSortOrder ? 'quota' : '';
+    const nextSortBy = nextSortOrder ? field : '';
     setSortBy(nextSortBy);
     setSortOrder(nextSortOrder);
     const { searchKeyword, searchGroup } = getFormValues();
@@ -271,10 +272,13 @@ export const useUsersData = () => {
     try {
       const res = await API.get('/api/user/income_stats');
       if (res.data.success) {
-        setIncomeStats(res.data.data || []);
+		const data = res.data.data || {};
+		setIncomeStats(Array.isArray(data) ? data : data.daily || []);
+		setTotalConsumedQuota(Array.isArray(data) ? 0 : data.total_quota || 0);
       }
     } catch {
       setIncomeStats([]);
+		setTotalConsumedQuota(0);
     }
   };
 
@@ -353,6 +357,7 @@ export const useUsersData = () => {
     searching,
     groupOptions,
     incomeStats,
+    totalConsumedQuota,
 
     // Modal state
     showAddUser,

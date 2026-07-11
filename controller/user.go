@@ -318,7 +318,7 @@ func SearchUsers(c *gin.Context) {
 }
 
 func GetRecentDailyIncomeStats(c *gin.Context) {
-	stats, err := model.GetRecentDailyIncomeStats(7)
+	stats, err := model.GetUserConsumptionStats(7)
 	if err != nil {
 		common.ApiError(c, err)
 		return
