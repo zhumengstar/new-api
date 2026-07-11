@@ -2,6 +2,7 @@ package model
 
 import (
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/stretchr/testify/assert"
@@ -166,4 +167,20 @@ func TestAdminUserManagementShowsAllNonHiddenUsers(t *testing.T) {
 func TestGetUserOrderSupportsQuota(t *testing.T) {
 	assert.Equal(t, "quota asc, id desc", GetUserOrder("quota", "asc"))
 	assert.Equal(t, "quota desc, id desc", GetUserOrder("quota", "desc"))
+}
+
+func TestGetRecentDailyIncomeStatsExcludesAdmins(t *testing.T) {
+	truncateTables(t)
+	now := time.Now()
+	insertUserForManagementVisibilityTest(t, &User{Id: 101, Username: "income_user", Role: common.RoleCommonUser, Status: common.UserStatusEnabled})
+	insertUserForManagementVisibilityTest(t, &User{Id: 102, Username: "income_admin", Role: common.RoleAdminUser, Status: common.UserStatusEnabled})
+	require.NoError(t, LOG_DB.Create(&Log{UserId: 101, Type: LogTypeConsume, Quota: 125000, CreatedAt: now.Unix()}).Error)
+	require.NoError(t, LOG_DB.Create(&Log{UserId: 102, Type: LogTypeConsume, Quota: 990000, CreatedAt: now.Unix()}).Error)
+	require.NoError(t, LOG_DB.Create(&Log{UserId: 101, Type: LogTypeTopup, Quota: 880000, CreatedAt: now.Unix()}).Error)
+
+	stats, err := GetRecentDailyIncomeStats(7)
+	require.NoError(t, err)
+	require.Len(t, stats, 7)
+	assert.Equal(t, now.In(time.FixedZone("Asia/Shanghai", 8*60*60)).Format("2006-01-02"), stats[6].Date)
+	assert.Equal(t, int64(125000), stats[6].Quota)
 }

@@ -57,6 +57,7 @@ const UsersPage = () => {
     // Description state
     compactMode,
     setCompactMode,
+    incomeStats,
 
     // Translation
     t,
@@ -83,6 +84,7 @@ const UsersPage = () => {
           <UsersDescription
             compactMode={compactMode}
             setCompactMode={setCompactMode}
+            incomeStats={incomeStats}
             t={t}
           />
         }

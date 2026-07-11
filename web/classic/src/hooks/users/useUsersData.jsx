@@ -37,6 +37,7 @@ export const useUsersData = () => {
   const [userCount, setUserCount] = useState(0);
   const [sortBy, setSortBy] = useState('');
   const [sortOrder, setSortOrder] = useState('');
+  const [incomeStats, setIncomeStats] = useState([]);
 
   // Modal states
   const [showAddUser, setShowAddUser] = useState(false);
@@ -237,8 +238,8 @@ export const useUsersData = () => {
       });
   };
 
-  const handleSortChange = (_pagination, _filters, sorter) => {
-    const activeSorter = Array.isArray(sorter) ? sorter[0] : sorter;
+  const handleSortChange = (changeInfo) => {
+    const activeSorter = changeInfo?.sorter;
     const field = activeSorter?.field || activeSorter?.dataIndex;
     if (field !== 'quota') return;
 
@@ -266,6 +267,17 @@ export const useUsersData = () => {
     }
   };
 
+  const loadIncomeStats = async () => {
+    try {
+      const res = await API.get('/api/user/income_stats');
+      if (res.data.success) {
+        setIncomeStats(res.data.data || []);
+      }
+    } catch {
+      setIncomeStats([]);
+    }
+  };
+
   // Handle table row styling for disabled/deleted users
   const handleRow = (record, index) => {
     if (record.DeletedAt !== null || record.status !== 1) {
@@ -287,6 +299,7 @@ export const useUsersData = () => {
     } else {
       await searchUsers(page, pageSize, searchKeyword, searchGroup);
     }
+    await loadIncomeStats();
   };
 
   // Fetch groups data
@@ -327,6 +340,7 @@ export const useUsersData = () => {
         showError(reason);
       });
     fetchGroups().then();
+    loadIncomeStats().then();
   }, []);
 
   return {
@@ -338,6 +352,7 @@ export const useUsersData = () => {
     userCount,
     searching,
     groupOptions,
+    incomeStats,
 
     // Modal state
     showAddUser,

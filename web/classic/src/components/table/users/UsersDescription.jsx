@@ -21,15 +21,28 @@ import React from 'react';
 import { Typography } from '@douyinfe/semi-ui';
 import { IconUserAdd } from '@douyinfe/semi-icons';
 import CompactModeToggle from '../../common/ui/CompactModeToggle';
+import { renderQuota } from '../../../helpers';
 
 const { Text } = Typography;
 
-const UsersDescription = ({ compactMode, setCompactMode, t }) => {
+const UsersDescription = ({ compactMode, setCompactMode, incomeStats, t }) => {
   return (
     <div className='flex flex-col md:flex-row justify-between items-start md:items-center gap-2 w-full'>
-      <div className='flex items-center text-blue-500'>
-        <IconUserAdd className='mr-2' />
-        <Text>{t('用户管理')}</Text>
+      <div className='flex flex-col gap-1'>
+        <div className='flex items-center text-blue-500'>
+          <IconUserAdd className='mr-2' />
+          <Text>{t('用户管理')}</Text>
+        </div>
+        <div className='flex flex-wrap items-center gap-x-3 gap-y-1'>
+          <Text type='tertiary' size='small'>
+            {t('近7天消耗额度（非管理员）')}
+          </Text>
+          {incomeStats.map((item) => (
+            <Text key={item.date} type='tertiary' size='small'>
+              {item.date.slice(5)} {renderQuota(item.quota || 0)}
+            </Text>
+          ))}
+        </div>
       </div>
       <CompactModeToggle
         compactMode={compactMode}

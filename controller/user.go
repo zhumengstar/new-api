@@ -317,6 +317,15 @@ func SearchUsers(c *gin.Context) {
 	return
 }
 
+func GetRecentDailyIncomeStats(c *gin.Context) {
+	stats, err := model.GetRecentDailyIncomeStats(7)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, stats)
+}
+
 func canManageTargetRole(myRole int, targetRole int) bool {
 	return myRole == common.RoleRootUser || myRole > targetRole
 }

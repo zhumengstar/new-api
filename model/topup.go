@@ -3,6 +3,7 @@ package model
 import (
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
@@ -22,6 +23,60 @@ type TopUp struct {
 	CreateTime      int64   `json:"create_time"`
 	CompleteTime    int64   `json:"complete_time"`
 	Status          string  `json:"status"`
+}
+
+type DailyIncomeStat struct {
+	Date  string `json:"date"`
+	Quota int64  `json:"quota"`
+}
+
+// GetRecentDailyIncomeStats returns consumed quota for non-admin users.
+func GetRecentDailyIncomeStats(days int) ([]DailyIncomeStat, error) {
+	if days <= 0 {
+		return []DailyIncomeStat{}, nil
+	}
+
+	location := time.FixedZone("Asia/Shanghai", 8*60*60)
+	now := time.Now().In(location)
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	start := today.AddDate(0, 0, 1-days)
+
+	dateExpr := "DATE_FORMAT(FROM_UNIXTIME(logs.created_at), '%Y-%m-%d')"
+	switch {
+	case common.UsingLogDatabase(common.DatabaseTypePostgreSQL):
+		dateExpr = "TO_CHAR(TO_TIMESTAMP(logs.created_at) AT TIME ZONE 'Asia/Shanghai', 'YYYY-MM-DD')"
+	case common.UsingLogDatabase(common.DatabaseTypeSQLite):
+		dateExpr = "strftime('%Y-%m-%d', logs.created_at, 'unixepoch', '+8 hours')"
+	}
+
+	var userIDs []int
+	if err := DB.Unscoped().Model(&User{}).
+		Where("role < ?", common.RoleAdminUser).
+		Pluck("id", &userIDs).Error; err != nil {
+		return nil, err
+	}
+
+	var rows []DailyIncomeStat
+	err := LOG_DB.Table("logs").
+		Select(dateExpr+" AS date, COALESCE(SUM(logs.quota), 0) AS quota").
+		Where("logs.type = ? AND logs.created_at >= ? AND logs.user_id IN ?", LogTypeConsume, start.Unix(), userIDs).
+		Group(dateExpr).
+		Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+
+	quotas := make(map[string]int64, days)
+	for _, row := range rows {
+		quotas[row.Date] = row.Quota
+	}
+
+	stats := make([]DailyIncomeStat, 0, days)
+	for day := start; day.Before(today.AddDate(0, 0, 1)); day = day.AddDate(0, 0, 1) {
+		date := day.Format("2006-01-02")
+		stats = append(stats, DailyIncomeStat{Date: date, Quota: quotas[date]})
+	}
+	return stats, nil
 }
 
 const (
