@@ -32,6 +32,7 @@ type DailyIncomeStat struct {
 
 type UserConsumptionStats struct {
 	Daily      []DailyIncomeStat `json:"daily"`
+	TodayQuota int64             `json:"today_quota"`
 	TotalQuota int64             `json:"total_quota"`
 }
 
@@ -100,7 +101,11 @@ func GetUserConsumptionStats(days int) (*UserConsumptionStats, error) {
 			return nil, err
 		}
 	}
-	return &UserConsumptionStats{Daily: stats, TotalQuota: totalQuota}, nil
+	return &UserConsumptionStats{
+		Daily:      stats,
+		TodayQuota: quotas[today.Format("2006-01-02")],
+		TotalQuota: totalQuota,
+	}, nil
 }
 
 const (

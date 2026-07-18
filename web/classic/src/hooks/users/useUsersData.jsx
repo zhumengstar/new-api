@@ -20,8 +20,18 @@ For commercial licensing, please contact support@quantumnous.com
 import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { API, showError, showSuccess } from '../../helpers';
-import { ITEMS_PER_PAGE } from '../../constants';
 import { useTableCompactMode } from '../common/useTableCompactMode';
+
+const DEFAULT_USERS_PAGE_SIZE = 100;
+const USERS_PAGE_SIZE_STORAGE_KEY = 'users-page-size';
+
+const getInitialUsersPageSize = () => {
+  const storedValue = Number.parseInt(
+    localStorage.getItem(USERS_PAGE_SIZE_STORAGE_KEY),
+    10,
+  );
+  return storedValue > 0 ? storedValue : DEFAULT_USERS_PAGE_SIZE;
+};
 
 export const useUsersData = () => {
   const { t } = useTranslation();
@@ -31,14 +41,16 @@ export const useUsersData = () => {
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [activePage, setActivePage] = useState(1);
-  const [pageSize, setPageSize] = useState(ITEMS_PER_PAGE);
+  const [pageSize, setPageSize] = useState(getInitialUsersPageSize);
   const [searching, setSearching] = useState(false);
   const [groupOptions, setGroupOptions] = useState([]);
   const [userCount, setUserCount] = useState(0);
   const [sortBy, setSortBy] = useState('');
   const [sortOrder, setSortOrder] = useState('');
   const [incomeStats, setIncomeStats] = useState([]);
+  const [todayConsumedQuota, setTodayConsumedQuota] = useState(0);
   const [totalConsumedQuota, setTotalConsumedQuota] = useState(0);
+  const [groupRatios, setGroupRatios] = useState({});
 
   // Modal states
   const [showAddUser, setShowAddUser] = useState(false);
@@ -229,10 +241,10 @@ export const useUsersData = () => {
 
   // Handle page size change
   const handlePageSizeChange = async (size) => {
-    localStorage.setItem('page-size', size + '');
+    localStorage.setItem(USERS_PAGE_SIZE_STORAGE_KEY, String(size));
     setPageSize(size);
     setActivePage(1);
-    loadUsers(activePage, size)
+    loadUsers(1, size)
       .then()
       .catch((reason) => {
         showError(reason);
@@ -272,13 +284,15 @@ export const useUsersData = () => {
     try {
       const res = await API.get('/api/user/income_stats');
       if (res.data.success) {
-		const data = res.data.data || {};
-		setIncomeStats(Array.isArray(data) ? data : data.daily || []);
-		setTotalConsumedQuota(Array.isArray(data) ? 0 : data.total_quota || 0);
+        const data = res.data.data || {};
+        setIncomeStats(Array.isArray(data) ? data : data.daily || []);
+        setTodayConsumedQuota(Array.isArray(data) ? 0 : data.today_quota || 0);
+        setTotalConsumedQuota(Array.isArray(data) ? 0 : data.total_quota || 0);
       }
     } catch {
       setIncomeStats([]);
-		setTotalConsumedQuota(0);
+      setTodayConsumedQuota(0);
+      setTotalConsumedQuota(0);
     }
   };
 
@@ -309,15 +323,23 @@ export const useUsersData = () => {
   // Fetch groups data
   const fetchGroups = async () => {
     try {
-      let res = await API.get(`/api/group/`);
+      const res = await API.get(`/api/group/detail`);
       if (res === undefined) {
         return;
       }
+      const payload = res.data.data;
+      const groups = Array.isArray(payload) ? payload : payload?.groups || [];
+      const meta = Array.isArray(payload) ? {} : payload?.meta || {};
       setGroupOptions(
-        res.data.data.map((group) => ({
+        groups.map((group) => ({
           label: group,
           value: group,
         })),
+      );
+      setGroupRatios(
+        Object.fromEntries(
+          groups.map((group) => [group, meta[group]?.ratio ?? 1]),
+        ),
       );
     } catch (error) {
       showError(error.message);
@@ -338,7 +360,7 @@ export const useUsersData = () => {
 
   // Initialize data on component mount
   useEffect(() => {
-    loadUsers(0, pageSize)
+    loadUsers(1, pageSize)
       .then()
       .catch((reason) => {
         showError(reason);
@@ -357,7 +379,9 @@ export const useUsersData = () => {
     searching,
     groupOptions,
     incomeStats,
+    todayConsumedQuota,
     totalConsumedQuota,
+    groupRatios,
 
     // Modal state
     showAddUser,

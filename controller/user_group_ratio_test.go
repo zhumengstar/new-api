@@ -31,3 +31,17 @@ func TestValidateManagedUserGroupRatiosRequiresGreaterThanAdminRatio(t *testing.
 
 	require.NoError(t, validateManagedUserGroupRatios(ctx, map[string]float64{"default": 0.51}))
 }
+
+func TestAttachEffectiveGroupRatiosIncludesPublicOverride(t *testing.T) {
+	users := []*model.User{{
+		Id:      3002,
+		Group:   "default",
+		Setting: `{"user_group_ratios":{"vip":2.25}}`,
+	}}
+
+	attachEffectiveGroupRatios(users)
+
+	require.Equal(t, 2.25, users[0].EffectiveGroupRatios["vip"])
+	_, hasDefault := users[0].EffectiveGroupRatios["default"]
+	require.True(t, hasDefault)
+}

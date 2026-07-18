@@ -49,6 +49,7 @@ const UsersTable = (usersData) => {
     setShowEditUser,
     manageUser,
     handleSortChange,
+    groupRatios,
     refresh,
     resetUserPasskey,
     resetUserTwoFA,
@@ -145,6 +146,7 @@ const UsersTable = (usersData) => {
       showUserSubscriptionsModal: showUserSubscriptionsUserModal,
       manageUser,
       showWeChatContact: isRoot(),
+      groupRatios,
       refresh,
     });
   }, [
@@ -159,6 +161,7 @@ const UsersTable = (usersData) => {
     showResetTwoFAUserModal,
     showUserSubscriptionsUserModal,
     manageUser,
+    groupRatios,
     isRoot(),
     refresh,
   ]);

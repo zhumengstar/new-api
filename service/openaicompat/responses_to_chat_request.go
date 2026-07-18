@@ -21,6 +21,10 @@ type responsesInputItem struct {
 	FileURL   any             `json:"file_url,omitempty"`
 	File      any             `json:"file,omitempty"`
 	InputFile any             `json:"input_file,omitempty"`
+	CallID    string          `json:"call_id,omitempty"`
+	Name      string          `json:"name,omitempty"`
+	Arguments json.RawMessage `json:"arguments,omitempty"`
+	Output    json.RawMessage `json:"output,omitempty"`
 }
 
 func ResponsesRequestToChatCompletionsRequest(req *dto.OpenAIResponsesRequest) (*dto.GeneralOpenAIRequest, error) {
@@ -30,14 +34,8 @@ func ResponsesRequestToChatCompletionsRequest(req *dto.OpenAIResponsesRequest) (
 	if req.Model == "" {
 		return nil, errors.New("model is required")
 	}
-	if lo.FromPtrOr(req.Stream, false) {
-		return nil, errors.New("stream responses fallback is not supported")
-	}
 	if strings.TrimSpace(req.PreviousResponseID) != "" {
 		return nil, errors.New("previous_response_id is not supported in responses fallback")
-	}
-	if len(req.Tools) > 0 || len(req.ToolChoice) > 0 || req.MaxToolCalls != nil {
-		return nil, errors.New("tools are not supported in responses fallback")
 	}
 	if hasRawValue(req.Conversation) || hasRawValue(req.ContextManagement) || hasRawValue(req.Prompt) {
 		return nil, errors.New("conversation, context_management and prompt are not supported in responses fallback")
@@ -66,6 +64,19 @@ func ResponsesRequestToChatCompletionsRequest(req *dto.OpenAIResponsesRequest) (
 	}
 	messages = append(messages, inputMessages...)
 
+	tools, err := responsesToolsToChatTools(req.Tools)
+	if err != nil {
+		return nil, err
+	}
+	toolChoice, err := responsesToolChoiceToChatToolChoice(req.ToolChoice)
+	if err != nil {
+		return nil, err
+	}
+	parallelToolCalls, err := rawMessageBoolPointer(req.ParallelToolCalls)
+	if err != nil {
+		return nil, fmt.Errorf("parallel_tool_calls must be a boolean in responses fallback: %w", err)
+	}
+
 	chatReq := &dto.GeneralOpenAIRequest{
 		Model:                req.Model,
 		Messages:             messages,
@@ -79,6 +90,9 @@ func ResponsesRequestToChatCompletionsRequest(req *dto.OpenAIResponsesRequest) (
 		Metadata:             req.Metadata,
 		SafetyIdentifier:     req.SafetyIdentifier,
 		EnableThinking:       req.EnableThinking,
+		Tools:                tools,
+		ToolChoice:           toolChoice,
+		ParallelTooCalls:     parallelToolCalls,
 	}
 	if len(req.PromptCacheKey) > 0 {
 		chatReq.PromptCacheKey, _ = rawMessageString(req.PromptCacheKey)
@@ -103,6 +117,7 @@ func ChatCompletionsResponseToResponsesResponse(resp *dto.OpenAITextResponse, re
 	text := ""
 	role := "assistant"
 	finishReason := "stop"
+	var toolCalls []dto.ToolCallRequest
 	if len(resp.Choices) > 0 {
 		choice := resp.Choices[0]
 		role = strings.TrimSpace(choice.Message.Role)
@@ -118,6 +133,7 @@ func ChatCompletionsResponseToResponsesResponse(resp *dto.OpenAITextResponse, re
 		if strings.TrimSpace(choice.FinishReason) != "" {
 			finishReason = choice.FinishReason
 		}
+		toolCalls = choice.Message.ParseToolCalls()
 	}
 
 	usage := resp.Usage
@@ -180,6 +196,25 @@ func ChatCompletionsResponseToResponsesResponse(resp *dto.OpenAITextResponse, re
 		reasoning = req.Reasoning
 	}
 
+	outputs := make([]dto.ResponsesOutput, 0, 1+len(toolCalls))
+	if text != "" || len(toolCalls) == 0 {
+		outputs = append(outputs, dto.ResponsesOutput{
+			Type: "message", ID: "msg_" + common.GetRandomString(24), Status: "completed", Role: role,
+			Content: []dto.ResponsesOutputContent{{Type: "output_text", Text: text, Annotations: []interface{}{}}},
+		})
+	}
+	for _, toolCall := range toolCalls {
+		arguments, _ := common.Marshal(toolCall.Function.Arguments)
+		callID := strings.TrimSpace(toolCall.ID)
+		if callID == "" {
+			callID = "call_" + common.GetRandomString(24)
+		}
+		outputs = append(outputs, dto.ResponsesOutput{
+			Type: "function_call", ID: "fc_" + common.GetRandomString(24), Status: "completed",
+			CallId: callID, Name: toolCall.Function.Name, Arguments: arguments,
+		})
+	}
+
 	out := &dto.OpenAIResponsesResponse{
 		ID:                 id,
 		Object:             "response",
@@ -188,37 +223,28 @@ func ChatCompletionsResponseToResponsesResponse(resp *dto.OpenAITextResponse, re
 		Instructions:       instructions,
 		MaxOutputTokens:    maxOutputTokens,
 		Model:              model,
-		ParallelToolCalls:  false,
+		ParallelToolCalls:  req != nil && rawMessageBool(req.ParallelToolCalls),
 		PreviousResponseID: previousResponseID,
 		Reasoning:          reasoning,
 		Store:              store,
 		Temperature:        temperature,
 		ToolChoice:         toolChoice,
-		Tools:              []map[string]any{},
+		Tools:              nil,
 		TopP:               topP,
 		Truncation:         truncation,
 		Usage:              &usage,
 		User:               user,
 		Metadata:           metadata,
-		Output: []dto.ResponsesOutput{
-			{
-				Type:   "message",
-				ID:     "msg_" + common.GetRandomString(24),
-				Status: "completed",
-				Role:   role,
-				Content: []dto.ResponsesOutputContent{
-					{
-						Type:        "output_text",
-						Text:        text,
-						Annotations: []interface{}{},
-					},
-				},
-			},
-		},
+		Output:             outputs,
+	}
+	if req != nil {
+		out.Tools = req.GetToolsMap()
 	}
 	if finishReason == "length" {
 		out.IncompleteDetails = &dto.IncompleteDetails{Reasoning: "max_output_tokens"}
-		out.Output[0].Status = "incomplete"
+		for i := range out.Output {
+			out.Output[i].Status = "incomplete"
+		}
 	}
 	return out, &usage, nil
 }
@@ -246,6 +272,27 @@ func responsesInputToChatMessages(input json.RawMessage) ([]dto.Message, error) 
 	messages := make([]dto.Message, 0, len(items))
 	var directParts []dto.MediaContent
 	for _, item := range items {
+		switch item.Type {
+		case "function_call":
+			if strings.TrimSpace(item.CallID) == "" || strings.TrimSpace(item.Name) == "" {
+				return nil, errors.New("function_call requires call_id and name in responses fallback")
+			}
+			toolCall := []dto.ToolCallRequest{{
+				ID: item.CallID, Type: "function",
+				Function: dto.FunctionRequest{Name: item.Name, Arguments: dto.ResponsesArgumentsString(item.Arguments)},
+			}}
+			toolCallsRaw, _ := common.Marshal(toolCall)
+			messages = append(messages, dto.Message{Role: "assistant", Content: nil, ToolCalls: toolCallsRaw})
+			continue
+		case "function_call_output":
+			if strings.TrimSpace(item.CallID) == "" {
+				return nil, errors.New("function_call_output requires call_id in responses fallback")
+			}
+			messages = append(messages, dto.Message{
+				Role: "tool", Content: responsesToolOutputString(item.Output), ToolCallId: item.CallID,
+			})
+			continue
+		}
 		if item.Type == "input_text" || item.Type == "input_image" || item.Type == "input_file" {
 			part, err := responsesInputPartToChatPart(item)
 			if err != nil {
@@ -275,15 +322,105 @@ func responsesInputToChatMessages(input json.RawMessage) ([]dto.Message, error) 
 			if err != nil {
 				return nil, err
 			}
-			messages = append(messages, dto.Message{Role: role, Content: parts})
+			messages = append(messages, responsesMediaMessage(role, parts))
 		default:
 			return nil, errors.New("message content must be a string or array in responses fallback")
 		}
 	}
 	if len(directParts) > 0 {
-		messages = append([]dto.Message{{Role: "user", Content: directParts}}, messages...)
+		messages = append([]dto.Message{responsesMediaMessage("user", directParts)}, messages...)
 	}
 	return messages, nil
+}
+
+func responsesMediaMessage(role string, parts []dto.MediaContent) dto.Message {
+	if role == "system" || role == "developer" {
+		textParts := make([]string, 0, len(parts))
+		for _, part := range parts {
+			if part.Type != dto.ContentTypeText {
+				break
+			}
+			textParts = append(textParts, part.Text)
+		}
+		if len(textParts) == len(parts) {
+			return dto.Message{Role: role, Content: strings.Join(textParts, "\n")}
+		}
+	}
+	message := dto.Message{Role: role}
+	message.SetMediaContent(parts)
+	return message
+}
+
+func responsesToolsToChatTools(raw json.RawMessage) ([]dto.ToolCallRequest, error) {
+	if !hasRawValue(raw) {
+		return nil, nil
+	}
+	var tools []map[string]any
+	if err := common.Unmarshal(raw, &tools); err != nil {
+		return nil, fmt.Errorf("tools must be an array in responses fallback: %w", err)
+	}
+	out := make([]dto.ToolCallRequest, 0, len(tools))
+	for i, tool := range tools {
+		toolType := strings.TrimSpace(common.Interface2String(tool["type"]))
+		if toolType != "function" {
+			return nil, fmt.Errorf("tool type %q at index %d cannot be represented by chat completions fallback", toolType, i)
+		}
+		name := strings.TrimSpace(common.Interface2String(tool["name"]))
+		if name == "" {
+			return nil, fmt.Errorf("function tool at index %d requires name in responses fallback", i)
+		}
+		out = append(out, dto.ToolCallRequest{
+			Type: "function",
+			Function: dto.FunctionRequest{
+				Name: name, Description: common.Interface2String(tool["description"]), Parameters: tool["parameters"],
+			},
+		})
+	}
+	return out, nil
+}
+
+func responsesToolChoiceToChatToolChoice(raw json.RawMessage) (any, error) {
+	if !hasRawValue(raw) {
+		return nil, nil
+	}
+	if common.GetJsonType(raw) == "string" {
+		return rawMessageString(raw)
+	}
+	var choice map[string]any
+	if err := common.Unmarshal(raw, &choice); err != nil {
+		return nil, fmt.Errorf("invalid tool_choice in responses fallback: %w", err)
+	}
+	toolType := strings.TrimSpace(common.Interface2String(choice["type"]))
+	if toolType != "function" {
+		return nil, fmt.Errorf("tool_choice type %q cannot be represented by chat completions fallback", toolType)
+	}
+	name := strings.TrimSpace(common.Interface2String(choice["name"]))
+	if name == "" {
+		return nil, errors.New("function tool_choice requires name in responses fallback")
+	}
+	return map[string]any{"type": "function", "function": map[string]any{"name": name}}, nil
+}
+
+func rawMessageBoolPointer(raw json.RawMessage) (*bool, error) {
+	if !hasRawValue(raw) {
+		return nil, nil
+	}
+	if common.GetJsonType(raw) != "boolean" {
+		return nil, fmt.Errorf("got %s", common.GetJsonType(raw))
+	}
+	value := rawMessageBool(raw)
+	return &value, nil
+}
+
+func responsesToolOutputString(raw json.RawMessage) string {
+	if len(raw) == 0 || common.GetJsonType(raw) == "null" {
+		return ""
+	}
+	if common.GetJsonType(raw) == "string" {
+		value, _ := rawMessageString(raw)
+		return value
+	}
+	return string(raw)
 }
 
 func responsesContentPartsToChatParts(raw json.RawMessage) ([]dto.MediaContent, error) {
@@ -313,7 +450,7 @@ func responsesInputPartToChatPart(item responsesInputItem) (dto.MediaContent, er
 		}
 		return dto.MediaContent{
 			Type: dto.ContentTypeImageURL,
-			ImageUrl: dto.MessageImageUrl{
+			ImageUrl: &dto.MessageImageUrl{
 				Url:    imageURL,
 				Detail: item.Detail,
 			},
@@ -340,7 +477,7 @@ func rawMessageString(raw json.RawMessage) (string, error) {
 }
 
 func rawMessageBool(raw json.RawMessage) bool {
-	if len(raw) == 0 || common.GetJsonType(raw) != "bool" {
+	if len(raw) == 0 || common.GetJsonType(raw) != "boolean" {
 		return false
 	}
 	var out bool

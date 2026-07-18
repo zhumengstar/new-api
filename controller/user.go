@@ -279,7 +279,8 @@ func GetAllUsers(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	hideWeChatContactsForNonRoot(c.GetInt("role"), users)
+	attachEffectiveGroupRatios(users)
+	hidePrivateContactsForNonRoot(c.GetInt("role"), users)
 
 	pageInfo.SetTotal(int(total))
 	pageInfo.SetItems(users)
@@ -309,7 +310,8 @@ func SearchUsers(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	hideWeChatContactsForNonRoot(c.GetInt("role"), users)
+	attachEffectiveGroupRatios(users)
+	hidePrivateContactsForNonRoot(c.GetInt("role"), users)
 
 	pageInfo.SetTotal(int(total))
 	pageInfo.SetItems(users)
@@ -330,12 +332,25 @@ func canManageTargetRole(myRole int, targetRole int) bool {
 	return myRole == common.RoleRootUser || myRole > targetRole
 }
 
-func hideWeChatContactsForNonRoot(role int, users []*model.User) {
+func hidePrivateContactsForNonRoot(role int, users []*model.User) {
 	if role >= common.RoleRootUser {
 		return
 	}
 	for _, user := range users {
 		user.WeChatContact = ""
+		user.QQContact = ""
+	}
+}
+
+func attachEffectiveGroupRatios(users []*model.User) {
+	for _, user := range users {
+		usableGroups := service.GetUserUsableGroups(user.Group)
+		ratios := make(map[string]float64, len(usableGroups))
+		userSetting := user.GetSetting()
+		for group := range usableGroups {
+			ratios[group] = service.GetUserGroupRatioWithSetting(userSetting, user.Group, group)
+		}
+		user.EffectiveGroupRatios = ratios
 	}
 }
 
@@ -390,6 +405,7 @@ func GetUser(c *gin.Context) {
 	}
 	if c.GetInt("role") < common.RoleRootUser {
 		user.WeChatContact = ""
+		user.QQContact = ""
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
@@ -705,6 +721,7 @@ func UpdateUser(c *gin.Context) {
 	}
 	if myRole < common.RoleRootUser {
 		updatedUser.WeChatContact = originUser.WeChatContact
+		updatedUser.QQContact = originUser.QQContact
 	}
 	if !canManageTargetRole(myRole, updatedUser.Role) {
 		common.ApiErrorI18n(c, i18n.MsgUserCannotCreateHigherLevel)

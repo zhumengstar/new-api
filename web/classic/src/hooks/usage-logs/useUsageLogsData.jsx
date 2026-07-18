@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Modal } from '@douyinfe/semi-ui';
 import {
@@ -40,9 +40,19 @@ import {
   renderTieredModelPrice,
   renderTaskBillingProcess,
 } from '../../helpers';
-import { ITEMS_PER_PAGE } from '../../constants';
 import { useTableCompactMode } from '../common/useTableCompactMode';
 import ParamOverrideEntry from '../../components/table/usage-logs/components/ParamOverrideEntry';
+
+const DEFAULT_LOG_PAGE_SIZE = 100;
+const DEFAULT_AUTO_REFRESH_SECONDS = 10;
+const LOG_PAGE_SIZE_STORAGE_KEY = 'usage-logs-page-size';
+const AUTO_REFRESH_ENABLED_STORAGE_KEY = 'usage-logs-auto-refresh-enabled';
+const AUTO_REFRESH_SECONDS_STORAGE_KEY = 'usage-logs-auto-refresh-seconds';
+
+const getStoredPositiveInteger = (key, fallback) => {
+  const value = Number.parseInt(localStorage.getItem(key), 10);
+  return Number.isInteger(value) && value > 0 ? value : fallback;
+};
 
 const renderGeneratedImages = (images, t, openGeneratedImagePreview) => {
   const validImages = Array.isArray(images)
@@ -140,8 +150,19 @@ export const useLogsData = () => {
   const [loadingStat, setLoadingStat] = useState(false);
   const [activePage, setActivePage] = useState(1);
   const [logCount, setLogCount] = useState(0);
-  const [pageSize, setPageSize] = useState(ITEMS_PER_PAGE);
+  const [pageSize, setPageSize] = useState(DEFAULT_LOG_PAGE_SIZE);
   const [logType, setLogType] = useState(0);
+  const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(
+    () => localStorage.getItem(AUTO_REFRESH_ENABLED_STORAGE_KEY) === 'true',
+  );
+  const [autoRefreshSeconds, setAutoRefreshSeconds] = useState(() =>
+    getStoredPositiveInteger(
+      AUTO_REFRESH_SECONDS_STORAGE_KEY,
+      DEFAULT_AUTO_REFRESH_SECONDS,
+    ),
+  );
+  const autoRefreshInFlightRef = useRef(false);
+  const refreshRef = useRef(null);
   const [isGeneratedImagePreviewOpen, setIsGeneratedImagePreviewOpen] =
     useState(false);
   const [generatedImagePreviewUrl, setGeneratedImagePreviewUrl] = useState('');
@@ -899,10 +920,10 @@ export const useLogsData = () => {
   };
 
   const handlePageSizeChange = async (size) => {
-    localStorage.setItem('page-size', size + '');
+    localStorage.setItem(LOG_PAGE_SIZE_STORAGE_KEY, size + '');
     setPageSize(size);
     setActivePage(1);
-    loadLogs(activePage, size)
+    loadLogs(1, size)
       .then()
       .catch((reason) => {
         showError(reason);
@@ -914,6 +935,16 @@ export const useLogsData = () => {
     setActivePage(1);
     handleEyeClick();
     await loadLogs(1, pageSize);
+  };
+
+  refreshRef.current = refresh;
+
+  const updateAutoRefreshSeconds = (value) => {
+    if (value === null || value === undefined || value === '') {
+      return;
+    }
+    const seconds = Math.min(3600, Math.max(1, Math.round(Number(value))));
+    setAutoRefreshSeconds(seconds);
   };
 
   // Copy text function
@@ -928,8 +959,10 @@ export const useLogsData = () => {
 
   // Initialize data
   useEffect(() => {
-    const localPageSize =
-      parseInt(localStorage.getItem('page-size')) || ITEMS_PER_PAGE;
+    const localPageSize = getStoredPositiveInteger(
+      LOG_PAGE_SIZE_STORAGE_KEY,
+      DEFAULT_LOG_PAGE_SIZE,
+    );
     setPageSize(localPageSize);
     loadLogs(activePage, localPageSize)
       .then()
@@ -937,6 +970,42 @@ export const useLogsData = () => {
         showError(reason);
       });
   }, []);
+
+  useEffect(() => {
+    localStorage.setItem(
+      AUTO_REFRESH_ENABLED_STORAGE_KEY,
+      String(autoRefreshEnabled),
+    );
+    localStorage.setItem(
+      AUTO_REFRESH_SECONDS_STORAGE_KEY,
+      String(autoRefreshSeconds),
+    );
+
+    if (!autoRefreshEnabled) {
+      return undefined;
+    }
+
+    const refreshLogs = async () => {
+      if (
+        document.visibilityState !== 'visible' ||
+        autoRefreshInFlightRef.current
+      ) {
+        return;
+      }
+
+      autoRefreshInFlightRef.current = true;
+      try {
+        await refreshRef.current?.();
+      } catch (reason) {
+        console.error('Failed to auto-refresh usage logs', reason);
+      } finally {
+        autoRefreshInFlightRef.current = false;
+      }
+    };
+
+    const timer = setInterval(refreshLogs, autoRefreshSeconds * 1000);
+    return () => clearInterval(timer);
+  }, [autoRefreshEnabled, autoRefreshSeconds]);
 
   // Initialize statistics when formApi is available
   useEffect(() => {
@@ -986,6 +1055,10 @@ export const useLogsData = () => {
     logCount,
     pageSize,
     logType,
+    autoRefreshEnabled,
+    setAutoRefreshEnabled,
+    autoRefreshSeconds,
+    updateAutoRefreshSeconds,
     stat,
     minuteIncome,
     isAdminUser,

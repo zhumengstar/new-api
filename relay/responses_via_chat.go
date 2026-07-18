@@ -11,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/relay/channel"
+	openaichannel "github.com/QuantumNous/new-api/relay/channel/openai"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/service"
@@ -20,14 +21,14 @@ import (
 )
 
 func shouldFallbackResponsesConvertError(err error, request *dto.OpenAIResponsesRequest) bool {
-	if err == nil || request == nil || lo.FromPtrOr(request.Stream, false) {
+	if err == nil || request == nil {
 		return false
 	}
-	return isResponsesUnsupportedErrorText(err.Error())
+	return shouldFallbackResponsesErrorText(err.Error(), request)
 }
 
 func shouldFallbackResponsesHTTPError(resp *http.Response, request *dto.OpenAIResponsesRequest) bool {
-	if resp == nil || resp.Body == nil || request == nil || lo.FromPtrOr(request.Stream, false) {
+	if resp == nil || resp.Body == nil || request == nil {
 		return false
 	}
 	data, err := io.ReadAll(resp.Body)
@@ -35,7 +36,17 @@ func shouldFallbackResponsesHTTPError(resp *http.Response, request *dto.OpenAIRe
 		return false
 	}
 	resp.Body = io.NopCloser(bytes.NewReader(data))
-	return isResponsesUnsupportedErrorText(string(data))
+	return shouldFallbackResponsesErrorText(string(data), request)
+}
+
+func shouldFallbackResponsesErrorText(text string, request *dto.OpenAIResponsesRequest) bool {
+	if isResponsesUnsupportedErrorText(text) {
+		return true
+	}
+	if request == nil || len(request.Input) == 0 || common.GetJsonType(request.Input) == "null" {
+		return false
+	}
+	return strings.Contains(strings.ToLower(text), "contents is required")
 }
 
 func isResponsesUnsupportedErrorText(text string) bool {
@@ -70,7 +81,7 @@ func responsesViaChatCompletions(c *gin.Context, info *relaycommon.RelayInfo, ad
 	info.RelayMode = relayconstant.RelayModeChatCompletions
 	info.RequestURLPath = "/v1/chat/completions"
 	info.Request = chatReq
-	info.IsStream = false
+	info.IsStream = lo.FromPtrOr(request.Stream, false)
 	info.FinalRequestRelayFormat = types.RelayFormatOpenAI
 
 	convertedRequest, err := adaptor.ConvertOpenAIRequest(c, info, chatReq)
@@ -114,9 +125,22 @@ func responsesViaChatCompletions(c *gin.Context, info *relaycommon.RelayInfo, ad
 	httpResp := resp.(*http.Response)
 	statusCodeMappingStr := c.GetString("status_code_mapping")
 	if httpResp.StatusCode != http.StatusOK {
+		logger.LogInfo(c, fmt.Sprintf("responses fallback upstream rejection: %s", responsesFallbackDiagnostic(request, convertedRequest)))
 		newAPIError := service.RelayErrorHandler(c.Request.Context(), httpResp, false)
 		service.ResetStatusCode(newAPIError, statusCodeMappingStr)
 		return nil, newAPIError
+	}
+	if info.IsStream {
+		openaichannel.InitResponsesFallbackStream(c, request)
+		usage, newAPIError := adaptor.DoResponse(c, httpResp, info)
+		if newAPIError != nil {
+			return nil, newAPIError
+		}
+		usageDto, ok := usage.(*dto.Usage)
+		if !ok || usageDto == nil {
+			return nil, types.NewError(fmt.Errorf("invalid streaming usage type %T", usage), types.ErrorCodeBadResponse, types.ErrOptionWithSkipRetry())
+		}
+		return usageDto, nil
 	}
 	defer service.CloseResponseBodyGracefully(httpResp)
 

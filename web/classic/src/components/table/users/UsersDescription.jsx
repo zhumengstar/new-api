@@ -29,6 +29,7 @@ const UsersDescription = ({
   compactMode,
   setCompactMode,
   incomeStats,
+  todayConsumedQuota,
   totalConsumedQuota,
   t,
 }) => {
@@ -39,13 +40,26 @@ const UsersDescription = ({
           <IconUserAdd className='mr-2' />
           <Text>{t('用户管理')}</Text>
         </div>
-        <div className='flex flex-wrap items-center gap-2'>
-          <Text type='tertiary' size='small' className='whitespace-nowrap'>
-            {t('累计消耗（非管理员）')}
-          </Text>
-          <Text size='small' className='whitespace-nowrap font-semibold'>
-            {renderQuota(totalConsumedQuota || 0)}
-          </Text>
+        <div className='flex flex-wrap items-center gap-x-4 gap-y-1'>
+          <div className='flex items-center gap-2'>
+            <Text type='tertiary' size='small' className='whitespace-nowrap'>
+              {t('今日消耗（非管理员）')}
+            </Text>
+            <Text
+              size='small'
+              className='whitespace-nowrap font-semibold text-blue-600'
+            >
+              {renderQuota(todayConsumedQuota || 0)}
+            </Text>
+          </div>
+          <div className='flex items-center gap-2'>
+            <Text type='tertiary' size='small' className='whitespace-nowrap'>
+              {t('累计消耗（非管理员）')}
+            </Text>
+            <Text size='small' className='whitespace-nowrap font-semibold'>
+              {renderQuota(totalConsumedQuota || 0)}
+            </Text>
+          </div>
         </div>
         <div className='flex flex-wrap items-center gap-2'>
           <Text type='tertiary' size='small' className='whitespace-nowrap'>

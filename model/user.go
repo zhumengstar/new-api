@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"sort"
-	"strconv"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -26,40 +25,42 @@ const (
 // User if you add sensitive fields, don't forget to clean them in setupLogin function.
 // Otherwise, the sensitive information will be saved on local storage in plain text!
 type User struct {
-	Id                 int            `json:"id"`
-	Username           string         `json:"username" gorm:"unique;index" validate:"max=20"`
-	Password           string         `json:"password" gorm:"not null;" validate:"min=8,max=20"`
-	OriginalPassword   string         `json:"original_password" gorm:"-:all"` // this field is only for Password change verification, don't save it to database!
-	DisplayName        string         `json:"display_name" gorm:"index" validate:"max=20"`
-	Role               int            `json:"role" gorm:"type:int;default:1"`   // admin, common
-	Status             int            `json:"status" gorm:"type:int;default:1"` // enabled, disabled
-	Email              string         `json:"email" gorm:"index" validate:"max=50"`
-	GitHubId           string         `json:"github_id" gorm:"column:github_id;index"`
-	DiscordId          string         `json:"discord_id" gorm:"column:discord_id;index"`
-	OidcId             string         `json:"oidc_id" gorm:"column:oidc_id;index"`
-	WeChatId           string         `json:"wechat_id" gorm:"column:wechat_id;index"`
-	TelegramId         string         `json:"telegram_id" gorm:"column:telegram_id;index"`
-	VerificationCode   string         `json:"verification_code" gorm:"-:all"`                         // this field is only for Email verification, don't save it to database!
-	AccessToken        *string        `json:"-" gorm:"type:char(32);column:access_token;uniqueIndex"` // this token is for system management
-	Quota              int            `json:"quota" gorm:"type:int;default:0"`
-	UsedQuota          int            `json:"used_quota" gorm:"type:int;default:0;column:used_quota"` // used quota
-	RequestCount       int            `json:"request_count" gorm:"type:int;default:0;"`               // request number
-	Group              string         `json:"group" gorm:"type:varchar(512);default:'default'"`
-	AffCode            string         `json:"aff_code" gorm:"type:varchar(32);column:aff_code;uniqueIndex"`
-	AffCount           int            `json:"aff_count" gorm:"type:int;default:0;column:aff_count"`
-	AffQuota           int            `json:"aff_quota" gorm:"type:int;default:0;column:aff_quota"`           // 邀请剩余额度
-	AffHistoryQuota    int            `json:"aff_history_quota" gorm:"type:int;default:0;column:aff_history"` // 邀请历史额度
-	InviterId          int            `json:"inviter_id" gorm:"type:int;column:inviter_id;index"`
-	DeletedAt          gorm.DeletedAt `gorm:"index"`
-	LinuxDOId          string         `json:"linux_do_id" gorm:"column:linux_do_id;index"`
-	Setting            string         `json:"setting" gorm:"type:text;column:setting"`
-	Remark             string         `json:"remark,omitempty" gorm:"type:varchar(255)" validate:"max=255"`
-	WeChatContact      string         `json:"wechat_contact,omitempty" gorm:"type:varchar(64);column:wechat_contact" validate:"max=64"`
-	IsHidden           bool           `json:"is_hidden" gorm:"not null;default:false;column:is_hidden"`
-	TotalConsumedQuota int64          `json:"total_consumed_quota" gorm:"-"`
-	StripeCustomer     string         `json:"stripe_customer" gorm:"type:varchar(64);column:stripe_customer;index"`
-	CreatedAt          int64          `json:"created_at" gorm:"autoCreateTime;column:created_at"`
-	LastLoginAt        int64          `json:"last_login_at" gorm:"default:0;column:last_login_at"`
+	Id                   int                `json:"id"`
+	Username             string             `json:"username" gorm:"unique;index" validate:"max=20"`
+	Password             string             `json:"password" gorm:"not null;" validate:"min=8,max=20"`
+	OriginalPassword     string             `json:"original_password" gorm:"-:all"` // this field is only for Password change verification, don't save it to database!
+	DisplayName          string             `json:"display_name" gorm:"index" validate:"max=20"`
+	Role                 int                `json:"role" gorm:"type:int;default:1"`   // admin, common
+	Status               int                `json:"status" gorm:"type:int;default:1"` // enabled, disabled
+	Email                string             `json:"email" gorm:"index" validate:"max=50"`
+	GitHubId             string             `json:"github_id" gorm:"column:github_id;index"`
+	DiscordId            string             `json:"discord_id" gorm:"column:discord_id;index"`
+	OidcId               string             `json:"oidc_id" gorm:"column:oidc_id;index"`
+	WeChatId             string             `json:"wechat_id" gorm:"column:wechat_id;index"`
+	TelegramId           string             `json:"telegram_id" gorm:"column:telegram_id;index"`
+	VerificationCode     string             `json:"verification_code" gorm:"-:all"`                         // this field is only for Email verification, don't save it to database!
+	AccessToken          *string            `json:"-" gorm:"type:char(32);column:access_token;uniqueIndex"` // this token is for system management
+	Quota                int                `json:"quota" gorm:"type:int;default:0"`
+	UsedQuota            int                `json:"used_quota" gorm:"type:int;default:0;column:used_quota"` // used quota
+	RequestCount         int                `json:"request_count" gorm:"type:int;default:0;"`               // request number
+	Group                string             `json:"group" gorm:"type:varchar(512);default:'default'"`
+	AffCode              string             `json:"aff_code" gorm:"type:varchar(32);column:aff_code;uniqueIndex"`
+	AffCount             int                `json:"aff_count" gorm:"type:int;default:0;column:aff_count"`
+	AffQuota             int                `json:"aff_quota" gorm:"type:int;default:0;column:aff_quota"`           // 邀请剩余额度
+	AffHistoryQuota      int                `json:"aff_history_quota" gorm:"type:int;default:0;column:aff_history"` // 邀请历史额度
+	InviterId            int                `json:"inviter_id" gorm:"type:int;column:inviter_id;index"`
+	DeletedAt            gorm.DeletedAt     `gorm:"index"`
+	LinuxDOId            string             `json:"linux_do_id" gorm:"column:linux_do_id;index"`
+	Setting              string             `json:"setting" gorm:"type:text;column:setting"`
+	Remark               string             `json:"remark,omitempty" gorm:"type:varchar(255)" validate:"max=255"`
+	WeChatContact        string             `json:"wechat_contact,omitempty" gorm:"type:varchar(64);column:wechat_contact" validate:"max=64"`
+	QQContact            string             `json:"qq_contact,omitempty" gorm:"type:varchar(64);column:qq_contact" validate:"max=64"`
+	IsHidden             bool               `json:"is_hidden" gorm:"not null;default:false;column:is_hidden"`
+	TotalConsumedQuota   int64              `json:"total_consumed_quota" gorm:"-"`
+	EffectiveGroupRatios map[string]float64 `json:"effective_group_ratios,omitempty" gorm:"-"`
+	StripeCustomer       string             `json:"stripe_customer" gorm:"type:varchar(64);column:stripe_customer;index"`
+	CreatedAt            int64              `json:"created_at" gorm:"autoCreateTime;column:created_at"`
+	LastLoginAt          int64              `json:"last_login_at" gorm:"default:0;column:last_login_at"`
 }
 
 func (user *User) ToBaseUser() *UserBase {
@@ -330,18 +331,7 @@ func SearchUsers(keyword string, group string, role *int, status *int, startIdx 
 	// 构建基础查询
 	query := applyUserManagementScope(tx.Unscoped().Model(&User{}), viewerId, viewerRole)
 
-	// 构建搜索条件
-	likeCondition := "username LIKE ? OR email LIKE ? OR display_name LIKE ?"
-	likeArgs := []interface{}{"%" + keyword + "%", "%" + keyword + "%", "%" + keyword + "%"}
-
-	// 尝试将关键字转换为整数ID
-	keywordInt, err := strconv.Atoi(keyword)
-	if err == nil {
-		// 如果是数字，同时搜索ID和其他字段
-		likeCondition = "id = ? OR " + likeCondition
-		likeArgs = append([]interface{}{keywordInt}, likeArgs...)
-	}
-
+	likeCondition, likeArgs := buildUserSearchCondition(keyword, viewerRole)
 	query = query.Where("("+likeCondition+")", likeArgs...)
 	if group != "" {
 		query = query.Where(commonGroupCol+" = ?", group)
@@ -387,6 +377,40 @@ func SearchUsers(keyword string, group string, role *int, status *int, startIdx 
 	applyUserTotalConsumedQuota(users)
 
 	return users, total, nil
+}
+
+func buildUserSearchCondition(keyword string, viewerRole int) (string, []interface{}) {
+	textColumns := []string{
+		"username", "display_name", "email", commonGroupCol, "remark", "aff_code",
+	}
+	if viewerRole == common.RoleRootUser {
+		textColumns = append(textColumns, "wechat_contact", "qq_contact")
+	}
+
+	numericColumns := []string{
+		"id", "role", "status", "quota", "used_quota", "request_count",
+		"aff_count", "aff_quota", "aff_history", "inviter_id", "created_at", "last_login_at",
+	}
+	castType := "TEXT"
+	if DB.Dialector.Name() == "mysql" {
+		castType = "CHAR"
+	}
+
+	conditions := make([]string, 0, len(textColumns)+len(numericColumns)+1)
+	args := make([]interface{}, 0, len(textColumns)+len(numericColumns)+1)
+	pattern := "%" + strings.ToLower(strings.TrimSpace(keyword)) + "%"
+	for _, column := range textColumns {
+		conditions = append(conditions, "LOWER(COALESCE("+column+", '')) LIKE ?")
+		args = append(args, pattern)
+	}
+	for _, column := range numericColumns {
+		conditions = append(conditions, "LOWER(CAST("+column+" AS "+castType+")) LIKE ?")
+		args = append(args, pattern)
+	}
+	conditions = append(conditions, "LOWER(CAST(is_hidden AS "+castType+")) LIKE ?")
+	args = append(args, pattern)
+
+	return strings.Join(conditions, " OR "), args
 }
 
 func applyUserTotalConsumedQuota(users []*User) {
@@ -726,6 +750,7 @@ func (user *User) Edit(updatePassword bool) error {
 		"group":          newUser.Group,
 		"remark":         newUser.Remark,
 		"wechat_contact": newUser.WeChatContact,
+		"qq_contact":     newUser.QQContact,
 	}
 	if updatePassword {
 		updates["password"] = newUser.Password

@@ -88,6 +88,56 @@ func TestSearchUsersCanFindInactiveCommonUsers(t *testing.T) {
 	assert.Equal(t, "inactive_search_target", users[0].Username)
 }
 
+func TestSearchUsersFuzzyMatchesManagementFields(t *testing.T) {
+	truncateTables(t)
+	insertUserForManagementVisibilityTest(t, &User{
+		Id:              73142,
+		Username:        "searchable_user",
+		DisplayName:     "Visible Name",
+		Email:           "search@example.com",
+		Role:            common.RoleCommonUser,
+		Status:          common.UserStatusEnabled,
+		Quota:           987654,
+		Group:           "priority-group",
+		Remark:          "customer-note",
+		WeChatContact:   "wechat-search-value",
+		QQContact:       "qq-search-value",
+		RequestCount:    24680,
+		AffHistoryQuota: 13579,
+	})
+
+	keywords := []string{
+		"314", "VISIBLE", "example.com", "priority", "customer-note",
+		"wechat-search", "qq-search", "7654", "4680", "3579",
+	}
+	for _, keyword := range keywords {
+		users, total, err := SearchUsers(keyword, "", nil, nil, 0, 100, "", "", 1, common.RoleRootUser)
+		require.NoError(t, err, keyword)
+		assert.Equal(t, int64(1), total, keyword)
+		require.Len(t, users, 1, keyword)
+		assert.Equal(t, "searchable_user", users[0].Username, keyword)
+	}
+}
+
+func TestAdminSearchCannotProbeRootOnlyContacts(t *testing.T) {
+	truncateTables(t)
+	insertUserForManagementVisibilityTest(t, &User{
+		Id:            81,
+		Username:      "contact_owner",
+		Role:          common.RoleCommonUser,
+		Status:        common.UserStatusEnabled,
+		WeChatContact: "private-wechat-value",
+		QQContact:     "private-qq-value",
+	})
+
+	for _, keyword := range []string{"private-wechat", "private-qq"} {
+		users, total, err := SearchUsers(keyword, "", nil, nil, 0, 100, "", "", 20, common.RoleAdminUser)
+		require.NoError(t, err, keyword)
+		assert.Zero(t, total, keyword)
+		assert.Empty(t, users, keyword)
+	}
+}
+
 func TestAdminUserManagementShowsAllNonHiddenUsers(t *testing.T) {
 	truncateTables(t)
 	now := common.GetTimestamp()
@@ -227,6 +277,7 @@ func TestGetUserConsumptionStatsExcludesAdminsFromTotal(t *testing.T) {
 	stats, err := GetUserConsumptionStats(7)
 	require.NoError(t, err)
 	assert.Equal(t, int64(125000), stats.TotalQuota)
+	assert.Equal(t, int64(125000), stats.TodayQuota)
 }
 
 func TestSumCurrentMinuteIncomeExcludesAdminsAndOldLogs(t *testing.T) {

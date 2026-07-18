@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React from 'react';
-import { Button, Form } from '@douyinfe/semi-ui';
+import { Button, Form, InputNumber, Switch } from '@douyinfe/semi-ui';
 import { IconSearch } from '@douyinfe/semi-icons';
 
 import { DATE_RANGE_PRESETS } from '../../../constants/console.constants';
@@ -32,6 +32,10 @@ const LogsFilters = ({
   setLogType,
   loading,
   isAdminUser,
+  autoRefreshEnabled,
+  setAutoRefreshEnabled,
+  autoRefreshSeconds,
+  updateAutoRefreshSeconds,
   t,
 }) => {
   return (
@@ -127,29 +131,55 @@ const LogsFilters = ({
         {/* 操作按钮区域 */}
         <div className='flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3'>
           {/* 日志类型选择器 */}
-          <div className='w-full sm:w-auto'>
-            <Form.Select
-              field='logType'
-              placeholder={t('日志类型')}
-              className='w-full sm:w-auto min-w-[120px]'
-              showClear
-              pure
-              onChange={() => {
-                // 延迟执行搜索，让表单值先更新
-                setTimeout(() => {
-                  refresh();
-                }, 0);
-              }}
-              size='small'
-            >
-              <Form.Select.Option value='0'>{t('全部')}</Form.Select.Option>
-              <Form.Select.Option value='1'>{t('充值')}</Form.Select.Option>
-              <Form.Select.Option value='2'>{t('消费')}</Form.Select.Option>
-              <Form.Select.Option value='3'>{t('管理')}</Form.Select.Option>
-              <Form.Select.Option value='4'>{t('系统')}</Form.Select.Option>
-              <Form.Select.Option value='5'>{t('错误')}</Form.Select.Option>
-              <Form.Select.Option value='6'>{t('退款')}</Form.Select.Option>
-            </Form.Select>
+          <div className='flex flex-wrap items-center gap-3 w-full sm:w-auto'>
+            <div className='w-full sm:w-auto'>
+              <Form.Select
+                field='logType'
+                placeholder={t('日志类型')}
+                className='w-full sm:w-auto min-w-[120px]'
+                showClear
+                pure
+                onChange={() => {
+                  // 延迟执行搜索，让表单值先更新
+                  setTimeout(() => {
+                    refresh();
+                  }, 0);
+                }}
+                size='small'
+              >
+                <Form.Select.Option value='0'>{t('全部')}</Form.Select.Option>
+                <Form.Select.Option value='1'>{t('充值')}</Form.Select.Option>
+                <Form.Select.Option value='2'>{t('消费')}</Form.Select.Option>
+                <Form.Select.Option value='3'>{t('管理')}</Form.Select.Option>
+                <Form.Select.Option value='4'>{t('系统')}</Form.Select.Option>
+                <Form.Select.Option value='5'>{t('错误')}</Form.Select.Option>
+                <Form.Select.Option value='6'>{t('退款')}</Form.Select.Option>
+              </Form.Select>
+            </div>
+
+            <div className='flex items-center gap-2 whitespace-nowrap'>
+              <Switch
+                size='small'
+                checked={autoRefreshEnabled}
+                onChange={setAutoRefreshEnabled}
+                aria-label={t('自动刷新')}
+              />
+              <span className='text-xs text-semi-color-text-1'>
+                {t('自动刷新')}
+              </span>
+              <InputNumber
+                size='small'
+                min={1}
+                max={3600}
+                step={1}
+                value={autoRefreshSeconds}
+                onChange={updateAutoRefreshSeconds}
+                disabled={!autoRefreshEnabled}
+                style={{ width: 82 }}
+                aria-label={t('刷新间隔')}
+              />
+              <span className='text-xs text-semi-color-text-2'>{t('秒')}</span>
+            </div>
           </div>
 
           <div className='flex gap-2 w-full sm:w-auto justify-end'>

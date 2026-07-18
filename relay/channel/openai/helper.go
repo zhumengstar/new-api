@@ -24,6 +24,8 @@ func HandleStreamFormat(c *gin.Context, info *relaycommon.RelayInfo, data string
 	switch info.RelayFormat {
 	case types.RelayFormatOpenAI:
 		return sendStreamData(c, info, data, forceFormat, thinkToContent)
+	case types.RelayFormatOpenAIResponses:
+		return handleResponsesFallbackStream(c, info, data)
 	case types.RelayFormatClaude:
 		return handleClaudeFormat(c, data, info)
 	case types.RelayFormatGemini:
@@ -155,6 +157,9 @@ func HandleFinalResponse(c *gin.Context, info *relaycommon.RelayInfo, lastStream
 			helper.ObjectData(c, response)
 		}
 		helper.Done(c)
+
+	case types.RelayFormatOpenAIResponses:
+		finalizeResponsesFallbackStream(c, info, responseId, createAt, model, usage)
 
 	case types.RelayFormatClaude:
 		var streamResponse dto.ChatCompletionsStreamResponse

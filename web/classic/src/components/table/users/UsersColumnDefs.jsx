@@ -103,8 +103,16 @@ const renderUsername = (text, record) => {
   );
 };
 
-const EditableWeChatContact = ({ record, t, refresh }) => {
-  const originalValue = record.wechat_contact || '';
+const EditableContact = ({
+  record,
+  field,
+  label,
+  successMessage,
+  errorMessage,
+  t,
+  refresh,
+}) => {
+  const originalValue = record[field] || '';
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState(originalValue);
   const [saving, setSaving] = useState(false);
@@ -128,17 +136,17 @@ const EditableWeChatContact = ({ record, t, refresh }) => {
     try {
       const res = await API.put('/api/user/', {
         ...record,
-        wechat_contact: nextValue,
+        [field]: nextValue,
       });
       if (res.data.success) {
-        showSuccess(t('微信号已更新'));
+        showSuccess(t(successMessage));
         setEditing(false);
         refresh();
       } else {
         showError(res.data.message);
       }
     } catch (error) {
-      showError(t('微信号更新失败'));
+      showError(t(errorMessage));
     } finally {
       savingRef.current = false;
       setSaving(false);
@@ -151,6 +159,7 @@ const EditableWeChatContact = ({ record, t, refresh }) => {
         autoFocus
         value={value}
         maxLength={64}
+        aria-label={t(label)}
         disabled={saving}
         onChange={setValue}
         onBlur={() => void save()}
@@ -175,6 +184,39 @@ const EditableWeChatContact = ({ record, t, refresh }) => {
     >
       {originalValue || '-'}
     </span>
+  );
+};
+
+const formatGroupRatio = (ratio) => {
+  const numericRatio = Number(ratio);
+  return Number.isFinite(numericRatio) ? numericRatio.toString() : '1';
+};
+
+const renderGroupsWithRatios = (value, effectiveRatios, groupRatios) => {
+  const effectiveGroups = Object.keys(effectiveRatios || {});
+  const groups = (
+    effectiveGroups.length > 0
+      ? effectiveGroups
+      : (value || 'default')
+          .split(',')
+          .map((group) => group.trim())
+          .filter(Boolean)
+  ).sort();
+
+  return (
+    <Space wrap spacing={4}>
+      {groups.map((group) => (
+        <span key={group} className='inline-flex items-center gap-1'>
+          {renderGroup(group)}
+          <Typography.Text type='tertiary' size='small'>
+            ×{' '}
+            {formatGroupRatio(
+              effectiveRatios?.[group] ?? groupRatios[group] ?? 1,
+            )}
+          </Typography.Text>
+        </span>
+      ))}
+    </Space>
   );
 };
 
@@ -417,6 +459,7 @@ export const getUsersColumns = ({
   showUserSubscriptionsModal,
   manageUser,
   showWeChatContact,
+  groupRatios,
   refresh,
 }) => {
   return [
@@ -435,7 +478,30 @@ export const getUsersColumns = ({
             title: t('微信号'),
             dataIndex: 'wechat_contact',
             render: (text, record) => (
-              <EditableWeChatContact record={record} t={t} refresh={refresh} />
+              <EditableContact
+                record={record}
+                field='wechat_contact'
+                label='微信号'
+                successMessage='微信号已更新'
+                errorMessage='微信号更新失败'
+                t={t}
+                refresh={refresh}
+              />
+            ),
+          },
+          {
+            title: t('QQ号'),
+            dataIndex: 'qq_contact',
+            render: (text, record) => (
+              <EditableContact
+                record={record}
+                field='qq_contact'
+                label='QQ号'
+                successMessage='QQ号已更新'
+                errorMessage='QQ号更新失败'
+                t={t}
+                refresh={refresh}
+              />
             ),
           },
         ]
@@ -449,7 +515,7 @@ export const getUsersColumns = ({
     {
       title: t('总消耗金额'),
       dataIndex: 'total_consumed_quota',
-	  sorter: true,
+      sorter: true,
       render: (text) => (
         <Tag color='white' shape='circle'>
           {renderQuota(text || 0)}
@@ -466,9 +532,12 @@ export const getUsersColumns = ({
     {
       title: t('分组'),
       dataIndex: 'group',
-      render: (text, record, index) => {
-        return <div>{renderGroup(text)}</div>;
-      },
+      render: (text, record) =>
+        renderGroupsWithRatios(
+          text,
+          record.effective_group_ratios,
+          groupRatios,
+        ),
     },
     {
       title: t('角色'),

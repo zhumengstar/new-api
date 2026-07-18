@@ -11,7 +11,9 @@ import (
 	_ "image/png"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
+	"unicode"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -326,7 +328,7 @@ func loadFromBase64(base64String string, providedMimeType string) (*types.Cached
 	}
 
 	// 处理 data: 前缀
-	if strings.HasPrefix(base64String, "data:") {
+	if strings.HasPrefix(strings.ToLower(base64String), "data:") {
 		idx := strings.Index(base64String, ",")
 		if idx != -1 {
 			header := base64String[:idx]
@@ -350,12 +352,16 @@ func loadFromBase64(base64String string, providedMimeType string) (*types.Cached
 		mimeType = providedMimeType
 	}
 
-	cleanBase64 = normalizeBase64Payload(cleanBase64)
+	cleanBase64, err := normalizeBase64Payload(cleanBase64)
+	if err != nil {
+		return nil, fmt.Errorf("failed to normalize base64 data: %w", err)
+	}
 
-	decodedData, err := base64.StdEncoding.DecodeString(cleanBase64)
+	decodedData, err := decodeBase64Payload(cleanBase64)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decode base64 data: %w", err)
 	}
+	cleanBase64 = base64.StdEncoding.EncodeToString(decodedData)
 
 	base64Size := int64(len(cleanBase64))
 	var cachedData *types.CachedFileData
@@ -390,15 +396,43 @@ func loadFromBase64(base64String string, providedMimeType string) (*types.Cached
 	return cachedData, nil
 }
 
-func normalizeBase64Payload(payload string) string {
-	return strings.Map(func(r rune) rune {
-		switch r {
-		case ' ', '\n', '\r', '\t':
-			return -1
-		default:
-			return r
+func normalizeBase64Payload(payload string) (string, error) {
+	payload = strings.TrimSpace(payload)
+	if strings.Contains(payload, "%") {
+		unescaped, err := url.PathUnescape(payload)
+		if err != nil {
+			return "", err
 		}
-	}, strings.TrimSpace(payload))
+		payload = unescaped
+	}
+
+	return strings.Map(func(r rune) rune {
+		if unicode.IsSpace(r) {
+			return -1
+		}
+		return r
+	}, payload), nil
+}
+
+func decodeBase64Payload(payload string) ([]byte, error) {
+	encodings := []*base64.Encoding{
+		base64.StdEncoding,
+		base64.RawStdEncoding,
+		base64.URLEncoding,
+		base64.RawURLEncoding,
+	}
+
+	var firstErr error
+	for _, encoding := range encodings {
+		decoded, err := encoding.DecodeString(payload)
+		if err == nil {
+			return decoded, nil
+		}
+		if firstErr == nil {
+			firstErr = err
+		}
+	}
+	return nil, firstErr
 }
 
 // GetImageConfig 获取图片配置
