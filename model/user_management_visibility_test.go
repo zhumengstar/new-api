@@ -221,6 +221,7 @@ func TestGetUserOrderSupportsQuota(t *testing.T) {
 
 func TestGetUserOrderSupportsTotalConsumedQuota(t *testing.T) {
 	assert.Equal(t, DefaultUserOrder, GetUserOrder("total_consumed_quota", "asc"))
+	assert.Equal(t, DefaultUserOrder, GetUserOrder("today_consumed_quota", "desc"))
 }
 
 func TestGetRecentDailyIncomeStatsExcludesAdmins(t *testing.T) {
@@ -265,6 +266,28 @@ func TestGetAllUsersSortsByTotalConsumedQuota(t *testing.T) {
 	assert.Equal(t, "higher_consumed", users[0].Username)
 	assert.Equal(t, common.UserStatusEnabled, users[0].Status)
 	assert.Equal(t, "lower_consumed", users[1].Username)
+}
+
+func TestGetAllUsersIncludesAndSortsByTodayConsumedQuota(t *testing.T) {
+	truncateTables(t)
+	now := time.Now().Unix()
+	yesterday := shanghaiTodayStartUnix() - 1
+	insertUserForManagementVisibilityTest(t, &User{Id: 311, Username: "higher_historical", Role: common.RoleCommonUser, Status: common.UserStatusEnabled})
+	insertUserForManagementVisibilityTest(t, &User{Id: 312, Username: "higher_today", Role: common.RoleCommonUser, Status: common.UserStatusEnabled})
+	require.NoError(t, LOG_DB.Create(&Log{UserId: 311, Type: LogTypeConsume, Quota: 900000, CreatedAt: yesterday}).Error)
+	require.NoError(t, LOG_DB.Create(&Log{UserId: 311, Type: LogTypeConsume, Quota: 125000, CreatedAt: now}).Error)
+	require.NoError(t, LOG_DB.Create(&Log{UserId: 312, Type: LogTypeConsume, Quota: 250000, CreatedAt: now}).Error)
+	require.NoError(t, LOG_DB.Create(&Log{UserId: 312, Type: LogTypeTopup, Quota: 990000, CreatedAt: now}).Error)
+
+	users, _, err := GetAllUsers(&common.PageInfo{Page: 1, PageSize: 20}, "today_consumed_quota", "desc", 1, common.RoleRootUser)
+	require.NoError(t, err)
+	require.Len(t, users, 2)
+	assert.Equal(t, "higher_today", users[0].Username)
+	assert.Equal(t, int64(250000), users[0].TodayConsumedQuota)
+	assert.Equal(t, int64(250000), users[0].TotalConsumedQuota)
+	assert.Equal(t, "higher_historical", users[1].Username)
+	assert.Equal(t, int64(125000), users[1].TodayConsumedQuota)
+	assert.Equal(t, int64(1025000), users[1].TotalConsumedQuota)
 }
 
 func TestGetUserConsumptionStatsExcludesAdminsFromTotal(t *testing.T) {

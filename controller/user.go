@@ -344,11 +344,14 @@ func hidePrivateContactsForNonRoot(role int, users []*model.User) {
 
 func attachEffectiveGroupRatios(users []*model.User) {
 	for _, user := range users {
-		usableGroups := service.GetUserUsableGroups(user.Group)
-		ratios := make(map[string]float64, len(usableGroups))
 		userSetting := user.GetSetting()
-		for group := range usableGroups {
+		assignedGroups := service.ParseUserGroups(user.Group)
+		ratios := make(map[string]float64, len(assignedGroups)+len(userSetting.UserGroupRatios))
+		for _, group := range assignedGroups {
 			ratios[group] = service.GetUserGroupRatioWithSetting(userSetting, user.Group, group)
+		}
+		for group, ratio := range userSetting.UserGroupRatios {
+			ratios[group] = ratio
 		}
 		user.EffectiveGroupRatios = ratios
 	}

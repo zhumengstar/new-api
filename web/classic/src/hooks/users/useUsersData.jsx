@@ -254,7 +254,12 @@ export const useUsersData = () => {
   const handleSortChange = (changeInfo) => {
     const activeSorter = changeInfo?.sorter;
     const field = activeSorter?.field || activeSorter?.dataIndex;
-    if (field !== 'quota' && field !== 'total_consumed_quota') return;
+    if (
+      field !== 'quota' &&
+      field !== 'today_consumed_quota' &&
+      field !== 'total_consumed_quota'
+    )
+      return;
 
     const nextSortOrder =
       activeSorter?.sortOrder === 'ascend'

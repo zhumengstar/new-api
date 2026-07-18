@@ -45,3 +45,16 @@ func TestAttachEffectiveGroupRatiosIncludesPublicOverride(t *testing.T) {
 	_, hasDefault := users[0].EffectiveGroupRatios["default"]
 	require.True(t, hasDefault)
 }
+
+func TestAttachEffectiveGroupRatiosOmitsUnspecifiedPublicGroups(t *testing.T) {
+	users := []*model.User{{
+		Id:    3003,
+		Group: "default",
+	}}
+
+	attachEffectiveGroupRatios(users)
+
+	require.Equal(t, map[string]float64{
+		"default": users[0].EffectiveGroupRatios["default"],
+	}, users[0].EffectiveGroupRatios)
+}
