@@ -50,6 +50,8 @@ const UsersTable = (usersData) => {
     manageUser,
     handleSortChange,
     groupRatios,
+    sortBy,
+    sortOrder,
     refresh,
     resetUserPasskey,
     resetUserTwoFA,
@@ -147,6 +149,8 @@ const UsersTable = (usersData) => {
       manageUser,
       showWeChatContact: isRoot(),
       groupRatios,
+      sortBy,
+      sortOrder,
       refresh,
     });
   }, [
@@ -162,6 +166,8 @@ const UsersTable = (usersData) => {
     showUserSubscriptionsUserModal,
     manageUser,
     groupRatios,
+    sortBy,
+    sortOrder,
     isRoot(),
     refresh,
   ]);

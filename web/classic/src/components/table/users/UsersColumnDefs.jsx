@@ -460,8 +460,15 @@ export const getUsersColumns = ({
   manageUser,
   showWeChatContact,
   groupRatios,
+  sortBy,
+  sortOrder,
   refresh,
 }) => {
+  const getSortOrder = (field) => {
+    if (sortBy !== field) return false;
+    return sortOrder === 'desc' ? 'descend' : 'ascend';
+  };
+
   return [
     {
       title: 'ID',
@@ -516,6 +523,7 @@ export const getUsersColumns = ({
       title: t('今日消耗金额'),
       dataIndex: 'today_consumed_quota',
       sorter: true,
+      sortOrder: getSortOrder('today_consumed_quota'),
       render: (text) => (
         <Tag color='white' shape='circle'>
           {renderQuota(text || 0)}
@@ -526,6 +534,7 @@ export const getUsersColumns = ({
       title: t('总消耗金额'),
       dataIndex: 'total_consumed_quota',
       sorter: true,
+      sortOrder: getSortOrder('total_consumed_quota'),
       render: (text) => (
         <Tag color='white' shape='circle'>
           {renderQuota(text || 0)}
@@ -537,6 +546,7 @@ export const getUsersColumns = ({
       dataIndex: 'quota',
       key: 'quota_usage',
       sorter: true,
+      sortOrder: getSortOrder('quota'),
       render: (text, record) => renderQuotaUsage(text, record, t),
     },
     {

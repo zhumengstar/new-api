@@ -261,12 +261,14 @@ export const useUsersData = () => {
     )
       return;
 
-    const nextSortOrder =
-      activeSorter?.sortOrder === 'ascend'
+    const isCurrentColumn = sortBy === field;
+    const nextSortOrder = !isCurrentColumn
+      ? 'desc'
+      : sortOrder === 'desc'
         ? 'asc'
-        : activeSorter?.sortOrder === 'descend'
-          ? 'desc'
-          : '';
+        : sortOrder === 'asc'
+          ? ''
+          : 'desc';
     const nextSortBy = nextSortOrder ? field : '';
     setSortBy(nextSortBy);
     setSortOrder(nextSortOrder);
@@ -387,6 +389,8 @@ export const useUsersData = () => {
     todayConsumedQuota,
     totalConsumedQuota,
     groupRatios,
+    sortBy,
+    sortOrder,
 
     // Modal state
     showAddUser,
