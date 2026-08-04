@@ -70,6 +70,16 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 		return types.NewError(fmt.Errorf("invalid api type: %d", info.ApiType), types.ErrorCodeInvalidApiType, types.ErrOptionWithSkipRetry())
 	}
 	adaptor.Init(info)
+	if shouldUseResponsesChatFallback(info, request) &&
+		!model_setting.GetGlobalSettings().PassThroughRequestEnabled &&
+		!info.ChannelSetting.PassThroughBodyEnabled {
+		usageDto, newAPIError := responsesViaChatCompletions(c, info, adaptor, request)
+		if newAPIError != nil {
+			return newAPIError
+		}
+		service.PostTextConsumeQuota(c, info, usageDto, nil)
+		return nil
+	}
 	var requestBody io.Reader
 	if model_setting.GetGlobalSettings().PassThroughRequestEnabled || info.ChannelSetting.PassThroughBodyEnabled {
 		storage, err := common.GetBodyStorage(c)

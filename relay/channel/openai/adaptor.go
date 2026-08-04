@@ -366,7 +366,9 @@ func sanitizeOpenAICompatibleGeminiRequest(info *relaycommon.RelayInfo, request 
 
 	request.ResponseFormat = nil
 	request.ParallelTooCalls = nil
-	request.ToolChoice = nil
+	if len(request.Tools) == 0 {
+		request.ToolChoice = nil
+	}
 	request.LogProbs = nil
 	request.TopLogProbs = nil
 	request.Store = nil

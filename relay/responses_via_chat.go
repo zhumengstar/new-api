@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/relay/channel"
@@ -56,6 +57,24 @@ func isResponsesUnsupportedErrorText(text string) bool {
 		strings.Contains(normalized, "unsupported endpoint") ||
 		strings.Contains(normalized, "unsupported path") ||
 		strings.Contains(normalized, "responses") && strings.Contains(normalized, "unsupported")
+}
+
+func shouldUseResponsesChatFallback(info *relaycommon.RelayInfo, request *dto.OpenAIResponsesRequest) bool {
+	if info == nil || info.ChannelMeta == nil || request == nil || info.ChannelType != constant.ChannelTypeOpenAI {
+		return false
+	}
+	if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(info.UpstreamModelName)), "gemini-") {
+		return false
+	}
+	for _, tool := range request.GetToolsMap() {
+		if strings.TrimSpace(common.Interface2String(tool["type"])) != "namespace" {
+			continue
+		}
+		if children, ok := tool["tools"].([]any); ok && len(children) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func responsesViaChatCompletions(c *gin.Context, info *relaycommon.RelayInfo, adaptor channel.Adaptor, request *dto.OpenAIResponsesRequest) (*dto.Usage, *types.NewAPIError) {

@@ -115,6 +115,26 @@ func TestConvertOpenAIRequestDoesNotSanitizeNonGeminiCompatibleModel(t *testing.
 	}
 }
 
+func TestConvertOpenAIRequestPreservesToolChoiceForGeminiTools(t *testing.T) {
+	request := &dto.GeneralOpenAIRequest{
+		Model:      "gemini-3-flash",
+		Tools:      []dto.ToolCallRequest{{Type: "function", Function: dto.FunctionRequest{Name: "lookup"}}},
+		ToolChoice: map[string]any{"type": "function", "function": map[string]any{"name": "lookup"}},
+	}
+	info := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{
+		ChannelType: constant.ChannelTypeOpenAI, UpstreamModelName: "gemini-3-flash",
+	}}
+
+	converted, err := (&Adaptor{}).ConvertOpenAIRequest(nil, info, request)
+	if err != nil {
+		t.Fatalf("ConvertOpenAIRequest returned error: %v", err)
+	}
+	got := converted.(*dto.GeneralOpenAIRequest)
+	if got.ToolChoice == nil {
+		t.Fatal("ToolChoice should be preserved when Gemini tools are present")
+	}
+}
+
 func TestGeminiImageCompatibilityUsesChatCompletions(t *testing.T) {
 	info := &relaycommon.RelayInfo{
 		RelayMode: relayconstant.RelayModeImagesGenerations,
