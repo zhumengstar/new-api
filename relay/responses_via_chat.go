@@ -12,6 +12,7 @@ import (
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/relay/channel"
+	geminichannel "github.com/QuantumNous/new-api/relay/channel/gemini"
 	openaichannel "github.com/QuantumNous/new-api/relay/channel/openai"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
@@ -167,11 +168,11 @@ func responsesViaChatCompletions(c *gin.Context, info *relaycommon.RelayInfo, ad
 	if err != nil {
 		return nil, types.NewError(err, types.ErrorCodeBadResponse, types.ErrOptionWithSkipRetry())
 	}
-	var chatResp dto.OpenAITextResponse
-	if err := common.Unmarshal(data, &chatResp); err != nil {
+	chatResp, err := decodeResponsesFallbackChatResponse(c, info, data)
+	if err != nil {
 		return nil, types.NewError(err, types.ErrorCodeBadResponse, types.ErrOptionWithSkipRetry())
 	}
-	responsesResp, usage, err := service.ChatCompletionsResponseToResponsesResponse(&chatResp, request)
+	responsesResp, usage, err := service.ChatCompletionsResponseToResponsesResponse(chatResp, request)
 	if err != nil {
 		return nil, types.NewError(err, types.ErrorCodeBadResponse, types.ErrOptionWithSkipRetry())
 	}
@@ -181,4 +182,19 @@ func responsesViaChatCompletions(c *gin.Context, info *relaycommon.RelayInfo, ad
 	}
 	c.Data(http.StatusOK, "application/json", out)
 	return usage, nil
+}
+
+func decodeResponsesFallbackChatResponse(c *gin.Context, info *relaycommon.RelayInfo, data []byte) (*dto.OpenAITextResponse, error) {
+	if info != nil && info.ApiType == constant.APITypeGemini {
+		var geminiResp dto.GeminiChatResponse
+		if err := common.Unmarshal(data, &geminiResp); err != nil {
+			return nil, err
+		}
+		return geminichannel.ResponseGeminiChat2OpenAI(c, &geminiResp), nil
+	}
+	var chatResp dto.OpenAITextResponse
+	if err := common.Unmarshal(data, &chatResp); err != nil {
+		return nil, err
+	}
+	return &chatResp, nil
 }

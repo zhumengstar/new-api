@@ -1190,6 +1190,10 @@ func responseGeminiChat2OpenAI(c *gin.Context, response *dto.GeminiChatResponse)
 	return &fullTextResponse
 }
 
+func ResponseGeminiChat2OpenAI(c *gin.Context, response *dto.GeminiChatResponse) *dto.OpenAITextResponse {
+	return responseGeminiChat2OpenAI(c, response)
+}
+
 func collectGeminiInlineImages(response *dto.GeminiChatResponse) []dto.ImageData {
 	images := make([]dto.ImageData, 0)
 	for _, candidate := range response.Candidates {
