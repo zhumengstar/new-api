@@ -104,11 +104,16 @@ func TestResponsesRequestToChatCompletionsRequestSupportsFunctionTools(t *testin
 	assert.Equal(t, "call_1", chatReq.Messages[1].ToolCallId)
 }
 
-func TestResponsesRequestToChatCompletionsRequestSkipsUnsupportedTools(t *testing.T) {
+func TestResponsesRequestToChatCompletionsRequestExpandsNamespaceTools(t *testing.T) {
 	req := &dto.OpenAIResponsesRequest{
 		Model: "test-model", Input: json.RawMessage(`"hello"`),
 		Tools: json.RawMessage(`[
-			{"type":"namespace","name":"browser"},
+			{"type":"namespace","name":"browser","tools":[
+				{"type":"function","name":"open","description":"open a page","inputSchema":{"type":"object","properties":{"url":{"type":"string"}}}},
+				{"type":"namespace","name":"page","tools":[
+					{"type":"function","name":"click","input_schema":{"type":"object"}}
+				]}
+			]},
 			{"type":"web_search_preview"},
 			{"type":"function","name":"lookup","parameters":{"type":"object"}}
 		]`),
@@ -118,9 +123,29 @@ func TestResponsesRequestToChatCompletionsRequestSkipsUnsupportedTools(t *testin
 	chatReq, err := ResponsesRequestToChatCompletionsRequest(req)
 
 	require.NoError(t, err)
-	require.Len(t, chatReq.Tools, 1)
-	assert.Equal(t, "lookup", chatReq.Tools[0].Function.Name)
+	require.Len(t, chatReq.Tools, 3)
+	assert.Equal(t, "open", chatReq.Tools[0].Function.Name)
+	assert.Equal(t, "open a page", chatReq.Tools[0].Function.Description)
+	assert.NotNil(t, chatReq.Tools[0].Function.Parameters)
+	assert.Equal(t, "click", chatReq.Tools[1].Function.Name)
+	assert.NotNil(t, chatReq.Tools[1].Function.Parameters)
+	assert.Equal(t, "lookup", chatReq.Tools[2].Function.Name)
 	assert.Nil(t, chatReq.ToolChoice)
+}
+
+func TestResponsesRequestToChatCompletionsRequestSkipsNamespaceWithoutTools(t *testing.T) {
+	req := &dto.OpenAIResponsesRequest{
+		Model: "test-model", Input: json.RawMessage(`"hello"`),
+		Tools: json.RawMessage(`[
+			{"type":"namespace","name":"browser"},
+			{"type":"web_search_preview"}
+		]`),
+	}
+
+	chatReq, err := ResponsesRequestToChatCompletionsRequest(req)
+
+	require.NoError(t, err)
+	assert.Empty(t, chatReq.Tools)
 }
 
 func TestChatCompletionsToolCallResponseToResponsesResponse(t *testing.T) {

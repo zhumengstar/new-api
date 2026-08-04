@@ -361,22 +361,49 @@ func responsesToolsToChatTools(raw json.RawMessage) ([]dto.ToolCallRequest, erro
 	}
 	out := make([]dto.ToolCallRequest, 0, len(tools))
 	for i, tool := range tools {
-		toolType := strings.TrimSpace(common.Interface2String(tool["type"]))
-		if toolType != "function" {
-			continue
+		if err := appendResponsesTool(&out, tool, fmt.Sprintf("tool at index %d", i)); err != nil {
+			return nil, err
 		}
-		name := strings.TrimSpace(common.Interface2String(tool["name"]))
-		if name == "" {
-			return nil, fmt.Errorf("function tool at index %d requires name in responses fallback", i)
-		}
-		out = append(out, dto.ToolCallRequest{
-			Type: "function",
-			Function: dto.FunctionRequest{
-				Name: name, Description: common.Interface2String(tool["description"]), Parameters: tool["parameters"],
-			},
-		})
 	}
 	return out, nil
+}
+
+func appendResponsesTool(out *[]dto.ToolCallRequest, tool map[string]any, location string) error {
+	switch strings.TrimSpace(common.Interface2String(tool["type"])) {
+	case "function":
+		name := strings.TrimSpace(common.Interface2String(tool["name"]))
+		if name == "" {
+			return fmt.Errorf("function %s requires name in responses fallback", location)
+		}
+		parameters := tool["parameters"]
+		if parameters == nil {
+			parameters = tool["inputSchema"]
+		}
+		if parameters == nil {
+			parameters = tool["input_schema"]
+		}
+		*out = append(*out, dto.ToolCallRequest{
+			Type: "function",
+			Function: dto.FunctionRequest{
+				Name: name, Description: common.Interface2String(tool["description"]), Parameters: parameters,
+			},
+		})
+	case "namespace":
+		children, ok := tool["tools"].([]any)
+		if !ok {
+			return nil
+		}
+		for i, child := range children {
+			childTool, ok := child.(map[string]any)
+			if !ok {
+				return fmt.Errorf("namespace %s child at index %d must be an object in responses fallback", location, i)
+			}
+			if err := appendResponsesTool(out, childTool, fmt.Sprintf("%s child at index %d", location, i)); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func responsesToolChoiceToChatToolChoice(raw json.RawMessage) (any, error) {
