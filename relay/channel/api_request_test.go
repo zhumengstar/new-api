@@ -5,10 +5,26 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	common2 "github.com/QuantumNous/new-api/common"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
+
+func TestSetupApiRequestHeader_ForwardsNewAPIRequestID(t *testing.T) {
+	t.Parallel()
+
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	ctx.Set(common2.RequestIdKey, "req-correlation-test")
+	headers := http.Header{}
+
+	SetupApiRequestHeader(&relaycommon.RelayInfo{}, ctx, &headers)
+
+	require.Equal(t, "req-correlation-test", headers.Get(common2.RequestIdKey))
+}
 
 func TestProcessHeaderOverride_AddsNewAPISessionIDFromUsername(t *testing.T) {
 	t.Parallel()

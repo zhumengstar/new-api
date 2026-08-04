@@ -143,7 +143,6 @@ const EditUserModal = (props) => {
   const [bindingModalVisible, setBindingModalVisible] = useState(false);
   const formApiRef = useRef(null);
   const [showAdjustQuotaRaw, setShowAdjustQuotaRaw] = useState(false);
-  const [showQuotaInput, setShowQuotaInput] = useState(false);
   const [inputs, setInputs] = useState(null);
   const [selectedGroups, setSelectedGroups] = useState(['default']);
   const [userGroupRatios, setUserGroupRatios] = useState({});
@@ -241,6 +240,13 @@ const EditUserModal = (props) => {
     setLoading(true);
     let payload = { ...values };
     delete payload.quota;
+    const quotaAmount = Number(payload.quota_amount);
+    if (!Number.isFinite(quotaAmount) || quotaAmount < 0) {
+      showError(t('额度必须是不小于 0 的数字'));
+      setLoading(false);
+      return;
+    }
+    payload.quota = displayAmountToQuota(quotaAmount);
     delete payload.quota_amount;
     const publicGroups = new Set(getPublicGroups(groupOptions));
     const privateGroups = selectedGroups.filter(
@@ -630,8 +636,8 @@ const EditUserModal = (props) => {
                           prefix={getCurrencyConfig().symbol}
                           precision={6}
                           step={0.000001}
+                          min={0}
                           style={{ width: '100%' }}
-                          readonly
                         />
                       </Col>
 
@@ -644,30 +650,6 @@ const EditUserModal = (props) => {
                             {adjustQuotaLabel}
                           </Button>
                         </Form.Slot>
-                      </Col>
-
-                      <Col span={24}>
-                        <div
-                          className='text-xs cursor-pointer'
-                          style={{ color: 'var(--semi-color-text-2)' }}
-                          onClick={() => setShowQuotaInput((v) => !v)}
-                        >
-                          {showQuotaInput
-                            ? `▾ ${t('收起原生额度输入')}`
-                            : `▸ ${t('使用原生额度输入')}`}
-                        </div>
-                        <div
-                          style={{ display: showQuotaInput ? 'block' : 'none' }}
-                          className='mt-2'
-                        >
-                          <Form.InputNumber
-                            field='quota'
-                            label={t('额度')}
-                            placeholder={t('请输入额度')}
-                            style={{ width: '100%' }}
-                            readonly
-                          />
-                        </div>
                       </Col>
                     </Row>
                   </Card>

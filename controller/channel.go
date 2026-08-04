@@ -95,6 +95,28 @@ func GetChannelOps(c *gin.Context) {
 	})
 }
 
+func GetPlaygroundChannels(c *gin.Context) {
+	type playgroundChannel struct {
+		Id     int    `json:"id"`
+		Name   string `json:"name"`
+		Type   int    `json:"type"`
+		Status int    `json:"status"`
+		Group  string `json:"group"`
+		Models string `json:"models"`
+	}
+
+	channels := make([]playgroundChannel, 0)
+	err := model.DB.Model(&model.Channel{}).
+		Select("id", "name", "type", "status", "group", "models").
+		Order("id ASC").
+		Find(&channels).Error
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, channels)
+}
+
 func GetAllChannels(c *gin.Context) {
 	pageInfo := common.GetPageQuery(c)
 	channelData := make([]*model.Channel, 0)

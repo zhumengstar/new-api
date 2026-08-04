@@ -145,50 +145,73 @@ func SetUserVirtualQuota(adminId int, userId int, quota int) error {
 		return errors.New("virtual quota must be non-negative")
 	}
 	return DB.Transaction(func(tx *gorm.DB) error {
-		var admin User
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", adminId).First(&admin).Error; err != nil {
-			return err
-		}
-		var user User
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", userId).First(&user).Error; err != nil {
-			return err
-		}
-		if user.InviterId != adminId {
-			return errors.New("user is not invited by this admin")
-		}
-		var current UserVirtualQuota
-		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("user_id = ?", userId).First(&current).Error
-		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-			return err
-		}
-		usedQuota := 0
-		if err == nil {
-			usedQuota = current.UsedQuota
-		}
-		if quota < usedQuota {
-			return fmt.Errorf("virtual quota cannot be less than used quota: %d", usedQuota)
-		}
-		var rows []UserVirtualQuota
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-			Where("admin_id = ? AND user_id <> ?", adminId, userId).
-			Find(&rows).Error; err != nil {
-			return err
-		}
-		totalRemaining := quota - usedQuota
-		for _, row := range rows {
-			totalRemaining += row.RemainingQuota()
-		}
-		if totalRemaining > admin.Quota {
-			return fmt.Errorf("virtual quota exceeds admin available quota: admin quota=%d, allocated remaining=%d", admin.Quota, totalRemaining)
-		}
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return tx.Create(&UserVirtualQuota{AdminId: adminId, UserId: userId, Quota: quota}).Error
-		}
-		return tx.Model(&UserVirtualQuota{}).Where("id = ?", current.Id).Updates(map[string]interface{}{
-			"admin_id": adminId,
-			"quota":    quota,
-		}).Error
+		return setUserVirtualQuotaTx(tx, adminId, userId, quota, false)
 	})
+}
+
+func setUserVirtualRemainingQuotaTx(tx *gorm.DB, adminId int, userId int, remainingQuota int) error {
+	if remainingQuota < 0 {
+		return errors.New("virtual remaining quota must be non-negative")
+	}
+	return setUserVirtualQuotaTx(tx, adminId, userId, remainingQuota, true)
+}
+
+func setUserVirtualQuotaTx(
+	tx *gorm.DB,
+	adminId int,
+	userId int,
+	quota int,
+	quotaIsRemaining bool,
+) error {
+	if adminId <= 0 || userId <= 0 {
+		return errors.New("invalid admin or user id")
+	}
+	var admin User
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", adminId).First(&admin).Error; err != nil {
+		return err
+	}
+	var user User
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", userId).First(&user).Error; err != nil {
+		return err
+	}
+	if user.InviterId != adminId {
+		return errors.New("user is not invited by this admin")
+	}
+	var current UserVirtualQuota
+	err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("user_id = ?", userId).First(&current).Error
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return err
+	}
+	usedQuota := 0
+	if err == nil {
+		usedQuota = current.UsedQuota
+	}
+	if quotaIsRemaining {
+		quota += usedQuota
+	}
+	if quota < usedQuota {
+		return fmt.Errorf("virtual quota cannot be less than used quota: %d", usedQuota)
+	}
+	var rows []UserVirtualQuota
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("admin_id = ? AND user_id <> ?", adminId, userId).
+		Find(&rows).Error; err != nil {
+		return err
+	}
+	totalRemaining := quota - usedQuota
+	for _, row := range rows {
+		totalRemaining += row.RemainingQuota()
+	}
+	if totalRemaining > admin.Quota {
+		return fmt.Errorf("virtual quota exceeds admin available quota: admin quota=%d, allocated remaining=%d", admin.Quota, totalRemaining)
+	}
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return tx.Create(&UserVirtualQuota{AdminId: adminId, UserId: userId, Quota: quota}).Error
+	}
+	return tx.Model(&UserVirtualQuota{}).Where("id = ?", current.Id).Updates(map[string]interface{}{
+		"admin_id": adminId,
+		"quota":    quota,
+	}).Error
 }
 
 func ConsumeVirtualQuota(adminId int, userId int, virtualDelta int, adminDelta int) error {

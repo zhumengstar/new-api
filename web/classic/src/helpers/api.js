@@ -134,6 +134,9 @@ export const buildApiPayload = (
     messages: processedMessages,
     stream: inputs.stream,
   };
+  if (inputs.routingMode === 'channel' && Number(inputs.channel_id) > 0) {
+    payload.channel_id = Number(inputs.channel_id);
+  }
 
   // 添加启用的参数
   const parameterMappings = {

@@ -46,6 +46,25 @@ func GetUserUsableGroups(userGroup string) map[string]string {
 	return groupsCopy
 }
 
+func GetRoleUsableGroups(role int, userGroup string) map[string]string {
+	if role < common.RoleRootUser {
+		return GetUserUsableGroups(userGroup)
+	}
+
+	groups := make(map[string]string)
+	for groupName := range ratio_setting.GetGroupRatioCopy() {
+		desc := setting.GetUsableGroupDescription(groupName)
+		if desc == "" {
+			desc = "管理员分组"
+		}
+		groups[groupName] = desc
+	}
+	if _, ok := GetUserUsableGroups(userGroup)["auto"]; ok {
+		groups["auto"] = setting.GetUsableGroupDescription("auto")
+	}
+	return groups
+}
+
 func ParseUserGroups(userGroup string) []string {
 	userGroup = strings.TrimSpace(userGroup)
 	if userGroup == "" {

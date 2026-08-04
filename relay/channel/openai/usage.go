@@ -12,43 +12,76 @@ func applyUsagePostProcessing(info *relaycommon.RelayInfo, usage *dto.Usage, res
 		return
 	}
 
-	switch info.ChannelType {
-	case constant.ChannelTypeDeepSeek:
-		if usage.PromptTokensDetails.CachedTokens == 0 && usage.PromptCacheHitTokens != 0 {
-			usage.PromptTokensDetails.CachedTokens = usage.PromptCacheHitTokens
-		}
-	case constant.ChannelTypeZhipu_v4:
-		// 智普的cached_tokens在标准位置: usage.prompt_tokens_details.cached_tokens
-		if usage.PromptTokensDetails.CachedTokens == 0 {
-			if usage.InputTokensDetails != nil && usage.InputTokensDetails.CachedTokens > 0 {
-				usage.PromptTokensDetails.CachedTokens = usage.InputTokensDetails.CachedTokens
-			} else if cachedTokens, ok := extractCachedTokensFromBody(responseBody); ok {
-				usage.PromptTokensDetails.CachedTokens = cachedTokens
-			} else if usage.PromptCacheHitTokens > 0 {
+	if info.ChannelMeta != nil {
+		switch info.ChannelType {
+		case constant.ChannelTypeDeepSeek:
+			if usage.PromptTokensDetails.CachedTokens == 0 && usage.PromptCacheHitTokens != 0 {
 				usage.PromptTokensDetails.CachedTokens = usage.PromptCacheHitTokens
 			}
-		}
-	case constant.ChannelTypeMoonshot:
-		// Moonshot的cached_tokens在非标准位置: choices[].usage.cached_tokens
-		if usage.PromptTokensDetails.CachedTokens == 0 {
-			if usage.InputTokensDetails != nil && usage.InputTokensDetails.CachedTokens > 0 {
-				usage.PromptTokensDetails.CachedTokens = usage.InputTokensDetails.CachedTokens
-			} else if cachedTokens, ok := extractMoonshotCachedTokensFromBody(responseBody); ok {
-				usage.PromptTokensDetails.CachedTokens = cachedTokens
-			} else if cachedTokens, ok := extractCachedTokensFromBody(responseBody); ok {
-				usage.PromptTokensDetails.CachedTokens = cachedTokens
-			} else if usage.PromptCacheHitTokens > 0 {
-				usage.PromptTokensDetails.CachedTokens = usage.PromptCacheHitTokens
+		case constant.ChannelTypeZhipu_v4:
+			// 智普的cached_tokens在标准位置: usage.prompt_tokens_details.cached_tokens
+			if usage.PromptTokensDetails.CachedTokens == 0 {
+				if usage.InputTokensDetails != nil && usage.InputTokensDetails.CachedTokens > 0 {
+					usage.PromptTokensDetails.CachedTokens = usage.InputTokensDetails.CachedTokens
+				} else if cachedTokens, ok := extractCachedTokensFromBody(responseBody); ok {
+					usage.PromptTokensDetails.CachedTokens = cachedTokens
+				} else if usage.PromptCacheHitTokens > 0 {
+					usage.PromptTokensDetails.CachedTokens = usage.PromptCacheHitTokens
+				}
 			}
-		}
-	case constant.ChannelTypeOpenAI:
-		if usage.PromptTokensDetails.CachedTokens == 0 {
-			if cachedTokens, ok := extractLlamaCachedTokensFromBody(responseBody); ok {
-				usage.PromptTokensDetails.CachedTokens = cachedTokens
+		case constant.ChannelTypeMoonshot:
+			// Moonshot的cached_tokens在非标准位置: choices[].usage.cached_tokens
+			if usage.PromptTokensDetails.CachedTokens == 0 {
+				if usage.InputTokensDetails != nil && usage.InputTokensDetails.CachedTokens > 0 {
+					usage.PromptTokensDetails.CachedTokens = usage.InputTokensDetails.CachedTokens
+				} else if cachedTokens, ok := extractMoonshotCachedTokensFromBody(responseBody); ok {
+					usage.PromptTokensDetails.CachedTokens = cachedTokens
+				} else if cachedTokens, ok := extractCachedTokensFromBody(responseBody); ok {
+					usage.PromptTokensDetails.CachedTokens = cachedTokens
+				} else if usage.PromptCacheHitTokens > 0 {
+					usage.PromptTokensDetails.CachedTokens = usage.PromptCacheHitTokens
+				}
+			}
+		case constant.ChannelTypeOpenAI:
+			if usage.PromptTokensDetails.CachedTokens == 0 {
+				if cachedTokens, ok := extractLlamaCachedTokensFromBody(responseBody); ok {
+					usage.PromptTokensDetails.CachedTokens = cachedTokens
+				}
 			}
 		}
 	}
 	guardPromptUndercount(info, usage)
+}
+
+// normalizeOpenAIUsageTotals keeps the OpenAI usage invariant:
+// total_tokens = prompt_tokens + completion_tokens.
+//
+// Some OpenAI-compatible upstreams report reasoning tokens in total_tokens but
+// omit them from completion_tokens. NewAPI bills prompt_tokens and
+// completion_tokens, so trusting that inconsistent response undercharges the
+// request. Use only the upstream-reported difference; do not independently add
+// reasoning_tokens because compliant upstreams already include reasoning in
+// completion_tokens.
+func normalizeOpenAIUsageTotals(usage *dto.Usage) bool {
+	if usage == nil {
+		return false
+	}
+
+	accounted := usage.PromptTokens + usage.CompletionTokens
+	if usage.TotalTokens > accounted {
+		usage.CompletionTokens += usage.TotalTokens - accounted
+		if usage.OutputTokens > 0 && usage.OutputTokens < usage.CompletionTokens {
+			usage.OutputTokens = usage.CompletionTokens
+		}
+		return true
+	}
+
+	if usage.TotalTokens != accounted {
+		usage.TotalTokens = accounted
+		return true
+	}
+
+	return false
 }
 
 func guardPromptUndercount(info *relaycommon.RelayInfo, usage *dto.Usage) {

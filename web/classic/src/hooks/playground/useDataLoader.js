@@ -19,7 +19,12 @@ For commercial licensing, please contact support@quantumnous.com
 
 import { useCallback, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { API, processModelsData, processGroupsData } from '../../helpers';
+import {
+  API,
+  processModelsData,
+  processGroupsData,
+  showError,
+} from '../../helpers';
 import { API_ENDPOINTS } from '../../constants/playground.constants';
 
 export const useDataLoader = (
@@ -28,6 +33,7 @@ export const useDataLoader = (
   handleInputChange,
   setModels,
   setGroups,
+  setChannels,
 ) => {
   const { t } = useTranslation();
 
@@ -80,16 +86,66 @@ export const useDataLoader = (
     }
   }, [userState, inputs.group, handleInputChange, setGroups, t]);
 
+  const loadChannels = useCallback(async () => {
+    if ((userState?.user?.role || 0) < 100) {
+      setChannels([]);
+      if (inputs.routingMode !== 'auto') {
+        handleInputChange('routingMode', 'auto');
+        handleInputChange('channel_id', 0);
+      }
+      return;
+    }
+
+    try {
+      const res = await API.get(API_ENDPOINTS.PLAYGROUND_CHANNELS);
+      const { success, message, data } = res.data;
+      if (!success) {
+        showError(t(message));
+        return;
+      }
+
+      const channelOptions = (data || []).map((channel) => ({
+        label: `#${channel.id} ${channel.name} (${channel.group || '-'})${
+          channel.status === 1 ? '' : ` - ${t('已禁用')}`
+        }`,
+        value: channel.id,
+        disabled: channel.status !== 1,
+      }));
+      setChannels(channelOptions);
+
+      if (
+        inputs.routingMode === 'channel' &&
+        !channelOptions.some(
+          (option) =>
+            option.value === Number(inputs.channel_id) && !option.disabled,
+        )
+      ) {
+        handleInputChange('channel_id', 0);
+      }
+    } catch (error) {
+      showError(t('加载渠道失败'));
+    }
+  }, [
+    userState,
+    inputs.routingMode,
+    inputs.channel_id,
+    handleInputChange,
+    setChannels,
+    t,
+  ]);
+
   // 自动加载数据
   useEffect(() => {
     if (userState?.user) {
       loadModels();
       loadGroups();
+      loadChannels();
     }
-  }, [userState?.user, loadModels, loadGroups]);
+  }, [userState?.user, loadModels, loadGroups, loadChannels]);
 
   return {
     loadModels,
     loadGroups,
+    loadChannels,
   };
 };

@@ -38,9 +38,7 @@ const UsersFilters = ({
   const handleReset = () => {
     if (!formApiRef.current) return;
     formApiRef.current.reset();
-    setTimeout(() => {
-      loadUsers(1, pageSize);
-    }, 100);
+    loadUsers(1, pageSize);
   };
 
   return (
@@ -77,10 +75,9 @@ const UsersFilters = ({
             placeholder={t('选择分组')}
             optionList={groupOptions}
             onChange={(value) => {
-              // Group change triggers automatic search
-              setTimeout(() => {
-                searchUsers(1, pageSize);
-              }, 100);
+              const searchKeyword =
+                formApiRef.current?.getValues()?.searchKeyword || '';
+              searchUsers(1, pageSize, searchKeyword, value || '');
             }}
             className='w-full'
             showClear

@@ -88,6 +88,28 @@ func TestSearchUsersCanFindInactiveCommonUsers(t *testing.T) {
 	assert.Equal(t, "inactive_search_target", users[0].Username)
 }
 
+func TestSearchUsersFiltersByAssignedGroupMembership(t *testing.T) {
+	truncateTables(t)
+	for _, user := range []*User{
+		{Id: 11, Username: "multi_group_user", Role: common.RoleCommonUser, Status: common.UserStatusEnabled, Group: "default,gemini对接组"},
+		{Id: 12, Username: "single_group_user", Role: common.RoleCommonUser, Status: common.UserStatusEnabled, Group: "gemini对接组"},
+		{Id: 13, Username: "similar_group_user", Role: common.RoleCommonUser, Status: common.UserStatusEnabled, Group: "gemini对接组-v2"},
+		{Id: 14, Username: "default_group_user", Role: common.RoleCommonUser, Status: common.UserStatusEnabled, Group: "default"},
+	} {
+		insertUserForManagementVisibilityTest(t, user)
+	}
+
+	users, total, err := SearchUsers("", "gemini对接组", nil, nil, 0, 20, "", "", 1, common.RoleRootUser)
+
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), total)
+	names := make([]string, 0, len(users))
+	for _, user := range users {
+		names = append(names, user.Username)
+	}
+	assert.ElementsMatch(t, []string{"multi_group_user", "single_group_user"}, names)
+}
+
 func TestSearchUsersFuzzyMatchesManagementFields(t *testing.T) {
 	truncateTables(t)
 	insertUserForManagementVisibilityTest(t, &User{

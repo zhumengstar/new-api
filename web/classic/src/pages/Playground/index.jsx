@@ -94,6 +94,7 @@ const Playground = () => {
     showSettings,
     models,
     groups,
+    channels,
     status,
     message,
     debugData,
@@ -110,6 +111,7 @@ const Playground = () => {
     setShowSettings,
     setModels,
     setGroups,
+    setChannels,
     setStatus,
     setMessage,
     setDebugData,
@@ -130,7 +132,14 @@ const Playground = () => {
   );
 
   // 数据加载
-  useDataLoader(userState, inputs, handleInputChange, setModels, setGroups);
+  useDataLoader(
+    userState,
+    inputs,
+    handleInputChange,
+    setModels,
+    setGroups,
+    setChannels,
+  );
 
   // 消息编辑
   const {
@@ -478,6 +487,8 @@ const Playground = () => {
                 parameterEnabled={parameterEnabled}
                 models={models}
                 groups={groups}
+                channels={channels}
+                canSelectChannel={(userState?.user?.role || 0) >= 100}
                 styleState={styleState}
                 showSettings={showSettings}
                 showDebugPanel={showDebugPanel}

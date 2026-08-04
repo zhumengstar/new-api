@@ -45,8 +45,8 @@ export const useUsersData = () => {
   const [searching, setSearching] = useState(false);
   const [groupOptions, setGroupOptions] = useState([]);
   const [userCount, setUserCount] = useState(0);
-  const [sortBy, setSortBy] = useState('');
-  const [sortOrder, setSortOrder] = useState('');
+  const [sortBy, setSortBy] = useState('today_consumed_quota');
+  const [sortOrder, setSortOrder] = useState('desc');
   const [incomeStats, setIncomeStats] = useState([]);
   const [todayConsumedQuota, setTodayConsumedQuota] = useState(0);
   const [totalConsumedQuota, setTotalConsumedQuota] = useState(0);

@@ -168,18 +168,23 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 		logger.LogError(c, fmt.Sprintf("error handling last response: %s, lastStreamData: [%s]", err.Error(), lastStreamData))
 	}
 
-	if info.RelayFormat == types.RelayFormatOpenAI {
-		if shouldSendLastResp {
-			_ = sendStreamData(c, info, lastStreamData, info.ChannelSetting.ForceFormat, info.ChannelSetting.ThinkingToContent)
-		}
-	}
-
 	if !containStreamUsage {
 		usage = service.ResponseText2Usage(c, responseTextBuilder.String(), info.UpstreamModelName, info.GetEstimatePromptTokens())
 		usage.CompletionTokens += toolCount * 7
 	}
 
+	usageModified := normalizeOpenAIUsageTotals(usage)
 	applyUsagePostProcessing(info, usage, common.StringToByteSlice(lastStreamData))
+	usageModified = normalizeOpenAIUsageTotals(usage) || usageModified
+
+	if info.RelayFormat == types.RelayFormatOpenAI {
+		if usageModified && containStreamUsage {
+			lastStreamData = replaceStreamUsage(lastStreamData, usage)
+		}
+		if shouldSendLastResp {
+			_ = sendStreamData(c, info, lastStreamData, info.ChannelSetting.ForceFormat, info.ChannelSetting.ThinkingToContent)
+		}
+	}
 
 	HandleFinalResponse(c, info, lastStreamData, responseId, createAt, model, systemFingerprint, usage, containStreamUsage)
 
@@ -249,7 +254,9 @@ func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Respo
 		usageModified = true
 	}
 
+	usageModified = normalizeOpenAIUsageTotals(&simpleResponse.Usage) || usageModified
 	applyUsagePostProcessing(info, &simpleResponse.Usage, responseBody)
+	usageModified = normalizeOpenAIUsageTotals(&simpleResponse.Usage) || usageModified
 
 	switch info.RelayFormat {
 	case types.RelayFormatOpenAI:

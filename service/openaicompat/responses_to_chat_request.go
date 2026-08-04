@@ -363,7 +363,7 @@ func responsesToolsToChatTools(raw json.RawMessage) ([]dto.ToolCallRequest, erro
 	for i, tool := range tools {
 		toolType := strings.TrimSpace(common.Interface2String(tool["type"]))
 		if toolType != "function" {
-			return nil, fmt.Errorf("tool type %q at index %d cannot be represented by chat completions fallback", toolType, i)
+			continue
 		}
 		name := strings.TrimSpace(common.Interface2String(tool["name"]))
 		if name == "" {
@@ -392,7 +392,7 @@ func responsesToolChoiceToChatToolChoice(raw json.RawMessage) (any, error) {
 	}
 	toolType := strings.TrimSpace(common.Interface2String(choice["type"]))
 	if toolType != "function" {
-		return nil, fmt.Errorf("tool_choice type %q cannot be represented by chat completions fallback", toolType)
+		return nil, nil
 	}
 	name := strings.TrimSpace(common.Interface2String(choice["name"]))
 	if name == "" {

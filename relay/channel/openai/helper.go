@@ -207,6 +207,24 @@ func HandleFinalResponse(c *gin.Context, info *relaycommon.RelayInfo, lastStream
 	}
 }
 
+func replaceStreamUsage(data string, usage *dto.Usage) string {
+	if data == "" || usage == nil {
+		return data
+	}
+
+	var payload map[string]interface{}
+	if err := common.UnmarshalJsonStr(data, &payload); err != nil {
+		return data
+	}
+	payload["usage"] = usage
+
+	normalized, err := common.Marshal(payload)
+	if err != nil {
+		return data
+	}
+	return string(normalized)
+}
+
 func sendResponsesStreamData(c *gin.Context, streamResponse dto.ResponsesStreamResponse, data string) {
 	if data == "" {
 		return

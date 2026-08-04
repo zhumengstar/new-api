@@ -44,17 +44,9 @@ func OaiResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 	service.IOCopyBytesGracefully(c, resp, responseBody)
 
 	// compute usage
-	usage := dto.Usage{}
-	if responsesResponse.Usage != nil {
-		usage.PromptTokens = responsesResponse.Usage.InputTokens
-		usage.CompletionTokens = responsesResponse.Usage.OutputTokens
-		usage.TotalTokens = responsesResponse.Usage.TotalTokens
-		if responsesResponse.Usage.InputTokensDetails != nil {
-			usage.PromptTokensDetails.CachedTokens = responsesResponse.Usage.InputTokensDetails.CachedTokens
-		}
-	}
+	usage := responsesUsageForBilling(info, responsesResponse.Usage, responseBody)
 	if info == nil || info.ResponsesUsageInfo == nil || info.ResponsesUsageInfo.BuiltInTools == nil {
-		return &usage, nil
+		return usage, nil
 	}
 	// 解析 Tools 用量
 	for _, tool := range responsesResponse.Tools {
@@ -65,7 +57,51 @@ func OaiResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 		}
 		buildToolinfo.CallCount++
 	}
-	return &usage, nil
+	return usage, nil
+}
+
+// responsesUsageForBilling converts the Responses API usage shape into NewAPI's
+// internal billing shape without changing the response sent to the client.
+//
+// Some compatible upstreams expose visible output_tokens separately from hidden
+// reasoning_tokens while including both in total_tokens. NewAPI settles quota
+// from PromptTokens + CompletionTokens, so normalize against the authoritative
+// upstream total to avoid silently dropping hidden reasoning usage.
+func responsesUsageForBilling(info *relaycommon.RelayInfo, upstream *dto.Usage, responseBody []byte) *dto.Usage {
+	usage := &dto.Usage{}
+	if upstream != nil {
+		usage.PromptTokens = upstream.InputTokens
+		usage.CompletionTokens = upstream.OutputTokens
+		usage.TotalTokens = upstream.TotalTokens
+		usage.InputTokens = upstream.InputTokens
+		usage.OutputTokens = upstream.OutputTokens
+		usage.UsageSource = "upstream_responses"
+		usage.PromptTokensDetails = upstream.PromptTokensDetails
+		usage.CompletionTokenDetails = upstream.CompletionTokenDetails
+		usage.InputTokensDetails = upstream.InputTokensDetails
+		if upstream.InputTokensDetails != nil {
+			usage.PromptTokensDetails.CachedTokens = upstream.InputTokensDetails.CachedTokens
+		}
+
+		// If total_tokens is unavailable, reasoning_tokens is the only safe
+		// signal for hidden output. max(output, reasoning) avoids double
+		// counting compliant upstreams where output_tokens already includes it.
+		if usage.TotalTokens == 0 && usage.CompletionTokenDetails.ReasoningTokens > usage.CompletionTokens {
+			usage.CompletionTokens = usage.CompletionTokenDetails.ReasoningTokens
+		}
+	}
+
+	if usage.PromptTokens == 0 && info != nil {
+		usage.PromptTokens = info.GetEstimatePromptTokens()
+	}
+	if usage.InputTokens == 0 && upstream != nil && upstream.InputTokens > 0 {
+		usage.InputTokens = upstream.InputTokens
+	}
+
+	normalizeOpenAIUsageTotals(usage)
+	applyUsagePostProcessing(info, usage, responseBody)
+	normalizeOpenAIUsageTotals(usage)
+	return usage
 }
 
 func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NewAPIError) {
@@ -77,6 +113,8 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 	defer service.CloseResponseBodyGracefully(resp)
 
 	var usage = &dto.Usage{}
+	var completedUsage *dto.Usage
+	var completedResponseBody []byte
 	var responseTextBuilder strings.Builder
 
 	helper.StreamScannerHandler(c, resp, info, func(data string, sr *helper.StreamResult) {
@@ -93,18 +131,8 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 		case "response.completed":
 			if streamResponse.Response != nil {
 				if streamResponse.Response.Usage != nil {
-					if streamResponse.Response.Usage.InputTokens != 0 {
-						usage.PromptTokens = streamResponse.Response.Usage.InputTokens
-					}
-					if streamResponse.Response.Usage.OutputTokens != 0 {
-						usage.CompletionTokens = streamResponse.Response.Usage.OutputTokens
-					}
-					if streamResponse.Response.Usage.TotalTokens != 0 {
-						usage.TotalTokens = streamResponse.Response.Usage.TotalTokens
-					}
-					if streamResponse.Response.Usage.InputTokensDetails != nil {
-						usage.PromptTokensDetails.CachedTokens = streamResponse.Response.Usage.InputTokensDetails.CachedTokens
-					}
+					completedUsage = streamResponse.Response.Usage
+					completedResponseBody = common.StringToByteSlice(data)
 				}
 				if streamResponse.Response.HasImageGenerationCall() {
 					c.Set("image_generation_call", true)
@@ -130,7 +158,11 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 		}
 	})
 
-	if usage.CompletionTokens == 0 {
+	if completedUsage != nil {
+		usage = responsesUsageForBilling(info, completedUsage, completedResponseBody)
+	}
+
+	if usage.CompletionTokens == 0 && completedUsage == nil {
 		// 计算输出文本的 token 数量
 		tempStr := responseTextBuilder.String()
 		if len(tempStr) > 0 {
@@ -140,11 +172,13 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 		}
 	}
 
-	if usage.PromptTokens == 0 && usage.CompletionTokens != 0 {
+	if usage.PromptTokens == 0 && info != nil {
 		usage.PromptTokens = info.GetEstimatePromptTokens()
 	}
 
-	usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
+	if completedUsage == nil {
+		usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
+	}
 
 	return usage, nil
 }

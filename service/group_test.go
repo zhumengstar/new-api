@@ -24,3 +24,8 @@ func TestGetUserUsableGroupsIncludesMultipleUserGroups(t *testing.T) {
 	require.Contains(t, groups, "vip")
 	require.Contains(t, groups, "append_1")
 }
+
+func TestGetUserUsableGroupsIncludesAssignedPrivateGroup(t *testing.T) {
+	groups := GetUserUsableGroups("default,private-only")
+	require.Contains(t, groups, "private-only")
+}

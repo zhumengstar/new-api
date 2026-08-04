@@ -58,3 +58,15 @@ func TestAttachEffectiveGroupRatiosOmitsUnspecifiedPublicGroups(t *testing.T) {
 		"default": users[0].EffectiveGroupRatios["default"],
 	}, users[0].EffectiveGroupRatios)
 }
+
+func TestClearManagedUserPasswords(t *testing.T) {
+	users := []*model.User{
+		{Id: 1, Password: "stored-password-hash", OriginalPassword: "secret"},
+		nil,
+	}
+
+	clearManagedUserPasswords(users)
+
+	require.Empty(t, users[0].Password)
+	require.Empty(t, users[0].OriginalPassword)
+}

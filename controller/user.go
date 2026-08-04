@@ -279,6 +279,7 @@ func GetAllUsers(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	clearManagedUserPasswords(users)
 	attachEffectiveGroupRatios(users)
 	hidePrivateContactsForNonRoot(c.GetInt("role"), users)
 
@@ -310,6 +311,7 @@ func SearchUsers(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	clearManagedUserPasswords(users)
 	attachEffectiveGroupRatios(users)
 	hidePrivateContactsForNonRoot(c.GetInt("role"), users)
 
@@ -330,6 +332,15 @@ func GetRecentDailyIncomeStats(c *gin.Context) {
 
 func canManageTargetRole(myRole int, targetRole int) bool {
 	return myRole == common.RoleRootUser || myRole > targetRole
+}
+
+func clearManagedUserPasswords(users []*model.User) {
+	for _, user := range users {
+		if user != nil {
+			user.Password = ""
+			user.OriginalPassword = ""
+		}
+	}
 }
 
 func hidePrivateContactsForNonRoot(role int, users []*model.User) {
@@ -677,7 +688,7 @@ func GetUserModels(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	groups := service.GetUserUsableGroups(user.Group)
+	groups := service.GetRoleUsableGroups(c.GetInt("role"), user.Group)
 	var models []string
 	for group := range groups {
 		for _, g := range model.GetGroupEnabledModels(group) {
@@ -698,6 +709,7 @@ func UpdateUser(c *gin.Context) {
 	var request struct {
 		model.User
 		UserGroupRatios map[string]float64 `json:"user_group_ratios"`
+		Quota           *int               `json:"quota"`
 	}
 	err := json.NewDecoder(c.Request.Body).Decode(&request)
 	updatedUser := request.User
@@ -705,16 +717,18 @@ func UpdateUser(c *gin.Context) {
 		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
 		return
 	}
-	if updatedUser.Password == "" {
+	originUser, err := model.GetUserById(updatedUser.Id, true)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	// Older management pages could submit the password hash returned in a row.
+	// Treat that exact stored value as unchanged, but still validate real new passwords.
+	if updatedUser.Password == "" || updatedUser.Password == originUser.Password {
 		updatedUser.Password = "$I_LOVE_U" // make Validator happy :)
 	}
 	if err := common.Validate.Struct(&updatedUser); err != nil {
 		common.ApiErrorI18n(c, i18n.MsgUserInputInvalid, map[string]any{"Error": err.Error()})
-		return
-	}
-	originUser, err := model.GetUserById(updatedUser.Id, false)
-	if err != nil {
-		common.ApiError(c, err)
 		return
 	}
 	myRole := c.GetInt("role")
@@ -732,6 +746,10 @@ func UpdateUser(c *gin.Context) {
 	}
 	if updatedUser.Password == "$I_LOVE_U" {
 		updatedUser.Password = "" // rollback to what it should be
+	}
+	if request.Quota != nil && *request.Quota < 0 {
+		common.ApiErrorMsg(c, "quota must be non-negative")
+		return
 	}
 	updatedUser.Group = service.JoinUserGroupsWithDefault(service.ParseUserGroups(updatedUser.Group))
 	if len(updatedUser.Group) > model.UserGroupMaxLength {
@@ -762,20 +780,33 @@ func UpdateUser(c *gin.Context) {
 		nextSetting = &currentSetting
 	}
 	updatePassword := updatedUser.Password != ""
-	if err := updatedUser.Edit(updatePassword); err != nil {
+	virtualAdminId := 0
+	if myRole < common.RoleRootUser {
+		virtualAdminId = c.GetInt("id")
+	}
+	if err := updatedUser.EditManaged(
+		updatePassword,
+		nextSetting,
+		request.Quota,
+		virtualAdminId,
+	); err != nil {
 		common.ApiError(c, err)
 		return
 	}
-	if nextSetting != nil {
-		if err := model.UpdateUserSetting(updatedUser.Id, *nextSetting); err != nil {
-			common.ApiError(c, err)
-			return
-		}
-	}
-	recordManageAuditFor(c, updatedUser.Id, "user.update", map[string]interface{}{
+	auditParams := map[string]interface{}{
 		"username": originUser.Username,
 		"id":       updatedUser.Id,
-	})
+	}
+	if request.Quota != nil {
+		auditParams["quota_to"] = logger.LogQuota(*request.Quota)
+		if virtualAdminId > 0 {
+			auditParams["quota_type"] = "virtual_remaining"
+		} else {
+			auditParams["quota_from"] = logger.LogQuota(originUser.Quota)
+			auditParams["quota_type"] = "actual"
+		}
+	}
+	recordManageAuditFor(c, updatedUser.Id, "user.update", auditParams)
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",

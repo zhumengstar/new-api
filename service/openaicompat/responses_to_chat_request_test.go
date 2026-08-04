@@ -104,14 +104,23 @@ func TestResponsesRequestToChatCompletionsRequestSupportsFunctionTools(t *testin
 	assert.Equal(t, "call_1", chatReq.Messages[1].ToolCallId)
 }
 
-func TestResponsesRequestToChatCompletionsRequestRejectsBuiltInTools(t *testing.T) {
+func TestResponsesRequestToChatCompletionsRequestSkipsUnsupportedTools(t *testing.T) {
 	req := &dto.OpenAIResponsesRequest{
 		Model: "test-model", Input: json.RawMessage(`"hello"`),
-		Tools: json.RawMessage(`[{"type":"web_search_preview"}]`),
+		Tools: json.RawMessage(`[
+			{"type":"namespace","name":"browser"},
+			{"type":"web_search_preview"},
+			{"type":"function","name":"lookup","parameters":{"type":"object"}}
+		]`),
+		ToolChoice: json.RawMessage(`{"type":"namespace","name":"browser"}`),
 	}
-	_, err := ResponsesRequestToChatCompletionsRequest(req)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "cannot be represented")
+
+	chatReq, err := ResponsesRequestToChatCompletionsRequest(req)
+
+	require.NoError(t, err)
+	require.Len(t, chatReq.Tools, 1)
+	assert.Equal(t, "lookup", chatReq.Tools[0].Function.Name)
+	assert.Nil(t, chatReq.ToolChoice)
 }
 
 func TestChatCompletionsToolCallResponseToResponsesResponse(t *testing.T) {

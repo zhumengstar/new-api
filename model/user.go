@@ -114,10 +114,14 @@ func UpdateUserSetting(id int, setting dto.UserSetting) error {
 	if err != nil {
 		return err
 	}
-	if err = DB.Model(&User{}).Where("id = ?", id).Update("setting", string(settingBytes)).Error; err != nil {
+	if err = updateUserSettingTx(DB, id, string(settingBytes)); err != nil {
 		return err
 	}
 	return invalidateUserCache(id)
+}
+
+func updateUserSettingTx(tx *gorm.DB, id int, setting string) error {
+	return tx.Model(&User{}).Where("id = ?", id).Update("setting", setting).Error
 }
 
 // 根据用户角色生成默认的边栏配置
@@ -338,8 +342,9 @@ func SearchUsers(keyword string, group string, role *int, status *int, startIdx 
 
 	likeCondition, likeArgs := buildUserSearchCondition(keyword, viewerRole)
 	query = query.Where("("+likeCondition+")", likeArgs...)
+	group = strings.TrimSpace(group)
 	if group != "" {
-		query = query.Where(commonGroupCol+" = ?", group)
+		query = query.Where(userGroupFilterCondition(), userGroupFilterPattern(group))
 	}
 	if role != nil {
 		query = query.Where("role = ?", *role)
@@ -385,6 +390,22 @@ func SearchUsers(keyword string, group string, role *int, status *int, startIdx 
 	applyUserTodayConsumedQuota(users)
 
 	return users, total, nil
+}
+
+func userGroupFilterCondition() string {
+	if common.UsingMainDatabase(common.DatabaseTypeMySQL) {
+		return `CONCAT(',', ` + commonGroupCol + `, ',') LIKE ? ESCAPE '!'`
+	}
+	return `(',' || ` + commonGroupCol + ` || ',') LIKE ? ESCAPE '!'`
+}
+
+func userGroupFilterPattern(group string) string {
+	group = strings.NewReplacer(
+		"!", "!!",
+		"%", "!%",
+		"_", "!_",
+	).Replace(group)
+	return "%," + group + ",%"
 }
 
 func buildUserSearchCondition(keyword string, viewerRole int) (string, []interface{}) {
@@ -784,13 +805,13 @@ func (user *User) Update(updatePassword bool) error {
 	return updateUserCache(*user)
 }
 
-func (user *User) Edit(updatePassword bool) error {
-	var err error
+func (user *User) editTx(tx *gorm.DB, updatePassword bool) error {
 	if updatePassword {
-		user.Password, err = common.Password2Hash(user.Password)
+		password, err := common.Password2Hash(user.Password)
 		if err != nil {
 			return err
 		}
+		user.Password = password
 	}
 
 	newUser := *user
@@ -806,13 +827,72 @@ func (user *User) Edit(updatePassword bool) error {
 		updates["password"] = newUser.Password
 	}
 
-	DB.First(&user, user.Id)
-	if err = DB.Model(user).Updates(updates).Error; err != nil {
+	var currentUser User
+	if err := tx.First(&currentUser, user.Id).Error; err != nil {
 		return err
 	}
+	return tx.Model(&currentUser).Updates(updates).Error
+}
 
-	// Update cache
-	return updateUserCache(*user)
+func (user *User) Edit(updatePassword bool) error {
+	if err := user.editTx(DB, updatePassword); err != nil {
+		return err
+	}
+	// The loaded user predates the update. Invalidating avoids writing stale
+	// group data back to Redis and lets the next request repopulate it from DB.
+	return invalidateUserCache(user.Id)
+}
+
+// EditManaged applies fields from the management form in one transaction.
+// quota is an actual remaining quota for root, or a virtual remaining quota
+// when virtualAdminId is set.
+func (user *User) EditManaged(
+	updatePassword bool,
+	setting *dto.UserSetting,
+	quota *int,
+	virtualAdminId int,
+) error {
+	if quota != nil && *quota < 0 {
+		return errors.New("quota must be non-negative")
+	}
+
+	var settingJSON string
+	if setting != nil {
+		settingBytes, err := common.Marshal(*setting)
+		if err != nil {
+			return err
+		}
+		settingJSON = string(settingBytes)
+	}
+
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		// Keep the same admin -> user lock order as the standalone virtual
+		// quota endpoint to avoid a lock inversion under concurrent updates.
+		if quota != nil && virtualAdminId > 0 {
+			if err := setUserVirtualRemainingQuotaTx(tx, virtualAdminId, user.Id, *quota); err != nil {
+				return err
+			}
+		}
+		if err := user.editTx(tx, updatePassword); err != nil {
+			return err
+		}
+		if setting != nil {
+			if err := updateUserSettingTx(tx, user.Id, settingJSON); err != nil {
+				return err
+			}
+		}
+		if quota == nil {
+			return nil
+		}
+		if virtualAdminId == 0 {
+			return tx.Model(&User{}).Where("id = ?", user.Id).Update("quota", *quota).Error
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	return invalidateUserCache(user.Id)
 }
 
 func (user *User) ClearBinding(bindingType string) error {

@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Button,
   Space,
@@ -74,36 +74,7 @@ const renderRole = (role, t) => {
   }
 };
 
-/**
- * Render username with remark
- */
-const renderUsername = (text, record) => {
-  const remark = record.remark;
-  if (!remark) {
-    return <span>{text}</span>;
-  }
-  const maxLen = 10;
-  const displayRemark =
-    remark.length > maxLen ? remark.slice(0, maxLen) + '…' : remark;
-  return (
-    <Space spacing={2}>
-      <span>{text}</span>
-      <Tooltip content={remark} position='top' showArrow>
-        <Tag color='white' shape='circle' className='!text-xs'>
-          <div className='flex items-center gap-1'>
-            <div
-              className='w-2 h-2 flex-shrink-0 rounded-full'
-              style={{ backgroundColor: '#10b981' }}
-            />
-            {displayRemark}
-          </div>
-        </Tag>
-      </Tooltip>
-    </Space>
-  );
-};
-
-const EditableContact = ({
+const EditableUserField = ({
   record,
   field,
   label,
@@ -111,14 +82,25 @@ const EditableContact = ({
   errorMessage,
   t,
   refresh,
+  maxLength = 64,
+  emptyValue = '-',
+  renderValue,
 }) => {
   const originalValue = record[field] || '';
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState(originalValue);
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
+  const skipBlurSaveRef = useRef(false);
+
+  useEffect(() => {
+    if (!editing) {
+      setValue(originalValue);
+    }
+  }, [editing, originalValue]);
 
   const cancel = () => {
+    skipBlurSaveRef.current = true;
     setValue(originalValue);
     setEditing(false);
   };
@@ -136,6 +118,8 @@ const EditableContact = ({
     try {
       const res = await API.put('/api/user/', {
         ...record,
+        password: '',
+        original_password: '',
         [field]: nextValue,
       });
       if (res.data.success) {
@@ -158,11 +142,18 @@ const EditableContact = ({
       <Input
         autoFocus
         value={value}
-        maxLength={64}
+        maxLength={maxLength}
         aria-label={t(label)}
         disabled={saving}
         onChange={setValue}
-        onBlur={() => void save()}
+        onClick={(event) => event.stopPropagation()}
+        onBlur={() => {
+          if (skipBlurSaveRef.current) {
+            skipBlurSaveRef.current = false;
+            return;
+          }
+          void save();
+        }}
         onEnterPress={() => void save()}
         onKeyDown={(event) => {
           if (event.key === 'Escape') {
@@ -182,8 +173,47 @@ const EditableContact = ({
         setEditing(true);
       }}
     >
-      {originalValue || '-'}
+      {renderValue ? renderValue(originalValue) : originalValue || emptyValue}
     </span>
+  );
+};
+
+const EditableUsernameRemark = ({ text, record, t, refresh }) => {
+  const renderRemark = (remark) => {
+    if (!remark) {
+      return (
+        <Typography.Text type='tertiary' size='small'>
+          + {t('备注')}
+        </Typography.Text>
+      );
+    }
+    const displayRemark =
+      remark.length > 10 ? `${remark.slice(0, 10)}…` : remark;
+    return (
+      <Tooltip content={remark} position='top' showArrow>
+        <Tag color='white' shape='circle' className='!text-xs'>
+          {displayRemark}
+        </Tag>
+      </Tooltip>
+    );
+  };
+
+  return (
+    <Space spacing={4}>
+      <span>{text}</span>
+      <EditableUserField
+        record={record}
+        field='remark'
+        label='备注'
+        successMessage='备注已更新'
+        errorMessage='备注更新失败'
+        t={t}
+        refresh={refresh}
+        maxLength={255}
+        emptyValue={t('备注')}
+        renderValue={renderRemark}
+      />
+    </Space>
   );
 };
 
@@ -477,7 +507,14 @@ export const getUsersColumns = ({
     {
       title: t('用户名'),
       dataIndex: 'username',
-      render: (text, record) => renderUsername(text, record),
+      render: (text, record) => (
+        <EditableUsernameRemark
+          text={text}
+          record={record}
+          t={t}
+          refresh={refresh}
+        />
+      ),
     },
     ...(showWeChatContact
       ? [
@@ -485,7 +522,7 @@ export const getUsersColumns = ({
             title: t('微信号'),
             dataIndex: 'wechat_contact',
             render: (text, record) => (
-              <EditableContact
+              <EditableUserField
                 record={record}
                 field='wechat_contact'
                 label='微信号'
@@ -500,7 +537,7 @@ export const getUsersColumns = ({
             title: t('QQ号'),
             dataIndex: 'qq_contact',
             render: (text, record) => (
-              <EditableContact
+              <EditableUserField
                 record={record}
                 field='qq_contact'
                 label='QQ号'

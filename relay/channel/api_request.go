@@ -50,6 +50,9 @@ func SetupApiRequestHeader(info *common.RelayInfo, c *gin.Context, req *http.Hea
 	} else {
 		req.Set("Content-Type", c.Request.Header.Get("Content-Type"))
 		req.Set("Accept", c.Request.Header.Get("Accept"))
+		if requestID := c.GetString(common2.RequestIdKey); requestID != "" {
+			req.Set(common2.RequestIdKey, requestID)
+		}
 		if info.IsStream && c.Request.Header.Get("Accept") == "" {
 			req.Set("Accept", "text/event-stream")
 		}

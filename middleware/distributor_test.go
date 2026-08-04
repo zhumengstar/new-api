@@ -1,6 +1,22 @@
 package middleware
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/QuantumNous/new-api/common"
+)
+
+func TestCanAccessPlaygroundGroup(t *testing.T) {
+	if !canAccessPlaygroundGroup(common.RoleCommonUser, "default,private-only", "private-only") {
+		t.Fatal("an explicitly assigned private group should be usable in playground")
+	}
+	if canAccessPlaygroundGroup(common.RoleCommonUser, "default", "private-only") {
+		t.Fatal("a common user must not access an unassigned private group")
+	}
+	if !canAccessPlaygroundGroup(common.RoleRootUser, "default", "private-only") {
+		t.Fatal("a root user should be able to access every group in playground")
+	}
+}
 
 func TestExtractModelNameFromGeminiPath(t *testing.T) {
 	tests := []struct {

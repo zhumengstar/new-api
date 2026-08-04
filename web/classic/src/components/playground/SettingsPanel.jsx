@@ -18,8 +18,16 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React from 'react';
-import { Card, Select, Typography, Button, Switch } from '@douyinfe/semi-ui';
-import { Sparkles, Users, ToggleLeft, X, Settings } from 'lucide-react';
+import {
+  Card,
+  Select,
+  Typography,
+  Button,
+  Switch,
+  Radio,
+  RadioGroup,
+} from '@douyinfe/semi-ui';
+import { Sparkles, Users, ToggleLeft, X, Settings, Server } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { renderGroupOption, selectFilter } from '../../helpers';
 import ParameterControl from './ParameterControl';
@@ -32,6 +40,8 @@ const SettingsPanel = ({
   parameterEnabled,
   models,
   groups,
+  channels,
+  canSelectChannel,
   styleState,
   showDebugPanel,
   customRequestMode,
@@ -113,6 +123,33 @@ const SettingsPanel = ({
           defaultPayload={previewPayload}
         />
 
+        {canSelectChannel && (
+          <div className={customRequestMode ? 'opacity-50' : ''}>
+            <div className='flex items-center gap-2 mb-2'>
+              <Server size={16} className='text-gray-500' />
+              <Typography.Text strong className='text-sm'>
+                {t('路由方式')}
+              </Typography.Text>
+            </div>
+            <RadioGroup
+              type='button'
+              value={inputs.routingMode || 'auto'}
+              onChange={(event) => {
+                const mode = event.target.value;
+                onInputChange('routingMode', mode);
+                if (mode === 'auto') {
+                  onInputChange('channel_id', 0);
+                }
+              }}
+              disabled={customRequestMode}
+              style={{ width: '100%' }}
+            >
+              <Radio value='auto'>{t('按分组自动调度')}</Radio>
+              <Radio value='channel'>{t('指定渠道')}</Radio>
+            </RadioGroup>
+          </div>
+        )}
+
         {/* 分组选择 */}
         <div className={customRequestMode ? 'opacity-50' : ''}>
           <div className='flex items-center gap-2 mb-2'>
@@ -144,6 +181,32 @@ const SettingsPanel = ({
             disabled={customRequestMode}
           />
         </div>
+
+        {canSelectChannel && inputs.routingMode === 'channel' && (
+          <div className={customRequestMode ? 'opacity-50' : ''}>
+            <div className='flex items-center gap-2 mb-2'>
+              <Server size={16} className='text-gray-500' />
+              <Typography.Text strong className='text-sm'>
+                {t('渠道')}
+              </Typography.Text>
+            </div>
+            <Select
+              placeholder={t('请选择渠道')}
+              name='channel_id'
+              required
+              selection
+              filter={selectFilter}
+              autoClearSearchValue={false}
+              onChange={(value) => onInputChange('channel_id', Number(value))}
+              value={Number(inputs.channel_id) || undefined}
+              optionList={channels}
+              style={{ width: '100%' }}
+              dropdownStyle={{ width: '100%', maxWidth: '100%' }}
+              className='!rounded-lg'
+              disabled={customRequestMode}
+            />
+          </div>
+        )}
 
         {/* 模型选择 */}
         <div className={customRequestMode ? 'opacity-50' : ''}>

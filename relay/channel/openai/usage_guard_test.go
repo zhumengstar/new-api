@@ -3,6 +3,7 @@ package openai
 import (
 	"testing"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 )
@@ -103,5 +104,76 @@ func TestGuardPromptUndercount_NoOverrideTinyGap(t *testing.T) {
 
 	if usage.PromptTokens != 700 {
 		t.Fatalf("PromptTokens must stay 700 when gap<=500, got %d", usage.PromptTokens)
+	}
+}
+
+func TestNormalizeOpenAIUsageTotals_RecoversUnaccountedOutput(t *testing.T) {
+	usage := &dto.Usage{
+		PromptTokens:     10,
+		CompletionTokens: 20,
+		TotalTokens:      45,
+		OutputTokens:     20,
+	}
+
+	if !normalizeOpenAIUsageTotals(usage) {
+		t.Fatal("expected inconsistent usage to be normalized")
+	}
+	if usage.CompletionTokens != 35 {
+		t.Fatalf("CompletionTokens expected 35, got %d", usage.CompletionTokens)
+	}
+	if usage.OutputTokens != 35 {
+		t.Fatalf("OutputTokens expected 35, got %d", usage.OutputTokens)
+	}
+	if usage.TotalTokens != 45 {
+		t.Fatalf("TotalTokens must stay at upstream value 45, got %d", usage.TotalTokens)
+	}
+}
+
+func TestNormalizeOpenAIUsageTotals_DoesNotDoubleCountReasoning(t *testing.T) {
+	usage := &dto.Usage{
+		PromptTokens:     10,
+		CompletionTokens: 35,
+		TotalTokens:      45,
+		CompletionTokenDetails: dto.OutputTokenDetails{
+			ReasoningTokens: 15,
+		},
+	}
+
+	if normalizeOpenAIUsageTotals(usage) {
+		t.Fatal("already consistent usage must not be modified")
+	}
+	if usage.CompletionTokens != 35 {
+		t.Fatalf("CompletionTokens must stay 35, got %d", usage.CompletionTokens)
+	}
+}
+
+func TestNormalizeOpenAIUsageTotals_RepairsMissingTotalOnly(t *testing.T) {
+	usage := &dto.Usage{PromptTokens: 10, CompletionTokens: 20}
+
+	if !normalizeOpenAIUsageTotals(usage) {
+		t.Fatal("expected missing total to be repaired")
+	}
+	if usage.TotalTokens != 30 {
+		t.Fatalf("TotalTokens expected 30, got %d", usage.TotalTokens)
+	}
+}
+
+func TestReplaceStreamUsage(t *testing.T) {
+	usage := &dto.Usage{PromptTokens: 10, CompletionTokens: 35, TotalTokens: 45}
+	data := `{"id":"chatcmpl-test","choices":[],"usage":{"prompt_tokens":10,"completion_tokens":20,"total_tokens":45},"vendor_field":"kept"}`
+
+	normalized := replaceStreamUsage(data, usage)
+	var payload struct {
+		Usage       dto.Usage `json:"usage"`
+		VendorField string    `json:"vendor_field"`
+	}
+	if err := common.UnmarshalJsonStr(normalized, &payload); err != nil {
+		t.Fatalf("normalized stream data must remain valid JSON: %v", err)
+	}
+	if payload.Usage.CompletionTokens != 35 {
+		t.Fatalf("stream completion_tokens expected 35, got %d", payload.Usage.CompletionTokens)
+	}
+	if payload.VendorField != "kept" {
+		t.Fatalf("unknown stream fields must be preserved, got %q", payload.VendorField)
 	}
 }
