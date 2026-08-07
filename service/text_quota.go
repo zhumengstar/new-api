@@ -164,17 +164,20 @@ func imageGenerationCallCostUSD(summary textQuotaSummary) decimal.Decimal {
 }
 
 func composeTieredTextQuota(relayInfo *relaycommon.RelayInfo, summary textQuotaSummary, tieredQuota int, tieredResult *billingexpr.TieredResult) int {
-	if summary.ToolCallSurchargeQuota.IsZero() {
-		return tieredQuota
-	}
-
 	if tieredResult != nil {
 		if snap := relayInfo.TieredBillingSnapshot; snap != nil {
-			return int(decimal.NewFromFloat(tieredResult.ActualQuotaBeforeGroup).
+			quota := int(decimal.NewFromFloat(tieredResult.ActualQuotaBeforeGroup).
 				Mul(decimal.NewFromFloat(snap.GroupRatio)).
 				Add(summary.ToolCallSurchargeQuota).
 				Round(0).
 				IntPart())
+			// Keep tiered billing consistent with ratio/price billing: a
+			// successful non-zero usage with a positive effective price must
+			// not disappear solely because integer quota rounding produced 0.
+			if quota == 0 && tieredResult.ActualQuotaBeforeGroup > 0 && summary.GroupRatio > 0 {
+				quota = 1
+			}
+			return quota
 		}
 	}
 

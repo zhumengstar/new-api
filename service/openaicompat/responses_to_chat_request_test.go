@@ -104,6 +104,22 @@ func TestResponsesRequestToChatCompletionsRequestSupportsFunctionTools(t *testin
 	assert.Equal(t, "call_1", chatReq.Messages[1].ToolCallId)
 }
 
+func TestResponsesRequestToChatCompletionsRequestAcceptsNestedFunctionCallShape(t *testing.T) {
+	req := &dto.OpenAIResponsesRequest{
+		Model: "test-model",
+		Input: json.RawMessage(`[
+			{"type":"function_call","id":"fc_1","function":{"name":"lookup","arguments":"{\"q\":\"x\"}"}},
+			{"role":"user","content":"continue"}
+		]`),
+	}
+
+	chatReq, err := ResponsesRequestToChatCompletionsRequest(req)
+	require.NoError(t, err)
+	require.Len(t, chatReq.Messages[0].ParseToolCalls(), 1)
+	assert.Equal(t, "fc_1", chatReq.Messages[0].ParseToolCalls()[0].ID)
+	assert.Equal(t, "lookup", chatReq.Messages[0].ParseToolCalls()[0].Function.Name)
+}
+
 func TestResponsesRequestToChatCompletionsRequestExpandsNamespaceTools(t *testing.T) {
 	req := &dto.OpenAIResponsesRequest{
 		Model: "test-model", Input: json.RawMessage(`"hello"`),

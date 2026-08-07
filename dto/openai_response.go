@@ -232,8 +232,8 @@ type Usage struct {
 	// the upstream value was implausibly small (typical of upstream prompt
 	// truncation/stub responses). The original upstream value is kept here for
 	// audit logging. It is intentionally not serialized to clients.
-	PromptUndercountUpstream int `json:"-"`
-	UsageSource          string `json:"usage_source,omitempty"`
+	PromptUndercountUpstream int    `json:"-"`
+	UsageSource              string `json:"usage_source,omitempty"`
 
 	PromptTokensDetails    InputTokenDetails  `json:"prompt_tokens_details"`
 	CompletionTokenDetails OutputTokenDetails `json:"completion_tokens_details"`
@@ -400,6 +400,7 @@ type ResponsesStreamResponse struct {
 	Type     string                   `json:"type"`
 	Response *OpenAIResponsesResponse `json:"response,omitempty"`
 	Delta    string                   `json:"delta,omitempty"`
+	Text     string                   `json:"text,omitempty"`
 	Item     *ResponsesOutput         `json:"item,omitempty"`
 	// - response.function_call_arguments.delta
 	// - response.function_call_arguments.done

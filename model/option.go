@@ -191,7 +191,7 @@ func loadOptionsFromDatabase() {
 	for _, option := range options {
 		err := updateOptionMap(option.Key, option.Value)
 		if err != nil {
-			common.SysLog("failed to update option map: " + err.Error())
+			common.SysLog("failed to update option map for " + option.Key + ": " + err.Error())
 		}
 	}
 }

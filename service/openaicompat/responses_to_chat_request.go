@@ -13,6 +13,7 @@ import (
 
 type responsesInputItem struct {
 	Type      string          `json:"type,omitempty"`
+	ID        string          `json:"id,omitempty"`
 	Role      string          `json:"role,omitempty"`
 	Content   json.RawMessage `json:"content,omitempty"`
 	Text      string          `json:"text,omitempty"`
@@ -25,6 +26,10 @@ type responsesInputItem struct {
 	Name      string          `json:"name,omitempty"`
 	Arguments json.RawMessage `json:"arguments,omitempty"`
 	Output    json.RawMessage `json:"output,omitempty"`
+	Function  *struct {
+		Name      string          `json:"name,omitempty"`
+		Arguments json.RawMessage `json:"arguments,omitempty"`
+	} `json:"function,omitempty"`
 }
 
 func ResponsesRequestToChatCompletionsRequest(req *dto.OpenAIResponsesRequest) (*dto.GeneralOpenAIRequest, error) {
@@ -274,12 +279,26 @@ func responsesInputToChatMessages(input json.RawMessage) ([]dto.Message, error) 
 	for _, item := range items {
 		switch item.Type {
 		case "function_call":
-			if strings.TrimSpace(item.CallID) == "" || strings.TrimSpace(item.Name) == "" {
+			callID := strings.TrimSpace(item.CallID)
+			if callID == "" {
+				callID = strings.TrimSpace(item.ID)
+			}
+			name := strings.TrimSpace(item.Name)
+			arguments := item.Arguments
+			if item.Function != nil {
+				if name == "" {
+					name = strings.TrimSpace(item.Function.Name)
+				}
+				if len(arguments) == 0 {
+					arguments = item.Function.Arguments
+				}
+			}
+			if callID == "" || name == "" {
 				return nil, errors.New("function_call requires call_id and name in responses fallback")
 			}
 			toolCall := []dto.ToolCallRequest{{
-				ID: item.CallID, Type: "function",
-				Function: dto.FunctionRequest{Name: item.Name, Arguments: dto.ResponsesArgumentsString(item.Arguments)},
+				ID: callID, Type: "function",
+				Function: dto.FunctionRequest{Name: name, Arguments: dto.ResponsesArgumentsString(arguments)},
 			}}
 			toolCallsRaw, _ := common.Marshal(toolCall)
 			messages = append(messages, dto.Message{Role: "assistant", Content: nil, ToolCalls: toolCallsRaw})

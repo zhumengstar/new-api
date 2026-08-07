@@ -48,14 +48,9 @@ func OaiResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 	if info == nil || info.ResponsesUsageInfo == nil || info.ResponsesUsageInfo.BuiltInTools == nil {
 		return usage, nil
 	}
-	// 解析 Tools 用量
-	for _, tool := range responsesResponse.Tools {
-		buildToolinfo, ok := info.ResponsesUsageInfo.BuiltInTools[common.Interface2String(tool["type"])]
-		if !ok || buildToolinfo == nil {
-			logger.LogError(c, fmt.Sprintf("BuiltInTools not found for tool type: %v", tool["type"]))
-			continue
-		}
-		buildToolinfo.CallCount++
+	// 只统计上游实际返回的工具调用，不统计请求中声明但未调用的工具。
+	for _, output := range responsesResponse.Output {
+		recordResponsesBuiltInToolCall(info, output.Type)
 	}
 	return usage, nil
 }
@@ -104,6 +99,37 @@ func responsesUsageForBilling(info *relaycommon.RelayInfo, upstream *dto.Usage, 
 	return usage
 }
 
+func recordResponsesBuiltInToolCall(info *relaycommon.RelayInfo, itemType string) {
+	if info == nil || info.ResponsesUsageInfo == nil || info.ResponsesUsageInfo.BuiltInTools == nil {
+		return
+	}
+
+	toolName := ""
+	switch itemType {
+	case dto.BuildInCallWebSearchCall:
+		toolName = dto.BuildInToolWebSearchPreview
+	case "file_search_call":
+		toolName = dto.BuildInToolFileSearch
+	}
+	if tool, exists := info.ResponsesUsageInfo.BuiltInTools[toolName]; exists && tool != nil {
+		tool.CallCount++
+	}
+}
+
+func appendResponsesSnapshot(builder *strings.Builder, snapshots map[string]string, key string, value string) {
+	if value == "" {
+		return
+	}
+	previous := snapshots[key]
+	if previous != "" && strings.HasPrefix(value, previous) {
+		value = value[len(previous):]
+	}
+	if value != "" {
+		builder.WriteString(value)
+	}
+	snapshots[key] = previous + value
+}
+
 func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NewAPIError) {
 	if resp == nil || resp.Body == nil {
 		logger.LogError(c, "invalid response or response body")
@@ -116,6 +142,11 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 	var completedUsage *dto.Usage
 	var completedResponseBody []byte
 	var responseTextBuilder strings.Builder
+	outputTextSnapshots := make(map[string]string)
+	reasoningTextSnapshots := make(map[string]string)
+	functionArgumentSnapshots := make(map[string]string)
+	functionNames := make(map[string]bool)
+	sawOutput := false
 
 	helper.StreamScannerHandler(c, resp, info, func(data string, sr *helper.StreamResult) {
 
@@ -126,10 +157,13 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 			sr.Error(err)
 			return
 		}
-		sendResponsesStreamData(c, streamResponse, data)
+		sendEvent := true
 		switch streamResponse.Type {
 		case "response.completed":
 			if streamResponse.Response != nil {
+				if len(streamResponse.Response.Output) > 0 {
+					sawOutput = true
+				}
 				if streamResponse.Response.Usage != nil {
 					completedUsage = streamResponse.Response.Usage
 					completedResponseBody = common.StringToByteSlice(data)
@@ -139,22 +173,65 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 					c.Set("image_generation_call_quality", streamResponse.Response.GetQuality())
 					c.Set("image_generation_call_size", streamResponse.Response.GetSize())
 				}
-			}
-		case "response.output_text.delta":
-			// 处理输出文本
-			responseTextBuilder.WriteString(streamResponse.Delta)
-		case dto.ResponsesOutputTypeItemDone:
-			// 函数调用处理
-			if streamResponse.Item != nil {
-				switch streamResponse.Item.Type {
-				case dto.BuildInCallWebSearchCall:
-					if info != nil && info.ResponsesUsageInfo != nil && info.ResponsesUsageInfo.BuiltInTools != nil {
-						if webSearchTool, exists := info.ResponsesUsageInfo.BuiltInTools[dto.BuildInToolWebSearchPreview]; exists && webSearchTool != nil {
-							webSearchTool.CallCount++
-						}
-					}
+				if !sawOutput && (streamResponse.Response.Usage == nil || (streamResponse.Response.Usage.OutputTokens == 0 && streamResponse.Response.Usage.TotalTokens <= streamResponse.Response.Usage.InputTokens)) {
+					sendEvent = false
 				}
 			}
+		case "response.output_text.delta":
+			if streamResponse.Delta != "" {
+				sawOutput = true
+			}
+			appendResponsesSnapshot(&responseTextBuilder, outputTextSnapshots, "output", streamResponse.Delta)
+		case "response.output_text.done":
+			if streamResponse.Text != "" {
+				sawOutput = true
+			}
+			appendResponsesSnapshot(&responseTextBuilder, outputTextSnapshots, "output", streamResponse.Text)
+		case "response.reasoning_text.delta", "response.reasoning_summary_text.delta":
+			if streamResponse.Delta != "" {
+				sawOutput = true
+			}
+			appendResponsesSnapshot(&responseTextBuilder, reasoningTextSnapshots, "reasoning", streamResponse.Delta)
+		case "response.reasoning_text.done", "response.reasoning_summary_text.done":
+			if streamResponse.Text != "" {
+				sawOutput = true
+			}
+			appendResponsesSnapshot(&responseTextBuilder, reasoningTextSnapshots, "reasoning", streamResponse.Text)
+		case "response.function_call_arguments.delta":
+			if streamResponse.Delta != "" {
+				sawOutput = true
+			}
+			callKey := streamResponse.ItemID
+			if callKey == "" {
+				callKey = "function_call"
+			}
+			appendResponsesSnapshot(&responseTextBuilder, functionArgumentSnapshots, callKey, functionArgumentSnapshots[callKey]+streamResponse.Delta)
+		case "response.output_item.added", "response.output_item.done":
+			if streamResponse.Item == nil {
+				break
+			}
+			sawOutput = true
+			if streamResponse.Item.Type == "function_call" {
+				sawOutput = true
+				callKey := streamResponse.Item.ID
+				if callKey == "" {
+					callKey = streamResponse.Item.CallId
+				}
+				if callKey == "" {
+					callKey = "function_call"
+				}
+				if streamResponse.Item.Name != "" && !functionNames[callKey] {
+					responseTextBuilder.WriteString(streamResponse.Item.Name)
+					functionNames[callKey] = true
+				}
+				appendResponsesSnapshot(&responseTextBuilder, functionArgumentSnapshots, callKey, streamResponse.Item.ArgumentsString())
+			}
+			if streamResponse.Type == dto.ResponsesOutputTypeItemDone {
+				recordResponsesBuiltInToolCall(info, streamResponse.Item.Type)
+			}
+		}
+		if sendEvent {
+			sendResponsesStreamData(c, streamResponse, data)
 		}
 	})
 
@@ -162,13 +239,16 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 		usage = responsesUsageForBilling(info, completedUsage, completedResponseBody)
 	}
 
-	if usage.CompletionTokens == 0 && completedUsage == nil {
-		// 计算输出文本的 token 数量
+	// Some compatible Responses upstreams send response.completed with an empty
+	// or partial usage object. Estimate all output-bearing events received here
+	// instead of recording a successful request with zero output tokens. Tool
+	// execution results arrive in a later request and belong to that request's
+	// input tokens, so they are intentionally not added here.
+	if usage.CompletionTokens == 0 {
 		tempStr := responseTextBuilder.String()
-		if len(tempStr) > 0 {
-			// 非正常结束，使用输出文本的 token 数量
-			completionTokens := service.CountTextToken(tempStr, info.UpstreamModelName)
-			usage.CompletionTokens = completionTokens
+		if len(tempStr) > 0 && info != nil {
+			usage.CompletionTokens = service.CountTextToken(tempStr, info.UpstreamModelName)
+			usage.UsageSource = "estimated_stream_output"
 		}
 	}
 
@@ -176,8 +256,9 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 		usage.PromptTokens = info.GetEstimatePromptTokens()
 	}
 
-	if completedUsage == nil {
-		usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
+	normalizeOpenAIUsageTotals(usage)
+	if !sawOutput && usage.CompletionTokens == 0 {
+		return nil, types.NewOpenAIError(fmt.Errorf("upstream responses returned no output"), types.ErrorCodeBadResponse, http.StatusBadGateway)
 	}
 
 	return usage, nil

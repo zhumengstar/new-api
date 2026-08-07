@@ -402,6 +402,41 @@ func TestComposeTieredTextQuotaFallbackKeepsToolCallSurcharges(t *testing.T) {
 	require.Equal(t, 13750, quota)
 }
 
+func TestComposeTieredTextQuotaKeepsSmallPositiveUsageBillable(t *testing.T) {
+	relayInfo := &relaycommon.RelayInfo{
+		PriceData: types.PriceData{
+			GroupRatioInfo: types.GroupRatioInfo{GroupRatio: 0.16},
+		},
+		TieredBillingSnapshot: &billingexpr.BillingSnapshot{
+			BillingMode: "tiered_expr",
+			GroupRatio:  0.16,
+		},
+	}
+
+	quota := composeTieredTextQuota(relayInfo, textQuotaSummary{GroupRatio: 0.16}, 0, &billingexpr.TieredResult{
+		ActualQuotaBeforeGroup: 0.2,
+		ActualQuotaAfterGroup:  0,
+	})
+
+	require.Equal(t, 1, quota)
+}
+
+func TestComposeTieredTextQuotaKeepsZeroUsageFree(t *testing.T) {
+	relayInfo := &relaycommon.RelayInfo{
+		PriceData: types.PriceData{
+			GroupRatioInfo: types.GroupRatioInfo{GroupRatio: 0.16},
+		},
+		TieredBillingSnapshot: &billingexpr.BillingSnapshot{
+			BillingMode: "tiered_expr",
+			GroupRatio:  0.16,
+		},
+	}
+
+	quota := composeTieredTextQuota(relayInfo, textQuotaSummary{GroupRatio: 0.16}, 0, &billingexpr.TieredResult{})
+
+	require.Equal(t, 0, quota)
+}
+
 func TestComposeTieredTextQuotaErrorFallbackUsesPreConsumedQuota(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	w := httptest.NewRecorder()
