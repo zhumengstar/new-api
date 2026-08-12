@@ -76,3 +76,30 @@ func TestShouldRetryKeepsChannelTransientFailuresRetryable(t *testing.T) {
 
 	require.True(t, shouldRetry(ctx, err, 1))
 }
+
+func TestRetrySelectionFailurePreservesPreviousUpstreamError(t *testing.T) {
+	upstreamErr := types.NewOpenAIError(
+		errors.New("temporary upstream failure"),
+		types.ErrorCodeBadResponseStatusCode,
+		http.StatusServiceUnavailable,
+	)
+	selectionErr := types.NewError(
+		errors.New("no alternative channel"),
+		types.ErrorCodeGetChannelFailed,
+		types.ErrOptionWithSkipRetry(),
+	)
+
+	actual := preservePreviousRelayError(upstreamErr, selectionErr)
+	require.Same(t, upstreamErr, actual)
+	require.Equal(t, http.StatusServiceUnavailable, actual.StatusCode)
+}
+
+func TestRetrySelectionFailureUsesSelectionErrorWithoutPreviousAttempt(t *testing.T) {
+	selectionErr := types.NewError(
+		errors.New("no available channel"),
+		types.ErrorCodeGetChannelFailed,
+		types.ErrOptionWithSkipRetry(),
+	)
+
+	require.Same(t, selectionErr, preservePreviousRelayError(nil, selectionErr))
+}

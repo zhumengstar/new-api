@@ -200,7 +200,13 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		channel, channelErr := getChannel(c, relayInfo, retryParam)
 		if channelErr != nil {
 			logger.LogError(c, channelErr.Error())
-			newAPIError = channelErr
+			// A previous upstream attempt may have failed transiently and marked its
+			// channel as tried. If the group has no alternative channel, preserve
+			// that real upstream error instead of replacing it with the internal
+			// "no available channel" selection error (which is exposed as a 500).
+			// This is especially important for scheduler channels that already do
+			// their own account-level failover behind one NewAPI channel.
+			newAPIError = preservePreviousRelayError(relayInfo.LastError, channelErr)
 			break
 		}
 
@@ -417,6 +423,13 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) b
 		return false
 	}
 	return operation_setting.ShouldRetryByStatusCode(code)
+}
+
+func preservePreviousRelayError(previous, selectionErr *types.NewAPIError) *types.NewAPIError {
+	if previous != nil {
+		return previous
+	}
+	return selectionErr
 }
 
 func processChannelError(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError) {
