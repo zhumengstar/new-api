@@ -349,11 +349,54 @@ func usageSemanticFromUsage(relayInfo *relaycommon.RelayInfo, usage *dto.Usage) 
 	return "openai"
 }
 
-func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage *dto.Usage, extraContent []string) {
-	originUsage := usage
-	if usage == nil {
-		extraContent = append(extraContent, "上游无计费信息")
+func recoverMissingTextUsage(relayInfo *relaycommon.RelayInfo, usage *dto.Usage) (*dto.Usage, string) {
+	if ValidUsage(usage) {
+		return usage, ""
 	}
+
+	if relayInfo != nil && relayInfo.StreamStatus != nil && !relayInfo.StreamStatus.IsNormalEnd() {
+		// Keep an explicit zero usage object here. calculateTextQuotaSummary
+		// intentionally estimates prompt tokens for nil usage, which is useful
+		// after a normal response but must not charge an interrupted stream.
+		if usage == nil {
+			usage = &dto.Usage{}
+		}
+		switch relayInfo.StreamStatus.EndReason {
+		case relaycommon.StreamEndReasonClientGone:
+			return usage, "客户端已断开，未收到最终 usage，已退还预扣费"
+		case relaycommon.StreamEndReasonTimeout:
+			return usage, "流式读取超时，未收到最终 usage，已退还预扣费"
+		case relaycommon.StreamEndReasonScannerErr:
+			return usage, "上游流读取失败，未收到最终 usage，已退还预扣费"
+		default:
+			return usage, "流式请求异常结束，未收到最终 usage，已退还预扣费"
+		}
+	}
+
+	estimatedPromptTokens := 0
+	if relayInfo != nil {
+		estimatedPromptTokens = relayInfo.GetEstimatePromptTokens()
+	}
+	if estimatedPromptTokens <= 0 {
+		return usage, "上游未返回 usage，且没有可用的本地输入 token 估算，无法扣费"
+	}
+
+	recovered := dto.Usage{}
+	if usage != nil {
+		recovered = *usage
+	}
+	recovered.PromptTokens = estimatedPromptTokens
+	recovered.TotalTokens = estimatedPromptTokens
+	recovered.UsageSource = "estimated_input_missing_upstream_usage"
+	return &recovered, "上游未返回 usage，已按本地估算的输入 token 保守结算，未估算输出 token"
+}
+
+func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage *dto.Usage, extraContent []string) {
+	usage, missingUsageNote := recoverMissingTextUsage(relayInfo, usage)
+	if missingUsageNote != "" {
+		extraContent = append(extraContent, missingUsageNote)
+	}
+	originUsage := usage
 	if originUsage != nil {
 		ObserveChannelAffinityUsageCacheByRelayFormat(ctx, usage, relayInfo.GetFinalRequestRelayFormat())
 	}
@@ -399,7 +442,6 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 	}
 
 	if summary.TotalTokens == 0 {
-		extraContent = append(extraContent, "上游没有返回计费信息，无法扣费（可能是上游超时）")
 		logger.LogError(ctx, fmt.Sprintf("total tokens is 0, cannot consume quota, userId %d, channelId %d, tokenId %d, model %s， pre-consumed quota %d", relayInfo.UserId, relayInfo.ChannelId, relayInfo.TokenId, summary.ModelName, relayInfo.FinalPreConsumedQuota))
 	} else {
 		model.UpdateUserUsedQuotaAndRequestCount(relayInfo.UserId, summary.Quota)

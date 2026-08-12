@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"net/http/httptest"
 	"testing"
 	"time"
@@ -15,6 +16,46 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
+
+func TestRecoverMissingTextUsageDoesNotBillClientDisconnect(t *testing.T) {
+	info := &relaycommon.RelayInfo{IsStream: true, StreamStatus: relaycommon.NewStreamStatus()}
+	info.SetEstimatePromptTokens(1234)
+	info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonClientGone, context.Canceled)
+
+	usage, note := recoverMissingTextUsage(info, &dto.Usage{})
+	require.False(t, ValidUsage(usage))
+	require.Contains(t, note, "客户端已断开")
+}
+
+func TestRecoverMissingNilUsageDoesNotBillClientDisconnect(t *testing.T) {
+	info := &relaycommon.RelayInfo{IsStream: true, StreamStatus: relaycommon.NewStreamStatus()}
+	info.SetEstimatePromptTokens(1234)
+	info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonClientGone, context.Canceled)
+
+	usage, note := recoverMissingTextUsage(info, nil)
+	require.NotNil(t, usage)
+	require.False(t, ValidUsage(usage))
+	require.Contains(t, note, "客户端已断开")
+}
+
+func TestRecoverMissingTextUsageUsesPromptEstimateAfterNormalEnd(t *testing.T) {
+	info := &relaycommon.RelayInfo{IsStream: true, StreamStatus: relaycommon.NewStreamStatus()}
+	info.SetEstimatePromptTokens(1234)
+	info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonDone, nil)
+
+	usage, note := recoverMissingTextUsage(info, &dto.Usage{})
+	require.Equal(t, 1234, usage.PromptTokens)
+	require.Equal(t, 1234, usage.TotalTokens)
+	require.Equal(t, "estimated_input_missing_upstream_usage", usage.UsageSource)
+	require.Contains(t, note, "保守结算")
+}
+
+func TestRecoverMissingTextUsagePreservesUpstreamUsage(t *testing.T) {
+	upstream := &dto.Usage{PromptTokens: 10, CompletionTokens: 5, TotalTokens: 15}
+	usage, note := recoverMissingTextUsage(&relaycommon.RelayInfo{}, upstream)
+	require.Same(t, upstream, usage)
+	require.Empty(t, note)
+}
 
 func TestCalculateTextQuotaSummaryUnifiedForClaudeSemantic(t *testing.T) {
 	gin.SetMode(gin.TestMode)
