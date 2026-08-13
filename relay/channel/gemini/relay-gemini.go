@@ -51,6 +51,14 @@ var geminiSupportedMimeTypes = map[string]bool{
 }
 
 var geminiMimeTypeAliases = map[string]string{
+	// MP4 is an ISO base media container. Gemini accepts that container as
+	// video/mp4 but rejects the common audio/mp4 and M4A labels even when the
+	// payload is the same ftyp-based MP4 file. Relabel the container without
+	// touching its bytes; arbitrary audio formats are intentionally excluded.
+	"application/mp4":   "video/mp4",
+	"audio/mp4":         "video/mp4",
+	"audio/m4a":         "video/mp4",
+	"audio/x-m4a":       "video/mp4",
 	"audio/wave":        "audio/wav",
 	"audio/x-wav":       "audio/wav",
 	"image/pjpeg":       "image/jpeg",
@@ -63,6 +71,9 @@ var geminiMimeTypeAliases = map[string]string{
 
 func normalizeGeminiMimeType(mimeType string) string {
 	normalized := strings.ToLower(strings.TrimSpace(mimeType))
+	if separator := strings.IndexByte(normalized, ';'); separator >= 0 {
+		normalized = strings.TrimSpace(normalized[:separator])
+	}
 	if alias, ok := geminiMimeTypeAliases[normalized]; ok {
 		return alias
 	}

@@ -33,6 +33,16 @@ func TestNormalizeGeminiMimeType(t *testing.T) {
 			input:    "video/mp4",
 			expected: "video/mp4",
 		},
+		{
+			name:     "audio mp4 container alias",
+			input:    "audio/mp4",
+			expected: "video/mp4",
+		},
+		{
+			name:     "m4a container alias with parameter",
+			input:    " Audio/X-M4A; codecs=mp4a.40.2 ",
+			expected: "video/mp4",
+		},
 	}
 
 	for _, test := range tests {
