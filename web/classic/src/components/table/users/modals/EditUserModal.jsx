@@ -469,7 +469,9 @@ const EditUserModal = (props) => {
           data.group = groups;
           setSelectedGroups(groups);
           setUserGroupRatios(parseUserGroupRatios(data.setting));
-          setUserModelPrices(parseUserModelPrices(data.setting));
+          setUserModelPriceRules(
+            parseUserModelPriceRules(data.setting, groups[0] || 'default'),
+          );
           setInputs({ ...getInitValues(), ...data });
         }
         props.refresh();
