@@ -667,6 +667,8 @@ export const getUsersColumns = ({
     {
       title: 'ID',
       dataIndex: 'id',
+      sorter: true,
+      sortOrder: getSortOrder('id'),
     },
     {
       title: t('用户名'),

@@ -256,6 +256,7 @@ export const useUsersData = () => {
     const activeSorter = changeInfo?.sorter;
     const field = activeSorter?.field || activeSorter?.dataIndex;
     if (
+      field !== 'id' &&
       field !== 'quota' &&
       field !== 'today_consumed_quota' &&
       field !== 'total_consumed_quota'

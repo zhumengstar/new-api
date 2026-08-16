@@ -229,6 +229,8 @@ func GetUserOrder(sortBy string, sortOrder string) string {
 	}
 
 	switch sortBy {
+	case "id":
+		return "id " + order
 	case "created_at":
 		return "created_at " + order + ", id desc"
 	case "last_login_at":

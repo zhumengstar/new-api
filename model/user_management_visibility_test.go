@@ -241,6 +241,11 @@ func TestGetUserOrderSupportsQuota(t *testing.T) {
 	assert.Equal(t, "quota desc, id desc", GetUserOrder("quota", "desc"))
 }
 
+func TestGetUserOrderSupportsID(t *testing.T) {
+	assert.Equal(t, "id asc", GetUserOrder("id", "asc"))
+	assert.Equal(t, "id desc", GetUserOrder("id", "desc"))
+}
+
 func TestGetUserOrderSupportsTotalConsumedQuota(t *testing.T) {
 	assert.Equal(t, "used_quota asc, id desc", GetUserOrder("total_consumed_quota", "asc"))
 	assert.Equal(t, DefaultUserOrder, GetUserOrder("today_consumed_quota", "desc"))
