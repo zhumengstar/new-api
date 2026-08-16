@@ -78,6 +78,12 @@ export const useChannelsData = () => {
   // Type tabs states
   const [activeTypeKey, setActiveTypeKey] = useState('all');
   const [typeCounts, setTypeCounts] = useState({});
+  const [activeModelFamily, setActiveModelFamily] = useState('all');
+  const [activeModelType, setActiveModelType] = useState('all');
+  const [activeBillingType, setActiveBillingType] = useState('all');
+  const [modelFamilyCounts, setModelFamilyCounts] = useState({});
+  const [modelTypeCounts, setModelTypeCounts] = useState({});
+  const [billingTypeCounts, setBillingTypeCounts] = useState({});
 
   // Model test states
   const [showModelTestModal, setShowModelTestModal] = useState(false);
@@ -324,6 +330,9 @@ export const useChannelsData = () => {
     enableTagMode,
     typeKey = activeTypeKey,
     statusF,
+    modelFamily = activeModelFamily,
+    modelType = activeModelType,
+    billingType = activeBillingType,
   ) => {
     if (statusF === undefined) statusF = statusFilter;
 
@@ -337,6 +346,9 @@ export const useChannelsData = () => {
         page,
         pageSize,
         idSort,
+        modelFamily,
+        modelType,
+        billingType,
       );
       setLoading(false);
       return;
@@ -346,8 +358,9 @@ export const useChannelsData = () => {
     setLoading(true);
     const typeParam = typeKey !== 'all' ? `&type=${typeKey}` : '';
     const statusParam = statusF !== 'all' ? `&status=${statusF}` : '';
+    const facetParams = `&model_family=${encodeURIComponent(modelFamily)}&model_type=${encodeURIComponent(modelType)}&billing_type=${encodeURIComponent(billingType)}`;
     const res = await API.get(
-      `/api/channel/?p=${page}&page_size=${pageSize}&id_sort=${idSort}&tag_mode=${enableTagMode}${typeParam}${statusParam}`,
+      `/api/channel/?p=${page}&page_size=${pageSize}&id_sort=${idSort}&tag_mode=${enableTagMode}${typeParam}${statusParam}${facetParams}`,
     );
 
     if (res === undefined || reqId !== requestCounter.current) {
@@ -356,7 +369,14 @@ export const useChannelsData = () => {
 
     const { success, message, data } = res.data;
     if (success) {
-      const { items, total, type_counts } = data;
+      const {
+        items,
+        total,
+        type_counts,
+        model_family_counts,
+        model_type_counts,
+        billing_type_counts,
+      } = data;
       if (type_counts) {
         const sumAll = Object.values(type_counts).reduce(
           (acc, v) => acc + v,
@@ -364,6 +384,9 @@ export const useChannelsData = () => {
         );
         setTypeCounts({ ...type_counts, all: sumAll });
       }
+      setModelFamilyCounts(model_family_counts || {});
+      setModelTypeCounts(model_type_counts || {});
+      setBillingTypeCounts(billing_type_counts || {});
       setChannelFormat(items, enableTagMode);
       setChannelCount(total);
     } else {
@@ -380,6 +403,9 @@ export const useChannelsData = () => {
     page = 1,
     pageSz = pageSize,
     sortFlag = idSort,
+    modelFamily = activeModelFamily,
+    modelType = activeModelType,
+    billingType = activeBillingType,
   ) => {
     const { searchKeyword, searchGroup, searchModel } = getFormValues();
     setSearching(true);
@@ -392,23 +418,37 @@ export const useChannelsData = () => {
           enableTagMode,
           typeKey,
           statusF,
+          modelFamily,
+          modelType,
+          billingType,
         );
         return;
       }
 
       const typeParam = typeKey !== 'all' ? `&type=${typeKey}` : '';
       const statusParam = statusF !== 'all' ? `&status=${statusF}` : '';
+      const facetParams = `&model_family=${encodeURIComponent(modelFamily)}&model_type=${encodeURIComponent(modelType)}&billing_type=${encodeURIComponent(billingType)}`;
       const res = await API.get(
-        `/api/channel/search?keyword=${searchKeyword}&group=${searchGroup}&model=${searchModel}&id_sort=${sortFlag}&tag_mode=${enableTagMode}&p=${page}&page_size=${pageSz}${typeParam}${statusParam}`,
+        `/api/channel/search?keyword=${searchKeyword}&group=${searchGroup}&model=${searchModel}&id_sort=${sortFlag}&tag_mode=${enableTagMode}&p=${page}&page_size=${pageSz}${typeParam}${statusParam}${facetParams}`,
       );
       const { success, message, data } = res.data;
       if (success) {
-        const { items = [], total = 0, type_counts = {} } = data;
+        const {
+          items = [],
+          total = 0,
+          type_counts = {},
+          model_family_counts = {},
+          model_type_counts = {},
+          billing_type_counts = {},
+        } = data;
         const sumAll = Object.values(type_counts).reduce(
           (acc, v) => acc + v,
           0,
         );
         setTypeCounts({ ...type_counts, all: sumAll });
+        setModelFamilyCounts(model_family_counts);
+        setModelTypeCounts(model_type_counts);
+        setBillingTypeCounts(billing_type_counts);
         setChannelFormat(items, enableTagMode);
         setChannelCount(total);
         setActivePage(page);
@@ -418,6 +458,55 @@ export const useChannelsData = () => {
     } finally {
       setSearching(false);
     }
+  };
+
+  const handleChannelFacetChange = (facet, value) => {
+    const nextValue = value || 'all';
+    let nextFamily = activeModelFamily;
+    let nextModelType = activeModelType;
+    let nextBillingType = activeBillingType;
+    if (facet === 'reset') {
+      nextFamily = 'all';
+      nextModelType = 'all';
+      nextBillingType = 'all';
+    } else if (facet === 'family') {
+      nextFamily = nextValue;
+    } else if (facet === 'modelType') {
+      nextModelType = nextValue;
+    } else if (facet === 'billingType') {
+      nextBillingType = nextValue;
+    }
+    setActiveModelFamily(nextFamily);
+    setActiveModelType(nextModelType);
+    setActiveBillingType(nextBillingType);
+    setActivePage(1);
+
+    const { searchKeyword, searchGroup, searchModel } = getFormValues();
+    if (searchKeyword !== '' || searchGroup !== '' || searchModel !== '') {
+      searchChannels(
+        enableTagMode,
+        activeTypeKey,
+        statusFilter,
+        1,
+        pageSize,
+        idSort,
+        nextFamily,
+        nextModelType,
+        nextBillingType,
+      );
+      return;
+    }
+    loadChannels(
+      1,
+      pageSize,
+      idSort,
+      enableTagMode,
+      activeTypeKey,
+      statusFilter,
+      nextFamily,
+      nextModelType,
+      nextBillingType,
+    );
   };
 
   // Refresh
@@ -1177,6 +1266,13 @@ export const useChannelsData = () => {
     typeCounts,
     channelTypeCounts,
     availableTypeKeys,
+    activeModelFamily,
+    activeModelType,
+    activeBillingType,
+    modelFamilyCounts,
+    modelTypeCounts,
+    billingTypeCounts,
+    handleChannelFacetChange,
 
     // Model test states
     showModelTestModal,

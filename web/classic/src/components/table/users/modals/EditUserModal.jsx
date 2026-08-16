@@ -93,31 +93,6 @@ const formatRatio = (ratio) => {
   return `${Number.parseFloat(value.toFixed(6))}x`;
 };
 
-const MODEL_FAMILY_OPTIONS = [
-  { value: 'claude', label: 'Claude', patterns: ['claude'] },
-  { value: 'gemini', label: 'Gemini', patterns: ['gemini'] },
-  { value: 'grok', label: 'Grok', patterns: ['grok'] },
-  {
-    value: 'openai',
-    label: 'OpenAI',
-    patterns: ['gpt', 'codex', 'o1-', 'o3-', 'o4-'],
-  },
-  { value: 'qwen', label: 'Qwen', patterns: ['qwen', '通义', '千问'] },
-  { value: 'deepseek', label: 'DeepSeek', patterns: ['deepseek'] },
-  { value: 'other', label: '其他', patterns: [] },
-];
-
-const getModelFamily = (model) => {
-  const normalized = String(model || '').toLowerCase();
-  return (
-    MODEL_FAMILY_OPTIONS.find(
-      (family) =>
-        family.value !== 'other' &&
-        family.patterns.some((pattern) => normalized.includes(pattern)),
-    )?.value || 'other'
-  );
-};
-
 const getPublicGroups = (groupOptions) =>
   groupOptions
     .filter((option) => option.isPublic)
@@ -220,7 +195,6 @@ const EditUserModal = (props) => {
   const [userGroupRatios, setUserGroupRatios] = useState({});
   const [perCallModels, setPerCallModels] = useState(null);
   const [draftPriceGroup, setDraftPriceGroup] = useState('');
-  const [draftPriceFamily, setDraftPriceFamily] = useState('all');
   const [draftPriceModels, setDraftPriceModels] = useState([]);
   const [draftModelPrice, setDraftModelPrice] = useState(null);
   const [userModelPriceRules, setUserModelPriceRules] = useState([]);
@@ -328,7 +302,6 @@ const EditUserModal = (props) => {
       fetchPerCallModels();
     }
     setDraftPriceGroup('');
-    setDraftPriceFamily('all');
     setDraftPriceModels([]);
     setDraftModelPrice(null);
     setBindingModalVisible(false);
@@ -793,12 +766,11 @@ const EditUserModal = (props) => {
                         <Col span={24}>
                           <Form.Slot label={t('按次模型单独定价')}>
                             <div className='border border-gray-200 rounded-lg p-3'>
-                              <div className='grid grid-cols-1 gap-2 sm:grid-cols-[150px_130px_minmax(0,1fr)_140px_auto]'>
+                              <div className='grid grid-cols-1 gap-2 sm:grid-cols-[150px_minmax(0,1fr)_140px_auto]'>
                                 <Select
                                   value={draftPriceGroup || undefined}
                                   onChange={(value) => {
                                     setDraftPriceGroup(value || '');
-                                    setDraftPriceFamily('all');
                                     setDraftPriceModels([]);
                                   }}
                                   placeholder={t('选择分组')}
@@ -815,35 +787,6 @@ const EditUserModal = (props) => {
                                       value: option.value,
                                       label: option.label,
                                     }))}
-                                />
-                                <Select
-                                  value={draftPriceFamily}
-                                  onChange={(value) => {
-                                    setDraftPriceFamily(value || 'all');
-                                    setDraftPriceModels([]);
-                                  }}
-                                  placeholder={t('全部家族')}
-                                  disabled={!draftPriceGroup}
-                                  optionList={[
-                                    {
-                                      value: 'all',
-                                      label: `${t('全部家族')} (${(perCallModels || []).filter((item) => item.groups?.includes(draftPriceGroup) || item.groups?.includes('all')).length})`,
-                                    },
-                                    ...MODEL_FAMILY_OPTIONS.filter((family) =>
-                                      (perCallModels || []).some(
-                                        (item) =>
-                                          (item.groups?.includes(
-                                            draftPriceGroup,
-                                          ) ||
-                                            item.groups?.includes('all')) &&
-                                          getModelFamily(item.model) ===
-                                            family.value,
-                                      ),
-                                    ).map((family) => ({
-                                      value: family.value,
-                                      label: `${family.label} (${(perCallModels || []).filter((item) => (item.groups?.includes(draftPriceGroup) || item.groups?.includes('all')) && getModelFamily(item.model) === family.value).length})`,
-                                    })),
-                                  ]}
                                 />
                                 <Select
                                   multiple
@@ -863,13 +806,9 @@ const EditUserModal = (props) => {
                                   optionList={(perCallModels || [])
                                     .filter(
                                       (item) =>
-                                        (item.groups?.includes(
+                                        item.groups?.includes(
                                           draftPriceGroup,
-                                        ) ||
-                                          item.groups?.includes('all')) &&
-                                        (draftPriceFamily === 'all' ||
-                                          getModelFamily(item.model) ===
-                                            draftPriceFamily),
+                                        ) || item.groups?.includes('all'),
                                     )
                                     .map((item) => ({
                                       value: item.model,
