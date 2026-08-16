@@ -16,12 +16,14 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { CheckSquare, RefreshCcw } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
+
 import { Button } from '@/components/ui/button'
+
 import {
   fetchUpstreamRatios,
   getUpstreamChannels,
@@ -40,6 +42,8 @@ import {
 } from './conflict-confirm-dialog'
 import {
   DEFAULT_ENDPOINT,
+  CUSTOM_PRICING_PRESET_ENDPOINT,
+  CUSTOM_PRICING_PRESET_ID,
   MODELS_DEV_PRESET_ENDPOINT,
   MODELS_DEV_PRESET_ID,
   OFFICIAL_CHANNEL_ENDPOINT,
@@ -51,6 +55,7 @@ import {
   NUMERIC_SYNC_FIELDS,
   RATIO_SYNC_FIELDS,
   getPreferredSyncField,
+  getSyncDisplayPrice,
   type ResolutionsMap,
 } from './upstream-ratio-sync-helpers'
 import { UpstreamRatioSyncTable } from './upstream-ratio-sync-table'
@@ -82,6 +87,8 @@ type UpstreamRatioSyncProps = {
 // `controller/ratio_sync.go`; matching by ID alone is sufficient and avoids
 // fragile name/base_url comparisons.
 function getDefaultEndpointForChannel(channel: UpstreamChannel): string {
+  if (channel.id === CUSTOM_PRICING_PRESET_ID)
+    return CUSTOM_PRICING_PRESET_ENDPOINT
   if (channel.id === MODELS_DEV_PRESET_ID) return MODELS_DEV_PRESET_ENDPOINT
   if (channel.id === OFFICIAL_CHANNEL_ID) return OFFICIAL_CHANNEL_ENDPOINT
   if (channel.type === OPENROUTER_CHANNEL_TYPE) return OPENROUTER_ENDPOINT
@@ -451,8 +458,8 @@ export function UpstreamRatioSync({ modelRatios }: UpstreamRatioSyncProps) {
     const conflicts: ConflictItem[] = []
 
     const fixedPriceLabel = t('Fixed price')
-    const modelRatioLabel = t('Model ratio')
-    const completionRatioLabel = t('Completion ratio')
+    const inputPriceLabel = t('Input price')
+    const outputPriceLabel = t('Output price')
 
     Object.entries(resolutions).forEach(([model, ratios]) => {
       const localCat = getLocalBillingCategory(model, currentRatios)
@@ -467,15 +474,33 @@ export function UpstreamRatioSync({ modelRatios }: UpstreamRatioSyncProps) {
       }
 
       if (localCat && newCat !== 'tiered' && localCat !== newCat) {
+        const currentBaseRatio = currentRatios.ModelRatio[model]
+        const selectedSource = selectedTypes
+          .map((rt) => findSourceChannel(model, rt as RatioType, ratios[rt]))
+          .find((source) => source !== 'Unknown')
+        const upstreamBaseRatio = selectedSource
+          ? differences[model]?.model_ratio?.upstreams?.[selectedSource]
+          : undefined
+        const newBaseRatio =
+          typeof ratios.model_ratio === 'number'
+            ? ratios.model_ratio
+            : typeof upstreamBaseRatio === 'number'
+              ? upstreamBaseRatio
+              : currentBaseRatio
+        const newCompletionRatio =
+          typeof ratios.completion_ratio === 'number'
+            ? ratios.completion_ratio
+            : currentRatios.CompletionRatio[model]
+
         const currentDesc =
           localCat === 'price'
-            ? `${fixedPriceLabel}: ${currentRatios.ModelPrice[model]}`
-            : `${modelRatioLabel}: ${currentRatios.ModelRatio[model] ?? '-'}\n${completionRatioLabel}: ${currentRatios.CompletionRatio[model] ?? '-'}`
+            ? `${fixedPriceLabel}: ${getSyncDisplayPrice('model_price', currentRatios.ModelPrice[model]) ?? '-'}`
+            : `${inputPriceLabel}: ${getSyncDisplayPrice('model_ratio', currentBaseRatio, currentBaseRatio) ?? '-'}\n${outputPriceLabel}: ${getSyncDisplayPrice('completion_ratio', currentRatios.CompletionRatio[model], currentBaseRatio) ?? '-'}`
 
         const newDesc =
           newCat === 'price'
-            ? `${fixedPriceLabel}: ${ratios.model_price}`
-            : `${modelRatioLabel}: ${ratios.model_ratio ?? '-'}\n${completionRatioLabel}: ${ratios.completion_ratio ?? '-'}`
+            ? `${fixedPriceLabel}: ${getSyncDisplayPrice('model_price', ratios.model_price) ?? '-'}`
+            : `${inputPriceLabel}: ${getSyncDisplayPrice('model_ratio', newBaseRatio, newBaseRatio) ?? '-'}\n${outputPriceLabel}: ${getSyncDisplayPrice('completion_ratio', newCompletionRatio, newBaseRatio) ?? '-'}`
 
         const channelNames = selectedTypes
           .map((rt) => findSourceChannel(model, rt as RatioType, ratios[rt]))
@@ -540,6 +565,7 @@ export function UpstreamRatioSync({ modelRatios }: UpstreamRatioSyncProps) {
 
       <UpstreamRatioSyncTable
         differences={differences}
+        localModelRatios={parsedRatios.ModelRatio}
         resolutions={resolutions}
         isDisabled={isLoading}
         isSyncing={fetchMutation.isPending}

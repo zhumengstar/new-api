@@ -16,10 +16,13 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useMemo } from 'react'
 import { type ColumnDef } from '@tanstack/react-table'
 import { AlertTriangle } from 'lucide-react'
+import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
+
+import { BadgeCell } from '@/components/data-table'
+import { StatusBadge } from '@/components/status-badge'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
   Tooltip,
@@ -27,12 +30,12 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
-import { BadgeCell } from '@/components/data-table'
-import { StatusBadge } from '@/components/status-badge'
+
 import type { RatioType } from '../types'
 import {
   getOrderedRatioTypes,
   getPreferredSyncField,
+  getSyncDisplayPrice,
   getSyncFieldLabel,
   isSelectableUpstreamValue,
   type ModelRow,
@@ -41,6 +44,7 @@ import {
 
 export function useUpstreamRatioSyncColumns(
   upstreamNames: string[],
+  localModelRatios: Record<string, number>,
   resolutions: ResolutionsMap,
   ratioTypeFilter: string,
   isDisabled: boolean,
@@ -98,6 +102,14 @@ export function useUpstreamRatioSyncColumns(
             <div className='flex max-w-full min-w-0 flex-col gap-2'>
               {fields.map((ratioType) => {
                 const current = row.original.ratioTypes[ratioType]?.current
+                const localBaseRatio =
+                  localModelRatios[row.original.model] ??
+                  numericValue(row.original.ratioTypes.model_ratio?.current)
+                const displayPrice = getSyncDisplayPrice(
+                  ratioType,
+                  current,
+                  localBaseRatio
+                )
                 return (
                   <BadgeCell key={ratioType} className='ml-0 flex-wrap gap-2'>
                     <StatusBadge
@@ -119,7 +131,7 @@ export function useUpstreamRatioSyncColumns(
                           <TooltipTrigger
                             render={
                               <StatusBadge
-                                label={String(current)}
+                                label={displayPrice ?? t('No base input price')}
                                 variant='info'
                                 size='sm'
                                 className='max-w-[200px] truncate'
@@ -128,7 +140,7 @@ export function useUpstreamRatioSyncColumns(
                           ></TooltipTrigger>
                           <TooltipContent>
                             <p className='max-w-xs text-xs break-all'>
-                              {String(current)}
+                              {displayPrice ?? t('No base input price')}
                             </p>
                           </TooltipContent>
                         </Tooltip>
@@ -217,6 +229,20 @@ export function useUpstreamRatioSyncColumns(
               {fields.map((ratioType) => {
                 const diff = row.original.ratioTypes[ratioType]
                 const upstreamVal = diff?.upstreams?.[upstreamName]
+                const upstreamBaseValue =
+                  row.original.ratioTypes.model_ratio?.upstreams?.[upstreamName]
+                const upstreamBaseRatio =
+                  numericValue(upstreamBaseValue) ??
+                  localModelRatios[row.original.model] ??
+                  numericValue(row.original.ratioTypes.model_ratio?.current)
+                const displayPrice = getSyncDisplayPrice(
+                  ratioType,
+                  typeof upstreamVal === 'number' ||
+                    typeof upstreamVal === 'string'
+                    ? upstreamVal
+                    : null,
+                  upstreamBaseRatio
+                )
                 const isConfident = diff?.confidence?.[upstreamName] !== false
 
                 return (
@@ -234,6 +260,7 @@ export function useUpstreamRatioSyncColumns(
                     <div className='min-w-0 flex-1'>
                       {renderUpstreamValue({
                         upstreamVal,
+                        displayValue: displayPrice,
                         isConfident,
                         isSelected:
                           resolutions[row.original.model]?.[ratioType] ===
@@ -263,6 +290,7 @@ export function useUpstreamRatioSyncColumns(
     return [...baseColumns, ...upstreamColumns]
   }, [
     upstreamNames,
+    localModelRatios,
     resolutions,
     ratioTypeFilter,
     isDisabled,
@@ -276,6 +304,7 @@ export function useUpstreamRatioSyncColumns(
 
 type RenderUpstreamValueArgs = {
   upstreamVal: number | string | 'same' | null | undefined
+  displayValue: string | null
   isConfident: boolean
   isSelected: boolean
   isDisabled: boolean
@@ -285,7 +314,8 @@ type RenderUpstreamValueArgs = {
 }
 
 function renderUpstreamValue(args: RenderUpstreamValueArgs) {
-  const { upstreamVal, isConfident, isSelected, isDisabled, t } = args
+  const { upstreamVal, displayValue, isConfident, isSelected, isDisabled, t } =
+    args
 
   if (upstreamVal === null || upstreamVal === undefined) {
     return (
@@ -309,7 +339,7 @@ function renderUpstreamValue(args: RenderUpstreamValueArgs) {
     )
   }
 
-  const text = String(upstreamVal)
+  const text = displayValue ?? t('No base input price')
 
   return (
     <div className='flex min-w-0 items-center gap-2'>
@@ -352,4 +382,8 @@ function renderUpstreamValue(args: RenderUpstreamValueArgs) {
       )}
     </div>
   )
+}
+
+function numericValue(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined
 }

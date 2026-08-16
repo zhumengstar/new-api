@@ -50,6 +50,7 @@ export const useUsersData = () => {
   const [incomeStats, setIncomeStats] = useState([]);
   const [todayConsumedQuota, setTodayConsumedQuota] = useState(0);
   const [totalConsumedQuota, setTotalConsumedQuota] = useState(0);
+  const [balanceQuota, setBalanceQuota] = useState(0);
   const [groupRatios, setGroupRatios] = useState({});
 
   // Modal states
@@ -295,11 +296,13 @@ export const useUsersData = () => {
         setIncomeStats(Array.isArray(data) ? data : data.daily || []);
         setTodayConsumedQuota(Array.isArray(data) ? 0 : data.today_quota || 0);
         setTotalConsumedQuota(Array.isArray(data) ? 0 : data.total_quota || 0);
+        setBalanceQuota(Array.isArray(data) ? 0 : data.balance_quota || 0);
       }
     } catch {
       setIncomeStats([]);
       setTodayConsumedQuota(0);
       setTotalConsumedQuota(0);
+      setBalanceQuota(0);
     }
   };
 
@@ -388,6 +391,7 @@ export const useUsersData = () => {
     incomeStats,
     todayConsumedQuota,
     totalConsumedQuota,
+    balanceQuota,
     groupRatios,
     sortBy,
     sortOrder,

@@ -17,9 +17,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { z } from 'zod'
+
 import { quotaUnitsToDollars } from '@/lib/format'
+
 import { DEFAULT_GROUP } from '../constants'
-import { type UserFormData, type User } from '../types'
+import type { UserFormData, User } from '../types'
+import { getUserContactValue, parseUserContact } from './user-contact'
 
 // ============================================================================
 // Form Schema
@@ -33,7 +36,7 @@ export const userFormSchema = z.object({
   quota_dollars: z.number().min(0).optional(),
   group: z.array(z.string()).min(1, 'Group is required').optional(),
   remark: z.string().optional(),
-  wechat_contact: z.string().max(64).optional()
+  contact: z.string().max(130).optional(),
 })
 
 export type UserFormValues = z.infer<typeof userFormSchema>
@@ -50,7 +53,7 @@ export const USER_FORM_DEFAULT_VALUES: UserFormValues = {
   quota_dollars: 0,
   group: [DEFAULT_GROUP],
   remark: '',
-  wechat_contact: ''
+  contact: '',
 }
 
 // ============================================================================
@@ -68,7 +71,7 @@ export function transformFormDataToPayload(
     username: data.username,
     display_name: data.display_name || data.username,
     password: data.password || undefined,
-    group: normalizeUserGroups(data.group).join(',')
+    group: normalizeUserGroups(data.group).join(','),
   }
 
   // For create: only send required fields
@@ -77,7 +80,11 @@ export function transformFormDataToPayload(
   } else {
     // For update: quota is adjusted atomically via /api/user/manage, not sent here
     payload.remark = data.remark || undefined
-    payload.wechat_contact = data.wechat_contact ?? ''
+    const contactValue =
+      data.contact || getUserContactValue({ username: data.username })
+    const { qqContact, wechatContact } = parseUserContact(contactValue)
+    payload.qq_contact = qqContact
+    payload.wechat_contact = wechatContact
     payload.id = userId
   }
 
@@ -96,7 +103,7 @@ export function transformUserToFormDefaults(user: User): UserFormValues {
     quota_dollars: quotaUnitsToDollars(user.quota),
     group: normalizeUserGroups(user.group),
     remark: user.remark || '',
-    wechat_contact: user.wechat_contact || ''
+    contact: getUserContactValue(user),
   }
 }
 

@@ -42,6 +42,11 @@ export const MODELS_DEV_PRESET_NAME = 'models.dev 价格预设'
 export const MODELS_DEV_PRESET_BASE_URL = 'https://models.dev'
 export const MODELS_DEV_PRESET_ENDPOINT = 'https://models.dev/api.json'
 
+export const CUSTOM_PRICING_PRESET_ID = -102
+export const CUSTOM_PRICING_PRESET_NAME = '自定义价格（price.muling.store）'
+export const CUSTOM_PRICING_PRESET_BASE_URL = 'https://price.muling.store'
+export const CUSTOM_PRICING_PRESET_ENDPOINT = '/api/pricing'
+
 export const OPENROUTER_ENDPOINT = 'openrouter'
 
 // Backend channel type for OpenRouter (see constant/channel.go: ChannelTypeOpenRouter = 20)
@@ -59,13 +64,13 @@ export const ENDPOINT_OPTIONS = [
 // here without updating the i18n catalog; otherwise we end up with two keys per
 // ratio type that only differ in capitalization.
 export const RATIO_TYPE_OPTIONS = [
-  { label: 'Model ratio', value: 'model_ratio' },
-  { label: 'Completion ratio', value: 'completion_ratio' },
-  { label: 'Cache ratio', value: 'cache_ratio' },
-  { label: 'Create cache ratio', value: 'create_cache_ratio' },
-  { label: 'Image ratio', value: 'image_ratio' },
-  { label: 'Audio ratio', value: 'audio_ratio' },
-  { label: 'Audio completion ratio', value: 'audio_completion_ratio' },
+  { label: 'Input price', value: 'model_ratio' },
+  { label: 'Output price', value: 'completion_ratio' },
+  { label: 'Cache read price', value: 'cache_ratio' },
+  { label: 'Cache creation price', value: 'create_cache_ratio' },
+  { label: 'Image input price', value: 'image_ratio' },
+  { label: 'Audio input price', value: 'audio_ratio' },
+  { label: 'Audio output price', value: 'audio_completion_ratio' },
   { label: 'Fixed price', value: 'model_price' },
   { label: 'Expression billing', value: 'billing_expr' },
 ] as const

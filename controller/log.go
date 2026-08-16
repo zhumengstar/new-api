@@ -208,6 +208,20 @@ func GetLogsStat(c *gin.Context) {
 	return
 }
 
+func GetModelRequestStats(c *gin.Context) {
+	period := c.DefaultQuery("period", "total")
+	if period != "total" && period != "today" {
+		common.ApiErrorMsg(c, "period must be total or today")
+		return
+	}
+	stats, err := model.GetModelRequestStats(period)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, stats)
+}
+
 func GetCurrentMinuteIncome(c *gin.Context) {
 	scopedUserIDs, scoped, err := model.GetScopedUserIDs(c.GetInt("id"), c.GetInt("role"))
 	if err != nil {

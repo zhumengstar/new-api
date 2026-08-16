@@ -41,6 +41,8 @@ const OFFICIAL_RATIO_PRESET_NAME = '官方倍率预设';
 const MODELS_DEV_PRESET_NAME = 'models.dev 价格预设';
 const OFFICIAL_RATIO_PRESET_BASE_URL = 'https://basellm.github.io';
 const MODELS_DEV_PRESET_BASE_URL = 'https://models.dev';
+const CUSTOM_PRICING_PRESET_ID = -102;
+const CUSTOM_PRICING_PRESET_BASE_URL = 'https://price.muling.store';
 
 const ChannelSelectorModal = forwardRef(
   (
@@ -79,8 +81,10 @@ const ChannelSelectorModal = forwardRef(
       return (
         id === OFFICIAL_RATIO_PRESET_ID ||
         id === MODELS_DEV_PRESET_ID ||
+        id === CUSTOM_PRICING_PRESET_ID ||
         base === OFFICIAL_RATIO_PRESET_BASE_URL ||
         base === MODELS_DEV_PRESET_BASE_URL ||
+        base === CUSTOM_PRICING_PRESET_BASE_URL ||
         name === OFFICIAL_RATIO_PRESET_NAME ||
         name === MODELS_DEV_PRESET_NAME
       );

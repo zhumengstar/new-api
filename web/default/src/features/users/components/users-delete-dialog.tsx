@@ -57,9 +57,9 @@ export function UsersDeleteDialog() {
       title={t('Are you sure?')}
       desc={
         <>
-          {t('This will permanently delete user')}{' '}
+          {t('This will logically delete user')}{' '}
           <span className='font-semibold'>{currentRow?.username}</span>
-          {t('. This action cannot be undone.')}
+          {t('. The record will be retained and hidden from the user list.')}
         </>
       }
       confirmText={isDeleting ? t('Deleting...') : t('Delete')}

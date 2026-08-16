@@ -43,6 +43,21 @@ func TestDecodeResponsesFallbackGeminiFunctionCall(t *testing.T) {
 	require.Equal(t, "read_status", toolCalls[0].Function.Name)
 }
 
+func TestDecodeResponsesFallbackGeminiPreservesUsage(t *testing.T) {
+	c, _ := gin.CreateTestContext(nil)
+	info := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{ApiType: constant.APITypeGemini}}
+	info.SetEstimatePromptTokens(999)
+	data := []byte(`{"candidates":[{"content":{"role":"model","parts":[{"text":"ok"}]},"finishReason":"STOP","index":0}],"usageMetadata":{"promptTokenCount":76,"toolUsePromptTokenCount":4,"candidatesTokenCount":2,"thoughtsTokenCount":107,"cachedContentTokenCount":12,"totalTokenCount":189}}`)
+
+	response, err := decodeResponsesFallbackChatResponse(c, info, data)
+	require.NoError(t, err)
+	require.Equal(t, 80, response.Usage.PromptTokens)
+	require.Equal(t, 109, response.Usage.CompletionTokens)
+	require.Equal(t, 189, response.Usage.TotalTokens)
+	require.Equal(t, 107, response.Usage.CompletionTokenDetails.ReasoningTokens)
+	require.Equal(t, 12, response.Usage.PromptTokensDetails.CachedTokens)
+}
+
 func TestShouldFallbackResponsesConvertErrorForMissingConvertedContents(t *testing.T) {
 	request := &dto.OpenAIResponsesRequest{Input: []byte(`[{"role":"user","content":"hello"}]`)}
 	require.True(t, shouldFallbackResponsesConvertError(errors.New("contents is required"), request))

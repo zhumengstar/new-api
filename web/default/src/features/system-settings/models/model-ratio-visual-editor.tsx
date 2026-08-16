@@ -1,3 +1,12 @@
+import {
+  type ColumnFiltersState,
+  type OnChangeFn,
+  type PaginationState,
+  type RowSelectionState,
+  type VisibilityState,
+  type SortingState,
+} from '@tanstack/react-table'
+import { Copy, Plus } from 'lucide-react'
 /*
 Copyright (C) 2023-2026 QuantumNous
 
@@ -25,20 +34,11 @@ import {
   forwardRef,
   useImperativeHandle,
   useRef,
+  Fragment,
 } from 'react'
-import {
-  type ColumnFiltersState,
-  type OnChangeFn,
-  type PaginationState,
-  type RowSelectionState,
-  type VisibilityState,
-  type SortingState,
-} from '@tanstack/react-table'
-import { useMediaQuery } from '@/hooks'
-import { Copy, Plus } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
-import { Button } from '@/components/ui/button'
+
 import {
   DataTableBulkActions,
   DataTableToolbar,
@@ -47,7 +47,11 @@ import {
   DataTableView,
   useDataTable,
 } from '@/components/data-table'
+import { Button } from '@/components/ui/button'
+import { TableCell, TableRow } from '@/components/ui/table'
 import { combineBillingExpr } from '@/features/pricing/lib/billing-expr'
+import { useMediaQuery } from '@/hooks'
+
 import { safeJsonParse } from '../utils/json-parser'
 import {
   ModelPricingEditorPanel,
@@ -130,7 +134,11 @@ const ModelRatioVisualEditorComponent = forwardRef<
   const [sheetOpen, setSheetOpen] = useState(false)
   const [editorOpen, setEditorOpen] = useState(false)
   const [editData, setEditData] = useState<ModelRatioData | null>(null)
-  const [sorting, setSorting] = useState<SortingState>([])
+  const [sorting, setSorting] = useState<SortingState>([
+    { id: 'family', desc: false },
+    { id: 'billingMode', desc: false },
+    { id: 'name', desc: false },
+  ])
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([])
   const [globalFilter, setGlobalFilter] = useState('')
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({})
@@ -144,18 +152,25 @@ const ModelRatioVisualEditorComponent = forwardRef<
       const saved = localStorage.getItem(STORAGE_KEY)
       if (saved) {
         try {
-          return safeJsonParse<VisibilityState>(saved, {
-            fallback: {
-              cacheRatio: false,
-              createCacheRatio: false,
-              imageRatio: false,
-              audioRatio: false,
-              audioCompletionRatio: false,
-            },
-            silent: true,
-          })
+          const visibility: VisibilityState = safeJsonParse<VisibilityState>(
+            saved,
+            {
+              fallback: {
+                family: false,
+                cacheRatio: false,
+                createCacheRatio: false,
+                imageRatio: false,
+                audioRatio: false,
+                audioCompletionRatio: false,
+              },
+              silent: true,
+            }
+          )
+          visibility.family = false
+          return visibility
         } catch {
           return {
+            family: false,
             cacheRatio: false,
             createCacheRatio: false,
             imageRatio: false,
@@ -165,6 +180,7 @@ const ModelRatioVisualEditorComponent = forwardRef<
         }
       }
       return {
+        family: false,
         cacheRatio: false,
         createCacheRatio: false,
         imageRatio: false,
@@ -426,6 +442,27 @@ const ModelRatioVisualEditorComponent = forwardRef<
     [handleEdit, handleDelete, t]
   )
 
+  const handleSortingChange = useCallback<OnChangeFn<SortingState>>(
+    (updater) => {
+      setSorting((previous) => {
+        const requested =
+          typeof updater === 'function' ? updater(previous) : updater
+        const familySort = requested.find((item) => item.id === 'family') ?? {
+          id: 'family',
+          desc: false,
+        }
+        const modeSort = requested.find(
+          (item) => item.id === 'billingMode'
+        ) ?? { id: 'billingMode', desc: false }
+        const remaining = requested.filter(
+          (item) => item.id !== 'family' && item.id !== 'billingMode'
+        )
+        return [familySort, modeSort, ...remaining]
+      })
+    },
+    []
+  )
+
   const { table } = useDataTable({
     data: models,
     columns,
@@ -436,7 +473,7 @@ const ModelRatioVisualEditorComponent = forwardRef<
     pagination,
     rowSelection,
     enableRowSelection: true,
-    onSortingChange: setSorting,
+    onSortingChange: handleSortingChange,
     onColumnFiltersChange: setColumnFilters,
     onGlobalFilterChange: handleGlobalFilterChange,
     onColumnVisibilityChange: setColumnVisibility,
@@ -623,7 +660,11 @@ const ModelRatioVisualEditorComponent = forwardRef<
     [editorOpen, persistPricingData]
   )
 
-  const hasRows = table.getRowModel().rows.length > 0
+  const visibleRows = table.getRowModel().rows
+  const visibleRowIndexes = new Map(
+    visibleRows.map((row, index) => [row.id, index])
+  )
+  const hasRows = visibleRows.length > 0
 
   return (
     <div className='flex flex-col gap-4'>
@@ -695,26 +736,59 @@ const ModelRatioVisualEditorComponent = forwardRef<
                 </colgroup>
               }
               renderRow={(row, { getCellClassName }) => (
-                <DataTableRow
-                  key={row.id}
-                  row={row}
-                  className={
-                    editData?.name === row.original.name
-                      ? 'bg-muted/45 hover:bg-muted/50 data-[state=selected]:bg-muted group'
-                      : 'group'
-                  }
-                  getColumnClassName={(columnId) =>
-                    columnId === 'actions' &&
-                    editData?.name === row.original.name
-                      ? getCellClassName(columnId, 'bg-muted')
-                      : getCellClassName(columnId)
-                  }
-                  onClick={(event) => {
-                    const target = event.target as HTMLElement
-                    if (target.closest('button, [role="checkbox"]')) return
-                    handleEdit(row.original)
-                  }}
-                />
+                <Fragment key={row.id}>
+                  {((visibleRowIndexes.get(row.id) ?? 0) === 0 ||
+                    visibleRows[(visibleRowIndexes.get(row.id) ?? 0) - 1]
+                      ?.original.family !== row.original.family) && (
+                    <TableRow className='bg-muted/70 hover:bg-muted/70'>
+                      <TableCell
+                        colSpan={table.getVisibleLeafColumns().length}
+                        className='text-foreground h-9 px-3 text-xs font-semibold'
+                      >
+                        {row.original.family}
+                      </TableCell>
+                    </TableRow>
+                  )}
+                  {((visibleRowIndexes.get(row.id) ?? 0) === 0 ||
+                    visibleRows[(visibleRowIndexes.get(row.id) ?? 0) - 1]
+                      ?.original.family !== row.original.family ||
+                    visibleRows[(visibleRowIndexes.get(row.id) ?? 0) - 1]
+                      ?.original.billingMode !== row.original.billingMode) && (
+                    <TableRow className='bg-muted/25 hover:bg-muted/25'>
+                      <TableCell
+                        colSpan={table.getVisibleLeafColumns().length}
+                        className='text-muted-foreground h-8 py-1 pl-6 text-xs font-medium'
+                      >
+                        {t(
+                          row.original.billingMode === 'per-request'
+                            ? 'Per-request'
+                            : row.original.billingMode === 'tiered_expr'
+                              ? 'Expression'
+                              : 'Per-token'
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  )}
+                  <DataTableRow
+                    row={row}
+                    className={
+                      editData?.name === row.original.name
+                        ? 'bg-muted/45 hover:bg-muted/50 data-[state=selected]:bg-muted group'
+                        : 'group'
+                    }
+                    getColumnClassName={(columnId) =>
+                      columnId === 'actions' &&
+                      editData?.name === row.original.name
+                        ? getCellClassName(columnId, 'bg-muted')
+                        : getCellClassName(columnId)
+                    }
+                    onClick={(event) => {
+                      const target = event.target as HTMLElement
+                      if (target.closest('button, [role="checkbox"]')) return
+                      handleEdit(row.original)
+                    }}
+                  />
+                </Fragment>
               )}
             />
           )}

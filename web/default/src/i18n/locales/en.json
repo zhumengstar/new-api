@@ -661,6 +661,7 @@
     "Cache ratio": "Cache ratio",
     "Cache Read": "Cache Read",
     "Cache read price": "Cache read price",
+    "Cache creation price": "Cache creation price",
     "Cache repeated prompt prefixes for cheaper, faster reuse": "Cache repeated prompt prefixes for cheaper, faster reuse",
     "Cache write": "Cache write",
     "Cache Write": "Cache Write",
@@ -2858,6 +2859,7 @@
     "Node Name": "Node Name",
     "Node role": "Node role",
     "Nodes reporting from this deployment and their latest heartbeat.": "Nodes reporting from this deployment and their latest heartbeat.",
+    "Enabled non-admin balance total": "Enabled non-admin balance total",
     "Non-stream": "Non-stream",
     "Non-zero invitation rewards require compliance confirmation in Payment Gateway settings.": "Non-zero invitation rewards require compliance confirmation in Payment Gateway settings.",
     "None": "None",
@@ -4322,6 +4324,8 @@
     "This will permanently delete API key": "This will permanently delete API key",
     "This will permanently delete redemption code": "This will permanently delete redemption code",
     "This will permanently delete user": "This will permanently delete user",
+    "This will logically delete user": "This will logically delete user",
+    ". The record will be retained and hidden from the user list.": ". The record will be retained and hidden from the user list.",
     "This will permanently remove all log entries created before {{date}}.": "This will permanently remove all log entries created before {{date}}.",
     "This will permanently remove log entries before the selected timestamp.": "This will permanently remove log entries before the selected timestamp.",
     "This will update the priority to {{value}} for all {{count}} channel(s) with tag \"{{tag}}\". Continue?": "This will update the priority to {{value}} for all {{count}} channel(s) with tag \"{{tag}}\". Continue?",
@@ -4921,6 +4925,14 @@
     "Zero retention": "Zero retention",
     "Zhipu": "Zhipu",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom"
+    "Zoom": "Zoom",
+    "Custom per-request model pricing": "Custom per-request model pricing",
+    "Only per-request models can be selected": "Only per-request models can be selected",
+    "Search per-request models": "Search per-request models",
+    "Shared price per request": "Shared price per request",
+    "Apply to selected": "Apply to selected",
+    "Select at least one per-request model": "Select at least one per-request model",
+    "Model price must be a non-negative number": "Model price must be a non-negative number",
+    "Remove custom price": "Remove custom price"
   }
 }

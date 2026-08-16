@@ -69,6 +69,7 @@ func TestUserEditManagedPersistsGroupSettingAndActualQuotaTogether(t *testing.T)
 	updated.Group = "default,private-group"
 	setting := dto.UserSetting{
 		UserGroupRatios: map[string]float64{"private-group": 1.25},
+		UserModelPrices: map[string]float64{"suno_music": 0.2},
 	}
 	quota := 250
 	require.NoError(t, updated.EditManaged(false, &setting, &quota, 0))
@@ -78,4 +79,5 @@ func TestUserEditManagedPersistsGroupSettingAndActualQuotaTogether(t *testing.T)
 	require.Equal(t, "default,private-group", actual.Group)
 	require.Equal(t, 250, actual.Quota)
 	require.Equal(t, 1.25, actual.GetSetting().UserGroupRatios["private-group"])
+	require.Equal(t, 0.2, actual.GetSetting().UserModelPrices["suno_music"])
 }

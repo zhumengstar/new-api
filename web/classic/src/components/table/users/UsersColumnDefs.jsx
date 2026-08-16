@@ -29,16 +29,22 @@ import {
   Dropdown,
   Input,
 } from '@douyinfe/semi-ui';
-import { IconMore } from '@douyinfe/semi-icons';
+import { IconCopy, IconEdit, IconMore } from '@douyinfe/semi-icons';
 import {
   renderGroup,
   renderNumber,
   renderQuota,
   timestamp2string,
   API,
+  copy,
   showError,
   showSuccess,
 } from '../../../helpers';
+import {
+  getUserContactItems,
+  getUserContactValue,
+  parseUserContact,
+} from './userContact';
 
 const renderTimestamp = (text) => (text ? timestamp2string(text) : '-');
 
@@ -217,6 +223,156 @@ const EditableUsernameRemark = ({ text, record, t, refresh }) => {
   );
 };
 
+const EditableUserContact = ({ record, t, refresh }) => {
+  const originalValue = getUserContactValue(record);
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(originalValue);
+  const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
+  const skipBlurSaveRef = useRef(false);
+
+  useEffect(() => {
+    if (!editing) setValue(originalValue);
+  }, [editing, originalValue]);
+
+  const cancel = () => {
+    skipBlurSaveRef.current = true;
+    setValue(originalValue);
+    setEditing(false);
+  };
+
+  const save = async () => {
+    const nextValue = value.trim();
+    if (savingRef.current) return;
+    if (nextValue === originalValue) {
+      setEditing(false);
+      return;
+    }
+
+    const { qqContact, wechatContact } = parseUserContact(nextValue);
+    savingRef.current = true;
+    setSaving(true);
+    try {
+      const res = await API.put('/api/user/', {
+        ...record,
+        password: '',
+        original_password: '',
+        qq_contact: qqContact,
+        wechat_contact: wechatContact,
+      });
+      if (res.data.success) {
+        showSuccess(t('操作成功完成！'));
+        setEditing(false);
+        refresh();
+      } else {
+        showError(res.data.message);
+      }
+    } catch (error) {
+      showError(t('操作失败'));
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
+    }
+  };
+
+  if (editing) {
+    return (
+      <Input
+        autoFocus
+        value={value}
+        maxLength={130}
+        aria-label={`${t('微信')} / QQ`}
+        placeholder={t('输入微信号或QQ号，多个用逗号分隔')}
+        disabled={saving}
+        onChange={setValue}
+        onClick={(event) => event.stopPropagation()}
+        onBlur={() => {
+          if (skipBlurSaveRef.current) {
+            skipBlurSaveRef.current = false;
+            return;
+          }
+          void save();
+        }}
+        onEnterPress={() => void save()}
+        onKeyDown={(event) => {
+          if (event.key === 'Escape') {
+            event.preventDefault();
+            cancel();
+          }
+        }}
+      />
+    );
+  }
+
+  const contacts = getUserContactItems(record);
+  const copyContact = async (event) => {
+    event.stopPropagation();
+    if (!originalValue) return;
+    if (await copy(originalValue)) {
+      showSuccess(t('已复制到剪贴板'));
+    } else {
+      showError(t('复制失败'));
+    }
+  };
+
+  return (
+    <div className='flex min-w-0 items-center gap-1'>
+      <Space
+        wrap
+        spacing={4}
+        className='min-w-0 flex-1 cursor-text'
+        onClick={(event) => {
+          event.stopPropagation();
+          setEditing(true);
+        }}
+      >
+        {contacts.length === 0
+          ? '-'
+          : contacts.map((contact) => (
+              <Tooltip
+                key={`${contact.type}-${contact.value}`}
+                content={
+                  contact.inferred ? `${t('用户名')} → QQ` : contact.value
+                }
+              >
+                <Tag
+                  color={contact.type === 'QQ' ? 'blue' : 'green'}
+                  shape='circle'
+                  size='small'
+                >
+                  {contact.type === 'QQ' ? 'QQ' : t('微信')}：{contact.value}
+                </Tag>
+              </Tooltip>
+            ))}
+      </Space>
+      <Tooltip content={t('复制')}>
+        <Button
+          aria-label={t('复制')}
+          icon={<IconCopy />}
+          size='small'
+          theme='borderless'
+          type='tertiary'
+          disabled={!originalValue}
+          onClick={copyContact}
+        />
+      </Tooltip>
+      <Tooltip content={t('编辑')}>
+        <Button
+          aria-label={t('编辑')}
+          icon={<IconEdit />}
+          size='small'
+          theme='borderless'
+          type='tertiary'
+          onClick={(event) => {
+            event.stopPropagation();
+            setEditing(true);
+          }}
+        />
+      </Tooltip>
+    </div>
+  );
+};
+
 const formatGroupRatio = (ratio) => {
   const numericRatio = Number(ratio);
   return Number.isFinite(numericRatio) ? numericRatio.toString() : '1';
@@ -371,6 +527,7 @@ const renderOperations = (
     showDemoteModal,
     showEnableDisableModal,
     showDeleteModal,
+    showDirectDeleteModal,
     showResetPasskeyModal,
     showResetTwoFAModal,
     showUserSubscriptionsModal,
@@ -410,6 +567,12 @@ const renderOperations = (
       name: t('注销'),
       type: 'danger',
       onClick: () => showDeleteModal(record),
+    },
+    {
+      node: 'item',
+      name: t('直接删除'),
+      type: 'danger',
+      onClick: () => showDirectDeleteModal(record),
     },
   ];
 
@@ -484,6 +647,7 @@ export const getUsersColumns = ({
   showDemoteModal,
   showEnableDisableModal,
   showDeleteModal,
+  showDirectDeleteModal,
   showResetPasskeyModal,
   showResetTwoFAModal,
   showUserSubscriptionsModal,
@@ -519,33 +683,10 @@ export const getUsersColumns = ({
     ...(showWeChatContact
       ? [
           {
-            title: t('微信号'),
-            dataIndex: 'wechat_contact',
+            title: `${t('微信')} / QQ`,
+            dataIndex: 'contact',
             render: (text, record) => (
-              <EditableUserField
-                record={record}
-                field='wechat_contact'
-                label='微信号'
-                successMessage='微信号已更新'
-                errorMessage='微信号更新失败'
-                t={t}
-                refresh={refresh}
-              />
-            ),
-          },
-          {
-            title: t('QQ号'),
-            dataIndex: 'qq_contact',
-            render: (text, record) => (
-              <EditableUserField
-                record={record}
-                field='qq_contact'
-                label='QQ号'
-                successMessage='QQ号已更新'
-                errorMessage='QQ号更新失败'
-                t={t}
-                refresh={refresh}
-              />
+              <EditableUserContact record={record} t={t} refresh={refresh} />
             ),
           },
         ]
@@ -631,6 +772,7 @@ export const getUsersColumns = ({
           showDemoteModal,
           showEnableDisableModal,
           showDeleteModal,
+          showDirectDeleteModal,
           showResetPasskeyModal,
           showResetTwoFAModal,
           showUserSubscriptionsModal,

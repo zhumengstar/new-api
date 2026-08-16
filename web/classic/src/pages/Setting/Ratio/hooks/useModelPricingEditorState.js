@@ -23,12 +23,45 @@ import {
   splitBillingExprAndRequestRules,
 } from '../components/requestRuleExpr';
 
-export const PAGE_SIZE = 10;
 export const PRICE_SUFFIX = '$/1M tokens';
 const EMPTY_CANDIDATE_MODEL_NAMES = [];
 
+const MODEL_FAMILY_RULES = [
+  ['OpenAI', /^(gpt|chatgpt|o[134](?:-|$)|dall-e|sora|codex)/i],
+  ['Claude', /^claude/i],
+  ['Gemini', /^(gemini|gemma|imagen|veo|nano[ -]?banana)/i],
+  ['Grok', /^grok/i],
+  ['DeepSeek', /^deepseek/i],
+  ['Qwen', /^(qwen|qwq)/i],
+  ['ByteDance', /^(doubao|seedream|seedance)/i],
+  ['Zhipu', /^(glm|cogview|cogvideo)/i],
+  ['Kimi', /^(kimi|moonshot)/i],
+  ['MiniMax', /^minimax/i],
+  ['Mistral', /^(mistral|codestral|ministral|pixtral)/i],
+  ['Meta', /^(llama|meta-llama)/i],
+  ['Cohere', /^(command|c4ai)/i],
+  ['Baidu', /^(ernie|wenxin)/i],
+  ['Hunyuan', /^hunyuan/i],
+];
+
+const BILLING_MODE_ORDER = {
+  'per-token': 0,
+  'per-request': 1,
+  tiered_expr: 2,
+};
+
+export const getModelFamily = (name = '') =>
+  MODEL_FAMILY_RULES.find(([, pattern]) => pattern.test(name))?.[0] || 'Other';
+
+const compareModelGroups = (a, b) =>
+  a.family.localeCompare(b.family) ||
+  (BILLING_MODE_ORDER[a.billingMode] ?? 3) -
+    (BILLING_MODE_ORDER[b.billingMode] ?? 3) ||
+  a.name.localeCompare(b.name);
+
 const EMPTY_MODEL = {
   name: '',
+  family: 'Other',
   billingMode: 'per-token',
   fixedPrice: '',
   inputPrice: '',
@@ -130,6 +163,7 @@ const buildModelState = (name, sourceMaps) => {
     return {
       ...EMPTY_MODEL,
       name,
+      family: getModelFamily(name),
       billingMode: 'tiered_expr',
       billingExpr,
       requestRuleExpr,
@@ -161,6 +195,7 @@ const buildModelState = (name, sourceMaps) => {
   return {
     ...EMPTY_MODEL,
     name,
+    family: getModelFamily(name),
     billingMode: hasValue(fixedPrice) ? 'per-request' : 'per-token',
     fixedPrice,
     inputPrice,
@@ -225,7 +260,8 @@ const buildModelState = (name, sourceMaps) => {
 
 export const isBasePricingUnset = (model) =>
   model.billingMode !== 'tiered_expr' &&
-  !hasValue(model.fixedPrice) && !hasValue(model.inputPrice);
+  !hasValue(model.fixedPrice) &&
+  !hasValue(model.inputPrice);
 
 export const getModelWarnings = (model, t) => {
   if (!model) {
@@ -291,8 +327,8 @@ export const getModelWarnings = (model, t) => {
 export const buildSummaryText = (model, t) => {
   const requestRuleSuffix =
     model.billingMode === 'tiered_expr' && model.requestRuleExpr
-    ? `，${t('请求规则')}`
-    : '';
+      ? `，${t('请求规则')}`
+      : '';
   if (model.billingMode === 'tiered_expr') {
     const expr = model.billingExpr;
     if (!expr) return `${t('表达式计费')}${requestRuleSuffix}`;
@@ -630,9 +666,10 @@ export function useModelPricingEditorState({
   const [selectedModelName, setSelectedModelName] = useState('');
   const [selectedModelNames, setSelectedModelNames] = useState([]);
   const [searchText, setSearchText] = useState('');
-  const [currentPage, setCurrentPage] = useState(1);
   const [loading, setLoading] = useState(false);
   const [conflictOnly, setConflictOnly] = useState(false);
+  const [familyFilter, setFamilyFilter] = useState('all');
+  const [billingModeFilter, setBillingModeFilter] = useState('all');
   const [optionalFieldToggles, setOptionalFieldToggles] = useState({});
 
   useEffect(() => {
@@ -646,8 +683,12 @@ export function useModelPricingEditorState({
       ImageRatio: parseOptionJSON(options.ImageRatio),
       AudioRatio: parseOptionJSON(options.AudioRatio),
       AudioCompletionRatio: parseOptionJSON(options.AudioCompletionRatio),
-      ModelBillingMode: parseOptionJSON(options['billing_setting.billing_mode']),
-      ModelBillingExpr: parseOptionJSON(options['billing_setting.billing_expr']),
+      ModelBillingMode: parseOptionJSON(
+        options['billing_setting.billing_mode'],
+      ),
+      ModelBillingExpr: parseOptionJSON(
+        options['billing_setting.billing_expr'],
+      ),
     };
 
     const names = new Set([
@@ -667,7 +708,7 @@ export function useModelPricingEditorState({
 
     const nextModels = Array.from(names)
       .map((name) => buildModelState(name, sourceMaps))
-      .sort((a, b) => a.name.localeCompare(b.name));
+      .sort(compareModelGroups);
 
     setModels(nextModels);
     setInitialVisibleModelNames(
@@ -701,21 +742,39 @@ export function useModelPricingEditorState({
       : models;
   }, [filterMode, initialVisibleModelNames, models]);
 
-  const filteredModels = useMemo(() => {
-    return visibleModels.filter((model) => {
-      const keyword = searchText.trim().toLowerCase();
-      const keywordMatch = keyword
-        ? model.name.toLowerCase().includes(keyword)
-        : true;
-      const conflictMatch = conflictOnly ? model.hasConflict : true;
-      return keywordMatch && conflictMatch;
-    });
-  }, [conflictOnly, searchText, visibleModels]);
+  const availableFamilies = useMemo(() => {
+    const counts = visibleModels.reduce((result, model) => {
+      result.set(model.family, (result.get(model.family) || 0) + 1);
+      return result;
+    }, new Map());
+    return Array.from(counts, ([name, count]) => ({ name, count })).sort(
+      (a, b) => a.name.localeCompare(b.name),
+    );
+  }, [visibleModels]);
 
-  const pagedData = useMemo(() => {
-    const start = (currentPage - 1) * PAGE_SIZE;
-    return filteredModels.slice(start, start + PAGE_SIZE);
-  }, [currentPage, filteredModels]);
+  const filteredModels = useMemo(() => {
+    return visibleModels
+      .filter((model) => {
+        const keyword = searchText.trim().toLowerCase();
+        const keywordMatch = keyword
+          ? model.name.toLowerCase().includes(keyword)
+          : true;
+        const conflictMatch = conflictOnly ? model.hasConflict : true;
+        const familyMatch =
+          familyFilter === 'all' || model.family === familyFilter;
+        const billingModeMatch =
+          billingModeFilter === 'all' ||
+          model.billingMode === billingModeFilter;
+        return keywordMatch && conflictMatch && familyMatch && billingModeMatch;
+      })
+      .sort(compareModelGroups);
+  }, [
+    billingModeFilter,
+    conflictOnly,
+    familyFilter,
+    searchText,
+    visibleModels,
+  ]);
 
   const selectedModel = useMemo(
     () =>
@@ -734,10 +793,6 @@ export function useModelPricingEditorState({
   );
 
   useEffect(() => {
-    setCurrentPage(1);
-  }, [searchText, conflictOnly, filterMode, candidateModelNames]);
-
-  useEffect(() => {
     setSelectedModelNames((previous) =>
       previous.filter((name) =>
         visibleModels.some((model) => model.name === name),
@@ -746,14 +801,14 @@ export function useModelPricingEditorState({
   }, [visibleModels]);
 
   useEffect(() => {
-    if (visibleModels.length === 0) {
+    if (filteredModels.length === 0) {
       setSelectedModelName('');
       return;
     }
-    if (!visibleModels.some((model) => model.name === selectedModelName)) {
-      setSelectedModelName(visibleModels[0].name);
+    if (!filteredModels.some((model) => model.name === selectedModelName)) {
+      setSelectedModelName(filteredModels[0].name);
     }
-  }, [selectedModelName, visibleModels]);
+  }, [filteredModels, selectedModelName]);
 
   const upsertModel = (name, updater) => {
     setModels((previous) =>
@@ -913,6 +968,7 @@ export function useModelPricingEditorState({
     const nextModel = {
       ...EMPTY_MODEL,
       name: trimmedName,
+      family: getModelFamily(trimmedName),
       rawRatios: { ...EMPTY_MODEL.rawRatios },
     };
 
@@ -922,7 +978,6 @@ export function useModelPricingEditorState({
       [trimmedName]: buildOptionalFieldToggles(nextModel),
     }));
     setSelectedModelName(trimmedName);
-    setCurrentPage(1);
     return true;
   };
 
@@ -1046,8 +1101,10 @@ export function useModelPricingEditorState({
             model.requestRuleExpr,
           );
           if (finalBillingExpr) {
-            tieredOutput['billing_setting.billing_mode'][model.name] = 'tiered_expr';
-            tieredOutput['billing_setting.billing_expr'][model.name] = finalBillingExpr;
+            tieredOutput['billing_setting.billing_mode'][model.name] =
+              'tiered_expr';
+            tieredOutput['billing_setting.billing_expr'][model.name] =
+              finalBillingExpr;
           }
         }
 
@@ -1110,13 +1167,15 @@ export function useModelPricingEditorState({
     setSelectedModelNames,
     searchText,
     setSearchText,
-    currentPage,
-    setCurrentPage,
     loading,
     conflictOnly,
     setConflictOnly,
+    familyFilter,
+    setFamilyFilter,
+    billingModeFilter,
+    setBillingModeFilter,
+    availableFamilies,
     filteredModels,
-    pagedData,
     selectedWarnings,
     previewRows,
     isOptionalFieldEnabled,

@@ -27,6 +27,7 @@ import {
   getCurrencyConfig,
   isRoot,
 } from '../../../../helpers';
+import { getUserContactValue, parseUserContact } from '../userContact';
 import {
   quotaToDisplayAmount,
   displayAmountToQuota,
@@ -46,6 +47,7 @@ import {
   Row,
   Col,
   InputNumber,
+  Select,
   RadioGroup,
   Radio,
   Checkbox,
@@ -57,6 +59,7 @@ import {
   IconLink,
   IconUserGroup,
   IconEdit,
+  IconPlus,
 } from '@douyinfe/semi-icons';
 import UserBindingManagementModal from './UserBindingManagementModal';
 
@@ -129,6 +132,50 @@ const parseUserGroupRatios = (setting) => {
   }, {});
 };
 
+const parseUserModelPriceRules = (setting, fallbackGroup = 'default') => {
+  let parsed = setting;
+  if (typeof setting === 'string' && setting.trim()) {
+    try {
+      parsed = JSON.parse(setting);
+    } catch {
+      parsed = {};
+    }
+  }
+  if (Array.isArray(parsed?.user_model_price_rules)) {
+    return parsed.user_model_price_rules
+      .map((rule) => ({
+        group: String(rule?.group || '').trim(),
+        models: Array.from(
+          new Set(
+            (Array.isArray(rule?.models) ? rule.models : [])
+              .map((model) => String(model).trim())
+              .filter(Boolean),
+          ),
+        ),
+        price: Number(rule?.price),
+      }))
+      .filter(
+        (rule) =>
+          rule.group &&
+          rule.models.length > 0 &&
+          Number.isFinite(rule.price) &&
+          rule.price >= 0,
+      );
+  }
+
+  const legacyPrices = parsed?.user_model_prices || {};
+  return Object.entries(legacyPrices)
+    .map(([model, price]) => ({
+      group: fallbackGroup,
+      models: [model],
+      price: Number(price),
+    }))
+    .filter(
+      (rule) =>
+        rule.models[0] && Number.isFinite(rule.price) && rule.price >= 0,
+    );
+};
+
 const EditUserModal = (props) => {
   const { t } = useTranslation();
   const userId = props.editingUser.id;
@@ -146,6 +193,11 @@ const EditUserModal = (props) => {
   const [inputs, setInputs] = useState(null);
   const [selectedGroups, setSelectedGroups] = useState(['default']);
   const [userGroupRatios, setUserGroupRatios] = useState({});
+  const [perCallModels, setPerCallModels] = useState(null);
+  const [draftPriceGroup, setDraftPriceGroup] = useState('');
+  const [draftPriceModels, setDraftPriceModels] = useState([]);
+  const [draftModelPrice, setDraftModelPrice] = useState(null);
+  const [userModelPriceRules, setUserModelPriceRules] = useState([]);
   const isRootUser = isRoot();
   const quotaLabel = isRootUser ? t('额度') : t('虚拟额度');
   const adjustQuotaLabel = isRootUser ? t('调整额度') : t('调整虚拟额度');
@@ -167,6 +219,7 @@ const EditUserModal = (props) => {
     quota_amount: 0,
     group: ['default'],
     remark: '',
+    contact: '',
     wechat_contact: '',
     qq_contact: '',
   });
@@ -191,6 +244,20 @@ const EditUserModal = (props) => {
     }
   };
 
+  const fetchPerCallModels = async () => {
+    if (!isRootUser) return;
+    try {
+      const res = await API.get('/api/user/per_call_model_prices');
+      if (!res.data?.success) {
+        throw new Error(res.data?.message || t('按次模型加载失败'));
+      }
+      setPerCallModels(Array.isArray(res.data.data) ? res.data.data : []);
+    } catch (error) {
+      setPerCallModels(null);
+      showError(error.message || t('按次模型加载失败'));
+    }
+  };
+
   const handleCancel = () => props.handleClose();
 
   const loadUser = async () => {
@@ -204,9 +271,13 @@ const EditUserModal = (props) => {
         quotaToDisplayAmount(data.quota || 0).toFixed(6),
       );
       const groups = parseUserGroups(data.group || 'default');
+      data.contact = getUserContactValue(data);
       data.group = groups;
       setSelectedGroups(groups);
       setUserGroupRatios(parseUserGroupRatios(data.setting));
+      setUserModelPriceRules(
+        parseUserModelPriceRules(data.setting, groups[0] || 'default'),
+      );
       setInputs({ ...getInitValues(), ...data });
     } else {
       showError(message);
@@ -223,7 +294,13 @@ const EditUserModal = (props) => {
 
   useEffect(() => {
     loadUser();
-    if (userId) fetchGroups();
+    if (userId) {
+      fetchGroups();
+      fetchPerCallModels();
+    }
+    setDraftPriceGroup('');
+    setDraftPriceModels([]);
+    setDraftModelPrice(null);
     setBindingModalVisible(false);
   }, [props.editingUser.id]);
 
@@ -235,10 +312,51 @@ const EditUserModal = (props) => {
     setBindingModalVisible(false);
   };
 
+  const addModelPriceRule = () => {
+    const price = Number(draftModelPrice);
+    if (!draftPriceGroup) {
+      showError(t('请先选择分组'));
+      return;
+    }
+    if (draftPriceModels.length === 0) {
+      showError(t('请先选择按次模型'));
+      return;
+    }
+    if (!Number.isFinite(price) || price < 0) {
+      showError(t('模型价格必须是不小于 0 的数字'));
+      return;
+    }
+    const duplicate = userModelPriceRules.some(
+      (rule) =>
+        rule.group === draftPriceGroup &&
+        rule.models.some((model) => draftPriceModels.includes(model)),
+    );
+    if (duplicate) {
+      showError(t('同一分组中的模型只能设置一个专属价格'));
+      return;
+    }
+    setUserModelPriceRules((rules) => [
+      ...rules,
+      {
+        group: draftPriceGroup,
+        models: [...draftPriceModels],
+        price,
+      },
+    ]);
+    setDraftPriceModels([]);
+    setDraftModelPrice(null);
+  };
+
   /* ----------------------- submit ----------------------- */
   const submit = async (values) => {
     setLoading(true);
     let payload = { ...values };
+    const contactValue =
+      payload.contact || getUserContactValue({ username: payload.username });
+    const { qqContact, wechatContact } = parseUserContact(contactValue);
+    payload.qq_contact = qqContact;
+    payload.wechat_contact = wechatContact;
+    delete payload.contact;
     delete payload.quota;
     const quotaAmount = Number(payload.quota_amount);
     if (!Number.isFinite(quotaAmount) || quotaAmount < 0) {
@@ -258,6 +376,26 @@ const EditUserModal = (props) => {
       groupOptions,
       userGroupRatios,
     );
+    if (isRootUser && Array.isArray(perCallModels)) {
+      const allowedModels = new Set(perCallModels.map((item) => item.model));
+      const allowedGroups = new Set([
+        ...privateGroups,
+        ...getPublicGroups(groupOptions),
+      ]);
+      payload.user_model_price_rules = userModelPriceRules
+        .map((rule) => ({
+          group: rule.group,
+          models: rule.models.filter((model) => allowedModels.has(model)),
+          price: Number(rule.price),
+        }))
+        .filter(
+          (rule) =>
+            allowedGroups.has(rule.group) &&
+            rule.models.length > 0 &&
+            Number.isFinite(rule.price) &&
+            rule.price >= 0,
+        );
+    }
     if (!isRootUser) {
       const invalidGroup = Object.entries(payload.user_group_ratios).find(
         ([group, ratio]) => {
@@ -324,9 +462,11 @@ const EditUserModal = (props) => {
             quotaToDisplayAmount(data.quota || 0).toFixed(6),
           );
           const groups = parseUserGroups(data.group || 'default');
+          data.contact = getUserContactValue(data);
           data.group = groups;
           setSelectedGroups(groups);
           setUserGroupRatios(parseUserGroupRatios(data.setting));
+          setUserModelPrices(parseUserModelPrices(data.setting));
           setInputs({ ...getInitValues(), ...data });
         }
         props.refresh();
@@ -442,22 +582,12 @@ const EditUserModal = (props) => {
                     {isRootUser && (
                       <Col span={24}>
                         <Form.Input
-                          field='wechat_contact'
-                          label={t('微信号')}
-                          placeholder={t('请输入微信号')}
-                          maxLength={64}
-                          showClear
-                        />
-                      </Col>
-                    )}
-
-                    {isRootUser && (
-                      <Col span={24}>
-                        <Form.Input
-                          field='qq_contact'
-                          label={t('QQ号')}
-                          placeholder={t('请输入QQ号')}
-                          maxLength={64}
+                          field='contact'
+                          label={`${t('微信')} / QQ`}
+                          placeholder={t(
+                            '自动识别QQ或微信，多个联系方式用逗号分隔',
+                          )}
+                          maxLength={130}
                           showClear
                         />
                       </Col>
@@ -628,6 +758,153 @@ const EditUserModal = (props) => {
                           </div>
                         </Form.Slot>
                       </Col>
+
+                      {isRootUser && (
+                        <Col span={24}>
+                          <Form.Slot label={t('按次模型单独定价')}>
+                            <div className='border border-gray-200 rounded-lg p-3'>
+                              <div className='grid grid-cols-1 gap-2 sm:grid-cols-[150px_minmax(0,1fr)_140px_auto]'>
+                                <Select
+                                  value={draftPriceGroup || undefined}
+                                  onChange={(value) => {
+                                    setDraftPriceGroup(value || '');
+                                    setDraftPriceModels([]);
+                                  }}
+                                  placeholder={t('选择分组')}
+                                  optionList={groupOptions
+                                    .filter(
+                                      (option) =>
+                                        option.isPublic ||
+                                        selectedGroups.includes(option.value),
+                                    )
+                                    .map((option) => ({
+                                      value: option.value,
+                                      label: option.label,
+                                    }))}
+                                />
+                                <Select
+                                  multiple
+                                  filter
+                                  maxTagCount={2}
+                                  value={draftPriceModels}
+                                  onChange={(value) =>
+                                    setDraftPriceModels(
+                                      Array.isArray(value) ? value : [],
+                                    )
+                                  }
+                                  placeholder={t('选择一个或多个按次模型')}
+                                  disabled={
+                                    !draftPriceGroup ||
+                                    !Array.isArray(perCallModels)
+                                  }
+                                  optionList={(perCallModels || [])
+                                    .filter(
+                                      (item) =>
+                                        item.groups?.includes(
+                                          draftPriceGroup,
+                                        ) || item.groups?.includes('all'),
+                                    )
+                                    .map((item) => ({
+                                      value: item.model,
+                                      label: `${item.model} (${getCurrencyConfig().symbol}${item.price}/${t('次')})`,
+                                    }))}
+                                  style={{ flex: 1, minWidth: 0 }}
+                                />
+                                <InputNumber
+                                  min={0}
+                                  precision={6}
+                                  step={0.001}
+                                  prefix={getCurrencyConfig().symbol}
+                                  suffix={`/${t('次')}`}
+                                  value={draftModelPrice}
+                                  onChange={setDraftModelPrice}
+                                  placeholder={t('单次价格')}
+                                  style={{ width: '100%' }}
+                                />
+                                <Button
+                                  type='primary'
+                                  icon={<IconPlus />}
+                                  onClick={addModelPriceRule}
+                                  disabled={
+                                    !draftPriceGroup ||
+                                    draftPriceModels.length === 0 ||
+                                    draftModelPrice === null ||
+                                    draftModelPrice === ''
+                                  }
+                                >
+                                  {t('添加')}
+                                </Button>
+                              </div>
+
+                              {userModelPriceRules.length > 0 && (
+                                <div
+                                  className='mt-3 border-t border-gray-100 pt-2 space-y-2'
+                                  style={{ maxHeight: 220, overflowY: 'auto' }}
+                                >
+                                  {userModelPriceRules.map((rule, index) => (
+                                    <div
+                                      key={`${rule.group}-${index}`}
+                                      className='flex flex-wrap items-center gap-2 rounded-md bg-gray-50 px-2 py-2'
+                                    >
+                                      <Tag color='blue'>{rule.group}</Tag>
+                                      <div className='flex min-w-0 flex-1 flex-wrap gap-1'>
+                                        {rule.models.map((model) => (
+                                          <Tag key={model} type='light'>
+                                            {model}
+                                          </Tag>
+                                        ))}
+                                      </div>
+                                      <InputNumber
+                                        size='small'
+                                        min={0}
+                                        precision={6}
+                                        step={0.001}
+                                        prefix={getCurrencyConfig().symbol}
+                                        suffix={`/${t('次')}`}
+                                        value={rule.price}
+                                        onChange={(value) => {
+                                          const nextPrice = Number(value);
+                                          if (
+                                            Number.isFinite(nextPrice) &&
+                                            nextPrice >= 0
+                                          ) {
+                                            setUserModelPriceRules((rules) =>
+                                              rules.map((item, itemIndex) =>
+                                                itemIndex === index
+                                                  ? {
+                                                      ...item,
+                                                      price: nextPrice,
+                                                    }
+                                                  : item,
+                                              ),
+                                            );
+                                          }
+                                        }}
+                                        style={{ width: 140 }}
+                                      />
+                                      <Button
+                                        size='small'
+                                        type='danger'
+                                        theme='borderless'
+                                        icon={<IconClose />}
+                                        title={t('移除单独定价')}
+                                        onClick={() =>
+                                          setUserModelPriceRules((rules) =>
+                                            rules.filter(
+                                              (_, itemIndex) =>
+                                                itemIndex !== index,
+                                            ),
+                                          )
+                                        }
+                                      />
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          </Form.Slot>
+                        </Col>
+                      )}
 
                       <Col span={10}>
                         <Form.InputNumber

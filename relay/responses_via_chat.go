@@ -190,7 +190,12 @@ func decodeResponsesFallbackChatResponse(c *gin.Context, info *relaycommon.Relay
 		if err := common.Unmarshal(data, &geminiResp); err != nil {
 			return nil, err
 		}
-		return geminichannel.ResponseGeminiChat2OpenAI(c, &geminiResp), nil
+		chatResp := geminichannel.ResponseGeminiChat2OpenAI(c, &geminiResp)
+		chatResp.Usage = geminichannel.BuildUsageFromGeminiMetadata(
+			geminiResp.UsageMetadata,
+			info.GetEstimatePromptTokens(),
+		)
+		return chatResp, nil
 	}
 	var chatResp dto.OpenAITextResponse
 	if err := common.Unmarshal(data, &chatResp); err != nil {

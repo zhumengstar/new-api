@@ -10,6 +10,7 @@ import (
 
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type TopUp struct {
@@ -31,9 +32,20 @@ type DailyIncomeStat struct {
 }
 
 type UserConsumptionStats struct {
-	Daily      []DailyIncomeStat `json:"daily"`
-	TodayQuota int64             `json:"today_quota"`
-	TotalQuota int64             `json:"total_quota"`
+	Daily        []DailyIncomeStat `json:"daily"`
+	TodayQuota   int64             `json:"today_quota"`
+	TotalQuota   int64             `json:"total_quota"`
+	BalanceQuota int64             `json:"balance_quota"`
+}
+
+type UserConsumptionDailyStat struct {
+	Date      string `gorm:"type:varchar(10);primaryKey"`
+	Quota     int64  `gorm:"not null;default:0"`
+	UpdatedAt int64  `gorm:"autoUpdateTime"`
+}
+
+func (UserConsumptionDailyStat) TableName() string {
+	return "user_consumption_daily_stats"
 }
 
 // GetRecentDailyIncomeStats returns consumed quota for non-admin users.
@@ -70,20 +82,49 @@ func GetUserConsumptionStats(days int) (*UserConsumptionStats, error) {
 		Pluck("id", &userIDs).Error; err != nil {
 		return nil, err
 	}
-	var rows []DailyIncomeStat
-	if len(userIDs) > 0 {
-		err := LOG_DB.Table("logs").
-			Select(dateExpr+" AS date, COALESCE(SUM(logs.quota), 0) AS quota").
-			Where("logs.type = ? AND logs.created_at >= ? AND logs.user_id IN ?", LogTypeConsume, start.Unix(), userIDs).
-			Group(dateExpr).
-			Scan(&rows).Error
+	quotas := make(map[string]int64, days)
+	var persisted []UserConsumptionDailyStat
+	if err := DB.Where("date >= ? AND date < ?", start.Format("2006-01-02"), today.Format("2006-01-02")).
+		Find(&persisted).Error; err != nil {
+		return nil, err
+	}
+	for _, row := range persisted {
+		quotas[row.Date] = row.Quota
+	}
+
+	missingDays := make([]time.Time, 0, days-1)
+	for day := start; day.Before(today); day = day.AddDate(0, 0, 1) {
+		if _, ok := quotas[day.Format("2006-01-02")]; !ok {
+			missingDays = append(missingDays, day)
+		}
+	}
+	if len(missingDays) > 0 {
+		missingStart := missingDays[0]
+		rows, err := aggregateUserConsumptionByDay(userIDs, dateExpr, missingStart.Unix(), today.Unix())
 		if err != nil {
+			return nil, err
+		}
+		aggregated := make(map[string]int64, len(rows))
+		for _, row := range rows {
+			aggregated[row.Date] = row.Quota
+		}
+		toPersist := make([]UserConsumptionDailyStat, 0, len(missingDays))
+		for _, day := range missingDays {
+			date := day.Format("2006-01-02")
+			quota := aggregated[date]
+			quotas[date] = quota
+			toPersist = append(toPersist, UserConsumptionDailyStat{Date: date, Quota: quota})
+		}
+		if err := DB.Clauses(clause.OnConflict{DoNothing: true}).Create(&toPersist).Error; err != nil {
 			return nil, err
 		}
 	}
 
-	quotas := make(map[string]int64, days)
-	for _, row := range rows {
+	todayRows, err := aggregateUserConsumptionByDay(userIDs, dateExpr, today.Unix(), today.AddDate(0, 0, 1).Unix())
+	if err != nil {
+		return nil, err
+	}
+	for _, row := range todayRows {
 		quotas[row.Date] = row.Quota
 	}
 
@@ -92,20 +133,43 @@ func GetUserConsumptionStats(days int) (*UserConsumptionStats, error) {
 		date := day.Format("2006-01-02")
 		stats = append(stats, DailyIncomeStat{Date: date, Quota: quotas[date]})
 	}
+	// Lifetime consumption is persisted on users.used_quota during billing.
+	// Reading it avoids a full scan of the historical log table on every page load.
 	var totalQuota int64
-	if len(userIDs) > 0 {
-		if err := LOG_DB.Model(&Log{}).
-			Select("COALESCE(SUM(quota), 0)").
-			Where("type = ? AND user_id IN ?", LogTypeConsume, userIDs).
-			Scan(&totalQuota).Error; err != nil {
-			return nil, err
-		}
+	if err := DB.Unscoped().Model(&User{}).
+		Select("COALESCE(SUM(used_quota), 0)").
+		Where("role < ?", common.RoleAdminUser).
+		Scan(&totalQuota).Error; err != nil {
+		return nil, err
+	}
+	var balanceQuota int64
+	if err := DB.Model(&User{}).
+		Select("COALESCE(SUM(quota), 0)").
+		Where("role < ? AND status = ?", common.RoleAdminUser, common.UserStatusEnabled).
+		Scan(&balanceQuota).Error; err != nil {
+		return nil, err
 	}
 	return &UserConsumptionStats{
-		Daily:      stats,
-		TodayQuota: quotas[today.Format("2006-01-02")],
-		TotalQuota: totalQuota,
+		Daily:        stats,
+		TodayQuota:   quotas[today.Format("2006-01-02")],
+		TotalQuota:   totalQuota,
+		BalanceQuota: balanceQuota,
 	}, nil
+}
+
+func aggregateUserConsumptionByDay(userIDs []int, dateExpr string, startUnix int64, endUnix int64) ([]DailyIncomeStat, error) {
+	rows := make([]DailyIncomeStat, 0)
+	if len(userIDs) == 0 {
+		return rows, nil
+	}
+	if err := LOG_DB.Table("logs").
+		Select(dateExpr+" AS date, COALESCE(SUM(logs.quota), 0) AS quota").
+		Where("logs.type = ? AND logs.created_at >= ? AND logs.created_at < ? AND logs.user_id IN ?", LogTypeConsume, startUnix, endUnix, userIDs).
+		Group(dateExpr).
+		Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	return rows, nil
 }
 
 const (

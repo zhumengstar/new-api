@@ -29,6 +29,7 @@ const DeleteUserModal = ({
   activePage,
   refresh,
   manageUser,
+  directDelete = false,
   t,
 }) => {
   const handleConfirm = async () => {
@@ -44,13 +45,17 @@ const DeleteUserModal = ({
 
   return (
     <Modal
-      title={t('确定是否要注销此用户？')}
+      title={t(
+        directDelete ? '确定是否要直接删除此用户？' : '确定是否要注销此用户？',
+      )}
       visible={visible}
       onCancel={onCancel}
       onOk={handleConfirm}
       type='danger'
     >
-      {t('相当于删除用户，此修改将不可逆')}
+      {t(
+        '此操作只会进行逻辑删除，用户数据仍保留在数据库中，删除后不再显示在用户列表。',
+      )}
     </Modal>
   );
 };

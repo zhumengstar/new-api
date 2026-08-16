@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/setting/billing_setting"
@@ -104,4 +105,80 @@ func TestModelPriceHelperPerCallChannelTestAllowsUnconfiguredModel(t *testing.T)
 	require.False(t, priceData.UsePrice)
 	require.Equal(t, 37.5, priceData.ModelRatio)
 	require.Equal(t, int(37.5/2*common.QuotaPerUnit), priceData.Quota)
+}
+
+func TestModelPriceHelperUsesUserPerCallPrice(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	ctx.Set("group", "default")
+
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "suno_music",
+		UserGroup:       "default",
+		UsingGroup:      "default",
+		UserSetting: dto.UserSetting{
+			UserModelPrices: map[string]float64{"suno_music": 0.42},
+		},
+	}
+
+	priceData, err := ModelPriceHelper(ctx, info, 0, &types.TokenCountMeta{})
+	require.NoError(t, err)
+	require.True(t, priceData.UsePrice)
+	require.Equal(t, 0.42, priceData.ModelPrice)
+	require.Equal(t, int(0.42*common.QuotaPerUnit), priceData.QuotaToPreConsume)
+}
+
+func TestModelPriceHelperUsesGroupSpecificUserPerCallPrice(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	ctx.Set("group", "premium")
+
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "suno_music",
+		UserGroup:       "premium",
+		UsingGroup:      "premium",
+		UserSetting: dto.UserSetting{
+			UserModelPriceRules: []dto.UserModelPriceRule{
+				{Group: "default", Models: []string{"suno_music"}, Price: 0.25},
+				{Group: "premium", Models: []string{"suno_music"}, Price: 0.8},
+			},
+		},
+	}
+
+	priceData, err := ModelPriceHelper(ctx, info, 0, &types.TokenCountMeta{})
+	require.NoError(t, err)
+	require.True(t, priceData.UsePrice)
+	require.Equal(t, 0.8, priceData.ModelPrice)
+	require.Equal(t, 1.0, priceData.GroupRatioInfo.GroupRatio)
+	require.Equal(t, int(0.8*common.QuotaPerUnit), priceData.QuotaToPreConsume)
+}
+
+func TestModelPriceHelperPerCallUsesUserPrice(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/api/task", nil)
+	ctx.Set("group", "default")
+
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "suno_music",
+		UserGroup:       "default",
+		UsingGroup:      "default",
+		UserSetting: dto.UserSetting{
+			UserModelPrices: map[string]float64{"suno_music": 0.36},
+		},
+	}
+
+	priceData, err := ModelPriceHelperPerCall(ctx, info)
+	require.NoError(t, err)
+	require.True(t, priceData.UsePrice)
+	require.Equal(t, 0.36, priceData.ModelPrice)
+	require.Equal(t, int(0.36*common.QuotaPerUnit), priceData.Quota)
 }

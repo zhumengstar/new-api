@@ -242,7 +242,7 @@ func TestGetUserOrderSupportsQuota(t *testing.T) {
 }
 
 func TestGetUserOrderSupportsTotalConsumedQuota(t *testing.T) {
-	assert.Equal(t, DefaultUserOrder, GetUserOrder("total_consumed_quota", "asc"))
+	assert.Equal(t, "used_quota asc, id desc", GetUserOrder("total_consumed_quota", "asc"))
 	assert.Equal(t, DefaultUserOrder, GetUserOrder("today_consumed_quota", "desc"))
 }
 
@@ -262,9 +262,29 @@ func TestGetRecentDailyIncomeStatsExcludesAdmins(t *testing.T) {
 	assert.Equal(t, int64(125000), stats[6].Quota)
 }
 
+func TestGetUserConsumptionStatsPersistsCompletedDays(t *testing.T) {
+	truncateTables(t)
+	location := time.FixedZone("Asia/Shanghai", 8*60*60)
+	now := time.Now().In(location)
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, location)
+	yesterday := today.AddDate(0, 0, -1)
+	insertUserForManagementVisibilityTest(t, &User{Id: 111, Username: "persisted_income_user", Role: common.RoleCommonUser, Status: common.UserStatusEnabled})
+	logEntry := &Log{UserId: 111, Type: LogTypeConsume, Quota: 125000, CreatedAt: yesterday.Add(12 * time.Hour).Unix()}
+	require.NoError(t, LOG_DB.Create(logEntry).Error)
+
+	stats, err := GetUserConsumptionStats(7)
+	require.NoError(t, err)
+	assert.Equal(t, int64(125000), stats.Daily[5].Quota)
+
+	require.NoError(t, LOG_DB.Model(logEntry).Update("quota", 250000).Error)
+	stats, err = GetUserConsumptionStats(7)
+	require.NoError(t, err)
+	assert.Equal(t, int64(125000), stats.Daily[5].Quota)
+}
+
 func TestGetAllUsersIncludesTotalConsumedQuota(t *testing.T) {
 	truncateTables(t)
-	insertUserForManagementVisibilityTest(t, &User{Id: 201, Username: "total_consumed_user", Role: common.RoleCommonUser, Status: common.UserStatusEnabled})
+	insertUserForManagementVisibilityTest(t, &User{Id: 201, Username: "total_consumed_user", Role: common.RoleCommonUser, Status: common.UserStatusEnabled, UsedQuota: 375000})
 	require.NoError(t, LOG_DB.Create(&Log{UserId: 201, Type: LogTypeConsume, Quota: 125000}).Error)
 	require.NoError(t, LOG_DB.Create(&Log{UserId: 201, Type: LogTypeConsume, Quota: 250000}).Error)
 	require.NoError(t, LOG_DB.Create(&Log{UserId: 201, Type: LogTypeTopup, Quota: 990000}).Error)
@@ -277,8 +297,8 @@ func TestGetAllUsersIncludesTotalConsumedQuota(t *testing.T) {
 
 func TestGetAllUsersSortsByTotalConsumedQuota(t *testing.T) {
 	truncateTables(t)
-	insertUserForManagementVisibilityTest(t, &User{Id: 301, Username: "lower_consumed", Role: common.RoleCommonUser, Status: common.UserStatusEnabled})
-	insertUserForManagementVisibilityTest(t, &User{Id: 302, Username: "higher_consumed", Role: common.RoleCommonUser, Status: common.UserStatusEnabled})
+	insertUserForManagementVisibilityTest(t, &User{Id: 301, Username: "lower_consumed", Role: common.RoleCommonUser, Status: common.UserStatusEnabled, UsedQuota: 125000})
+	insertUserForManagementVisibilityTest(t, &User{Id: 302, Username: "higher_consumed", Role: common.RoleCommonUser, Status: common.UserStatusEnabled, UsedQuota: 250000})
 	require.NoError(t, LOG_DB.Create(&Log{UserId: 301, Type: LogTypeConsume, Quota: 125000}).Error)
 	require.NoError(t, LOG_DB.Create(&Log{UserId: 302, Type: LogTypeConsume, Quota: 250000}).Error)
 
@@ -294,8 +314,8 @@ func TestGetAllUsersIncludesAndSortsByTodayConsumedQuota(t *testing.T) {
 	truncateTables(t)
 	now := time.Now().Unix()
 	yesterday := shanghaiTodayStartUnix() - 1
-	insertUserForManagementVisibilityTest(t, &User{Id: 311, Username: "higher_historical", Role: common.RoleCommonUser, Status: common.UserStatusEnabled})
-	insertUserForManagementVisibilityTest(t, &User{Id: 312, Username: "higher_today", Role: common.RoleCommonUser, Status: common.UserStatusEnabled})
+	insertUserForManagementVisibilityTest(t, &User{Id: 311, Username: "higher_historical", Role: common.RoleCommonUser, Status: common.UserStatusEnabled, UsedQuota: 1025000})
+	insertUserForManagementVisibilityTest(t, &User{Id: 312, Username: "higher_today", Role: common.RoleCommonUser, Status: common.UserStatusEnabled, UsedQuota: 250000})
 	require.NoError(t, LOG_DB.Create(&Log{UserId: 311, Type: LogTypeConsume, Quota: 900000, CreatedAt: yesterday}).Error)
 	require.NoError(t, LOG_DB.Create(&Log{UserId: 311, Type: LogTypeConsume, Quota: 125000, CreatedAt: now}).Error)
 	require.NoError(t, LOG_DB.Create(&Log{UserId: 312, Type: LogTypeConsume, Quota: 250000, CreatedAt: now}).Error)
@@ -312,10 +332,48 @@ func TestGetAllUsersIncludesAndSortsByTodayConsumedQuota(t *testing.T) {
 	assert.Equal(t, int64(1025000), users[1].TotalConsumedQuota)
 }
 
+func TestGetAllUsersSortsZeroTodayByBalance(t *testing.T) {
+	truncateTables(t)
+	insertUserForManagementVisibilityTest(t, &User{Id: 321, Username: "zero_high_balance", Role: common.RoleCommonUser, Status: common.UserStatusEnabled, Quota: 900000})
+	insertUserForManagementVisibilityTest(t, &User{Id: 322, Username: "zero_low_balance", Role: common.RoleCommonUser, Status: common.UserStatusEnabled, Quota: 100000})
+
+	users, _, err := GetAllUsers(&common.PageInfo{Page: 1, PageSize: 20}, "today_consumed_quota", "desc", 1, common.RoleRootUser)
+	require.NoError(t, err)
+	require.Len(t, users, 2)
+	assert.Equal(t, "zero_high_balance", users[0].Username)
+	assert.Equal(t, int64(0), users[0].TodayConsumedQuota)
+	assert.Equal(t, "zero_low_balance", users[1].Username)
+}
+
+func TestGetAllUsersHidesSoftDeletedUsersByDefault(t *testing.T) {
+	truncateTables(t)
+	active := &User{Id: 331, Username: "active_user", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
+	deleted := &User{Id: 332, Username: "deleted_user", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
+	insertUserForManagementVisibilityTest(t, active)
+	insertUserForManagementVisibilityTest(t, deleted)
+	require.NoError(t, DB.Delete(deleted).Error)
+
+	users, total, err := GetAllUsers(&common.PageInfo{Page: 1, PageSize: 20}, "id", "desc", 1, common.RoleRootUser)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), total)
+	require.Len(t, users, 1)
+	assert.Equal(t, "active_user", users[0].Username)
+
+	users, total, err = SearchUsers("", "", nil, nil, 0, 20, "id", "desc", 1, common.RoleRootUser)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), total)
+	require.Len(t, users, 1)
+	assert.Equal(t, "active_user", users[0].Username)
+}
+
 func TestGetUserConsumptionStatsExcludesAdminsFromTotal(t *testing.T) {
 	truncateTables(t)
-	insertUserForManagementVisibilityTest(t, &User{Id: 401, Username: "total_common", Role: common.RoleCommonUser, Status: common.UserStatusEnabled})
-	insertUserForManagementVisibilityTest(t, &User{Id: 402, Username: "total_admin", Role: common.RoleAdminUser, Status: common.UserStatusEnabled})
+	insertUserForManagementVisibilityTest(t, &User{Id: 401, Username: "total_common", Role: common.RoleCommonUser, Status: common.UserStatusEnabled, Quota: 500000, UsedQuota: 125000})
+	insertUserForManagementVisibilityTest(t, &User{Id: 402, Username: "total_admin", Role: common.RoleAdminUser, Status: common.UserStatusEnabled, Quota: 990000, UsedQuota: 990000})
+	insertUserForManagementVisibilityTest(t, &User{Id: 403, Username: "disabled_common", Role: common.RoleCommonUser, Status: common.UserStatusDisabled, Quota: 250000})
+	deletedUser := &User{Id: 404, Username: "deleted_common", Role: common.RoleCommonUser, Status: common.UserStatusEnabled, Quota: 880000}
+	insertUserForManagementVisibilityTest(t, deletedUser)
+	require.NoError(t, DB.Delete(deletedUser).Error)
 	require.NoError(t, LOG_DB.Create(&Log{UserId: 401, Type: LogTypeConsume, Quota: 125000}).Error)
 	require.NoError(t, LOG_DB.Create(&Log{UserId: 402, Type: LogTypeConsume, Quota: 990000}).Error)
 
@@ -323,6 +381,7 @@ func TestGetUserConsumptionStatsExcludesAdminsFromTotal(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(125000), stats.TotalQuota)
 	assert.Equal(t, int64(125000), stats.TodayQuota)
+	assert.Equal(t, int64(500000), stats.BalanceQuota)
 }
 
 func TestSumCurrentMinuteIncomeExcludesAdminsAndOldLogs(t *testing.T) {

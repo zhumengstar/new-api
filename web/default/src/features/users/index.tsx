@@ -16,8 +16,13 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
+
 import { SectionPageLayout } from '@/components/layout'
+import { formatQuota } from '@/lib/format'
+
+import { getUserConsumptionStats } from './api'
 import { UsersDeleteDialog } from './components/users-delete-dialog'
 import { UsersMutateDrawer } from './components/users-mutate-drawer'
 import { UsersPrimaryButtons } from './components/users-primary-buttons'
@@ -26,12 +31,22 @@ import { UsersTable } from './components/users-table'
 
 function UsersContent() {
   const { t } = useTranslation()
-  const { open, setOpen, currentRow } = useUsers()
+  const { open, setOpen, currentRow, refreshTrigger } = useUsers()
+  const { data: statsResponse } = useQuery({
+    queryKey: ['user-consumption-stats', refreshTrigger],
+    queryFn: getUserConsumptionStats,
+  })
+  const balanceQuota = statsResponse?.data?.balance_quota ?? 0
 
   return (
     <>
       <SectionPageLayout fixedContent>
-        <SectionPageLayout.Title>{t('Users')}</SectionPageLayout.Title>
+        <SectionPageLayout.Title>
+          <span>{t('Users')}</span>
+          <span className='text-muted-foreground ml-3 text-sm font-normal'>
+            {t('Enabled non-admin balance total')}: {formatQuota(balanceQuota)}
+          </span>
+        </SectionPageLayout.Title>
         <SectionPageLayout.Actions>
           <UsersPrimaryButtons />
         </SectionPageLayout.Actions>

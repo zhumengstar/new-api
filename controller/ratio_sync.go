@@ -43,6 +43,10 @@ const (
 	modelsDevHost               = "models.dev"
 	modelsDevPath               = "/api.json"
 	modelsDevInputCostRatioBase = 1000.0
+	customPricingPresetID       = -102
+	customPricingPresetName     = "自定义价格（price.muling.store）"
+	customPricingPresetBaseURL  = "https://price.muling.store"
+	customPricingPresetEndpoint = "/api/pricing"
 )
 
 func nearlyEqual(a, b float64) bool {
@@ -522,7 +526,13 @@ func FetchUpstreamRatios(c *gin.Context) {
 		}
 	}
 
-	differences := buildDifferences(localData, successfulChannels)
+	enabledModels, err := getEnabledChannelModels()
+	if err != nil {
+		logger.LogError(c.Request.Context(), "failed to query enabled channel models: "+err.Error())
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "查询已启用渠道模型失败"})
+		return
+	}
+	differences := buildDifferences(localData, successfulChannels, enabledModels)
 
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
@@ -536,21 +546,25 @@ func FetchUpstreamRatios(c *gin.Context) {
 func buildDifferences(localData map[string]any, successfulChannels []struct {
 	name string
 	data map[string]any
-}) map[string]map[string]dto.DifferenceItem {
+}, enabledModels map[string]struct{}) map[string]map[string]dto.DifferenceItem {
 	differences := make(map[string]map[string]dto.DifferenceItem)
 
 	allModels := make(map[string]struct{})
 
 	for _, field := range pricingSyncFields {
 		for modelName := range valueMap(localData[field]) {
-			allModels[modelName] = struct{}{}
+			if _, enabled := enabledModels[modelName]; enabled {
+				allModels[modelName] = struct{}{}
+			}
 		}
 	}
 
 	for _, channel := range successfulChannels {
 		for _, field := range pricingSyncFields {
 			for modelName := range valueMap(channel.data[field]) {
-				allModels[modelName] = struct{}{}
+				if _, enabled := enabledModels[modelName]; enabled {
+					allModels[modelName] = struct{}{}
+				}
 			}
 		}
 	}
@@ -693,6 +707,29 @@ func buildDifferences(localData map[string]any, successfulChannels []struct {
 	}
 
 	return differences
+}
+
+// getEnabledChannelModels limits comparison to models exposed by enabled
+// channels. Price sources can advertise a broader catalog than this site uses.
+func getEnabledChannelModels() (map[string]struct{}, error) {
+	channels, err := model.GetAllChannels(0, 0, true, false)
+	if err != nil {
+		return nil, err
+	}
+
+	enabledModels := make(map[string]struct{})
+	for _, channel := range channels {
+		if channel == nil || channel.Status != common.ChannelStatusEnabled {
+			continue
+		}
+		for _, modelName := range channel.GetModels() {
+			modelName = strings.TrimSpace(modelName)
+			if modelName != "" {
+				enabledModels[modelName] = struct{}{}
+			}
+		}
+	}
+	return enabledModels, nil
 }
 
 func roundRatioValue(value float64) float64 {
@@ -994,7 +1031,12 @@ func GetSyncableChannels(c *gin.Context) {
 		return
 	}
 
-	var syncableChannels []dto.SyncableChannel
+	syncableChannels := []dto.SyncableChannel{{
+		ID:      customPricingPresetID,
+		Name:    customPricingPresetName,
+		BaseURL: customPricingPresetBaseURL,
+		Status:  common.ChannelStatusEnabled,
+	}}
 	for _, channel := range channels {
 		if channel.GetBaseURL() != "" {
 			syncableChannels = append(syncableChannels, dto.SyncableChannel{

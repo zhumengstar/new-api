@@ -36,6 +36,37 @@ func modelPriceNotConfiguredError(modelName string, userId int) error {
 // https://docs.claude.com/en/docs/build-with-claude/prompt-caching#1-hour-cache-duration
 const claudeCacheCreation1hMultiplier = 6 / 3.75
 
+func getUserPerCallModelPrice(info *relaycommon.RelayInfo) (float64, bool) {
+	if info == nil {
+		return 0, false
+	}
+	if billing_setting.GetBillingMode(info.OriginModelName) == billing_setting.BillingModeTieredExpr {
+		return 0, false
+	}
+	if _, ok := ratio_setting.GetModelPrice(info.OriginModelName, false); !ok {
+		if _, ok = ratio_setting.GetDefaultModelPriceMap()[info.OriginModelName]; !ok {
+			return 0, false
+		}
+	}
+	for _, rule := range info.UserSetting.UserModelPriceRules {
+		if strings.TrimSpace(rule.Group) != info.UsingGroup || rule.Price < 0 {
+			continue
+		}
+		for _, modelName := range rule.Models {
+			if strings.TrimSpace(modelName) == info.OriginModelName {
+				return rule.Price, true
+			}
+		}
+	}
+
+	// Compatibility with prices saved before group-aware rules were introduced.
+	price, ok := info.UserSetting.UserModelPrices[info.OriginModelName]
+	if !ok || price < 0 {
+		return 0, false
+	}
+	return price, true
+}
+
 // HandleGroupRatio checks for "auto_group" in the context and updates the group ratio and relayInfo.UsingGroup if present
 func HandleGroupRatio(ctx *gin.Context, relayInfo *relaycommon.RelayInfo) types.GroupRatioInfo {
 	groupRatioInfo := types.GroupRatioInfo{
@@ -73,6 +104,14 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 	// Check if this model uses tiered_expr billing
 	if billing_setting.GetBillingMode(info.OriginModelName) == billing_setting.BillingModeTieredExpr {
 		return modelPriceHelperTiered(c, info, promptTokens, meta, groupRatioInfo)
+	}
+	if userModelPrice, ok := getUserPerCallModelPrice(info); ok {
+		modelPrice = userModelPrice
+		usePrice = true
+		// A user rule defines the final per-request price for its group.
+		groupRatioInfo.GroupRatio = 1
+		groupRatioInfo.GroupSpecialRatio = 1
+		groupRatioInfo.HasSpecialRatio = true
 	}
 
 	var preConsumedQuota int
@@ -173,6 +212,14 @@ func ModelPriceHelperPerCall(c *gin.Context, info *relaycommon.RelayInfo) (types
 
 	modelPrice, success := ratio_setting.GetModelPrice(info.OriginModelName, true)
 	usePrice := success
+	if userModelPrice, ok := getUserPerCallModelPrice(info); ok {
+		modelPrice = userModelPrice
+		success = true
+		usePrice = true
+		groupRatioInfo.GroupRatio = 1
+		groupRatioInfo.GroupSpecialRatio = 1
+		groupRatioInfo.HasSpecialRatio = true
+	}
 	var modelRatio float64
 
 	if !success {

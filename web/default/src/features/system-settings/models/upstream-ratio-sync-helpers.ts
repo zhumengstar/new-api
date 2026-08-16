@@ -56,6 +56,36 @@ export const NUMERIC_SYNC_FIELDS = new Set<string>([
   'model_price',
 ])
 
+const USD_PER_MILLION_PER_MODEL_RATIO = 2
+
+export function getSyncDisplayPrice(
+  ratioType: RatioType,
+  value: number | string | null | undefined,
+  baseModelRatio?: number
+): string | null {
+  if (value === null || value === undefined) return null
+  if (typeof value !== 'number') return String(value)
+  if (ratioType === 'model_price') return `$${formatPriceNumber(value)}`
+  if (ratioType === 'billing_mode' || ratioType === 'billing_expr') {
+    return String(value)
+  }
+
+  const price =
+    ratioType === 'model_ratio'
+      ? value * USD_PER_MILLION_PER_MODEL_RATIO
+      : baseModelRatio === undefined
+        ? undefined
+        : baseModelRatio * value * USD_PER_MILLION_PER_MODEL_RATIO
+
+  if (price === undefined) return null
+  return `$${formatPriceNumber(price)} / 1M`
+}
+
+function formatPriceNumber(value: number): string {
+  if (!Number.isFinite(value)) return String(value)
+  return String(Number(value.toFixed(6)))
+}
+
 export function getSyncFieldLabel(
   ratioType: string,
   t: (key: string) => string

@@ -130,6 +130,7 @@ func SetApiRouter(router *gin.Engine) {
 			{
 				adminRoute.GET("/", controller.GetAllUsers)
 				adminRoute.GET("/income_stats", controller.GetRecentDailyIncomeStats)
+				adminRoute.GET("/per_call_model_prices", middleware.RootAuth(), controller.GetPerCallModelPrices)
 				adminRoute.GET("/topup", controller.GetAllTopUps)
 				adminRoute.POST("/topup/complete", controller.AdminCompleteTopUp)
 				adminRoute.GET("/search", controller.SearchUsers)
@@ -312,6 +313,7 @@ func SetApiRouter(router *gin.Engine) {
 		// TODO: remove once the classic frontend is removed; the default frontend uses /system-task/log-cleanup.
 		logRoute.DELETE("/", middleware.RootAuth(), controller.DeleteHistoryLogs)
 		logRoute.GET("/stat", middleware.AdminAuth(), controller.GetLogsStat)
+		logRoute.GET("/model_request_stats", middleware.AdminAuth(), controller.GetModelRequestStats)
 		logRoute.GET("/current_minute_income", middleware.AdminAuth(), controller.GetCurrentMinuteIncome)
 		logRoute.GET("/self/stat", middleware.UserAuth(), controller.GetLogsSelfStat)
 		logRoute.GET("/channel_affinity_usage_cache", middleware.AdminAuth(), controller.GetChannelAffinityUsageCacheStats)

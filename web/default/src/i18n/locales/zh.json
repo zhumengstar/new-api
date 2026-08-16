@@ -661,6 +661,7 @@
     "Cache ratio": "缓存倍率",
     "Cache Read": "缓存读取",
     "Cache read price": "缓存读取价格",
+    "Cache creation price": "缓存创建价格",
     "Cache repeated prompt prefixes for cheaper, faster reuse": "缓存重复的提示词前缀，复用更快、更省钱",
     "Cache write": "缓存写入",
     "Cache Write": "缓存写入",
@@ -2858,6 +2859,7 @@
     "Node Name": "节点名称",
     "Node role": "节点职责",
     "Nodes reporting from this deployment and their latest heartbeat.": "当前部署中上报的节点及其最新心跳。",
+    "Enabled non-admin balance total": "已启用非管理员余额合计",
     "Non-stream": "非流式",
     "Non-zero invitation rewards require compliance confirmation in Payment Gateway settings.": "非零邀请奖励需要先在支付网关设置中确认合规条款。",
     "None": "无",
@@ -4322,6 +4324,8 @@
     "This will permanently delete API key": "这将永久删除 API 密钥",
     "This will permanently delete redemption code": "这将永久删除兑换码",
     "This will permanently delete user": "这将永久删除用户",
+    "This will logically delete user": "这将逻辑删除用户",
+    ". The record will be retained and hidden from the user list.": "。记录会保留在数据库中，并从用户列表隐藏。",
     "This will permanently remove all log entries created before {{date}}.": "这将永久删除 {{date}} 之前创建的所有日志条目。",
     "This will permanently remove log entries before the selected timestamp.": "这将永久删除所选时间戳之前的日志条目。",
     "This will update the priority to {{value}} for all {{count}} channel(s) with tag \"{{tag}}\". Continue?": "这会将标签 \"{{tag}}\" 下所有 {{count}} 个渠道的优先级更新为 {{value}}。继续吗？",
@@ -4921,6 +4925,14 @@
     "Zero retention": "零数据保留",
     "Zhipu": "智谱",
     "Zhipu V4": "智谱 V4",
-    "Zoom": "缩放"
+    "Zoom": "缩放",
+    "Custom per-request model pricing": "按次模型单独定价",
+    "Only per-request models can be selected": "只允许选择按次计费模型",
+    "Search per-request models": "搜索按次模型",
+    "Shared price per request": "统一每次价格",
+    "Apply to selected": "批量应用",
+    "Select at least one per-request model": "请先选择至少一个按次模型",
+    "Model price must be a non-negative number": "模型价格必须是不小于 0 的数字",
+    "Remove custom price": "移除单独定价"
   }
 }

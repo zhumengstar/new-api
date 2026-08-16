@@ -58,7 +58,9 @@ export const userSchema = z.object({
   DeletedAt: z.any().nullable().optional(),
   remark: z.string().optional(),
   wechat_contact: z.string().optional(),
+  qq_contact: z.string().optional(),
   is_hidden: z.boolean().optional(),
+  setting: z.string().optional(),
 });
 export type User = z.infer<typeof userSchema>;
 
@@ -113,6 +115,13 @@ export interface UserFormData {
   group?: string; // Only used when updating user
   remark?: string; // Only used when updating user
   wechat_contact?: string; // Only available to super admins when updating user
+  qq_contact?: string; // Only available to super admins when updating user
+  user_model_prices?: Record<string, number>; // Root-only per-request model prices
+}
+
+export interface PerCallModelPrice {
+  model: string;
+  price: number;
 }
 
 export type ManageUserAction =

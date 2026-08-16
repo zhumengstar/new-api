@@ -20,7 +20,10 @@ For commercial licensing, please contact support@quantumnous.com
 import React from 'react';
 import { Avatar, Typography, Table, Tag } from '@douyinfe/semi-ui';
 import { IconCoinMoneyStroked } from '@douyinfe/semi-icons';
-import { calculateModelPrice, getModelPriceItems } from '../../../../../helpers';
+import {
+  calculateModelPrice,
+  getModelPriceItems,
+} from '../../../../../helpers';
 
 const { Text } = Typography;
 
@@ -63,8 +66,15 @@ const ModelPricingTable = ({
         : { inputPrice: '-', outputPrice: '-', price: '-' };
 
       // 获取分组倍率
-      const groupRatioValue =
-        groupRatio && groupRatio[group] ? groupRatio[group] : 1;
+      const hasUserPrice = Object.prototype.hasOwnProperty.call(
+        modelData?.user_group_prices || {},
+        group,
+      );
+      const groupRatioValue = hasUserPrice
+        ? 1
+        : groupRatio && groupRatio[group]
+          ? groupRatio[group]
+          : 1;
 
       return {
         key: group,

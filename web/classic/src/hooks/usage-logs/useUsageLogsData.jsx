@@ -184,6 +184,11 @@ export const useLogsData = () => {
     token: 0,
   });
   const [minuteIncome, setMinuteIncome] = useState(0);
+  const [modelRequestPeriod, setModelRequestPeriod] = useState('total');
+  const [showModelRequestStats, setShowModelRequestStats] = useState(false);
+  const [modelRequestStats, setModelRequestStats] = useState([]);
+  const [loadingModelRequestStats, setLoadingModelRequestStats] =
+    useState(false);
 
   // Form state
   const [formApi, setFormApi] = useState(null);
@@ -1015,7 +1020,7 @@ export const useLogsData = () => {
   }, [formApi]);
 
   useEffect(() => {
-    if (!isAdminUser) return undefined;
+    if (!isAdminUser || !showModelRequestStats) return undefined;
 
     let cancelled = false;
     const loadMinuteIncome = async () => {
@@ -1036,6 +1041,40 @@ export const useLogsData = () => {
       clearInterval(timer);
     };
   }, [isAdminUser]);
+
+  useEffect(() => {
+    if (!isAdminUser) return undefined;
+
+    let cancelled = false;
+    let loading = false;
+    const loadModelRequestStats = async () => {
+      if (loading) return;
+      loading = true;
+      setLoadingModelRequestStats(true);
+      try {
+        const res = await API.get(
+          `/api/log/model_request_stats?period=${modelRequestPeriod}`,
+        );
+        if (!cancelled && res.data.success) {
+          setModelRequestStats(res.data.data || []);
+        }
+      } catch (reason) {
+        if (!cancelled) {
+          console.error('Failed to load model request statistics', reason);
+        }
+      } finally {
+        loading = false;
+        if (!cancelled) setLoadingModelRequestStats(false);
+      }
+    };
+
+    loadModelRequestStats();
+    const timer = setInterval(loadModelRequestStats, 10000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [isAdminUser, modelRequestPeriod, showModelRequestStats]);
 
   // Check if any record has expandable content
   const hasExpandableRows = () => {
@@ -1061,6 +1100,12 @@ export const useLogsData = () => {
     updateAutoRefreshSeconds,
     stat,
     minuteIncome,
+    modelRequestPeriod,
+    setModelRequestPeriod,
+    showModelRequestStats,
+    setShowModelRequestStats,
+    modelRequestStats,
+    loadingModelRequestStats,
     isAdminUser,
     isRootUser,
     isGeneratedImagePreviewOpen,

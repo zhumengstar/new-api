@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import type { ColumnDef } from '@tanstack/react-table'
+
 import { DataTableColumnHeader } from '@/components/data-table/core/column-header'
 import { StaticRowActions } from '@/components/data-table/static/static-row-actions'
 import { StatusBadge } from '@/components/status-badge'
@@ -50,6 +51,13 @@ export function buildModelRatioColumns({
   t,
 }: BuildModelRatioColumnsOptions): ColumnDef<ModelRow>[] {
   return [
+    {
+      accessorKey: 'family',
+      header: ({ column }) => (
+        <DataTableColumnHeader column={column} title={t('Model family')} />
+      ),
+      enableHiding: false,
+    },
     {
       id: 'select',
       header: ({ table }) => (
@@ -117,6 +125,17 @@ export function buildModelRatioColumns({
       ),
       filterFn: (row, id, value) =>
         filterBySelectedValues(row.getValue(id), value),
+      sortingFn: (rowA, rowB) => {
+        const order: Record<string, number> = {
+          'per-token': 0,
+          'per-request': 1,
+          tiered_expr: 2,
+        }
+        return (
+          (order[String(rowA.getValue('billingMode'))] ?? 3) -
+          (order[String(rowB.getValue('billingMode'))] ?? 3)
+        )
+      },
       meta: { label: t('Mode') },
     },
     {

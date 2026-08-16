@@ -235,8 +235,10 @@ func GetUserOrder(sortBy string, sortOrder string) string {
 		return "last_login_at " + order + ", id desc"
 	case "quota":
 		return "quota " + order + ", id desc"
-	case "today_consumed_quota", "total_consumed_quota":
-		// This value is aggregated from LOG_DB and is sorted separately.
+	case "total_consumed_quota":
+		return "used_quota " + order + ", id desc"
+	case "today_consumed_quota":
+		// Today's value is aggregated from LOG_DB and is sorted separately.
 		return DefaultUserOrder
 	default:
 		return DefaultUserOrder
@@ -284,7 +286,8 @@ func GetAllUsers(pageInfo *common.PageInfo, sortBy string, sortOrder string, vie
 		}
 	}()
 
-	query := applyUserManagementScope(tx.Unscoped().Model(&User{}), viewerId, viewerRole)
+	query := applyUserManagementScope(tx.Unscoped().Model(&User{}), viewerId, viewerRole).
+		Where("deleted_at IS NULL")
 
 	// Get total count within transaction
 	err = query.Count(&total).Error
@@ -296,8 +299,6 @@ func GetAllUsers(pageInfo *common.PageInfo, sortBy string, sortOrder string, vie
 	// Get paginated users within same transaction
 	if sortBy == "today_consumed_quota" {
 		users, err = getUsersSortedByConsumedQuota(query, pageInfo.GetStartIdx(), pageInfo.GetPageSize(), sortOrder, shanghaiTodayStartUnix(), true)
-	} else if sortBy == "total_consumed_quota" {
-		users, err = getUsersSortedByTotalConsumedQuota(query, pageInfo.GetStartIdx(), pageInfo.GetPageSize(), sortOrder)
 	} else {
 		err = query.Order(GetUserOrder(sortBy, sortOrder)).Limit(pageInfo.GetPageSize()).Offset(pageInfo.GetStartIdx()).Omit("password").Find(&users).Error
 	}
@@ -315,8 +316,9 @@ func GetAllUsers(pageInfo *common.PageInfo, sortBy string, sortOrder string, vie
 			return nil, 0, err
 		}
 	}
-	applyUserTotalConsumedQuota(users)
-	applyUserTodayConsumedQuota(users)
+	if sortBy != "today_consumed_quota" {
+		applyUserConsumedQuotaStats(users)
+	}
 
 	return users, total, nil
 }
@@ -355,6 +357,8 @@ func SearchUsers(keyword string, group string, role *int, status *int, startIdx 
 		} else {
 			query = query.Where("deleted_at IS NULL").Where("status = ?", *status)
 		}
+	} else {
+		query = query.Where("deleted_at IS NULL")
 	}
 
 	// 获取总数
@@ -367,8 +371,6 @@ func SearchUsers(keyword string, group string, role *int, status *int, startIdx 
 	// 获取分页数据
 	if sortBy == "today_consumed_quota" {
 		users, err = getUsersSortedByConsumedQuota(query, startIdx, num, sortOrder, shanghaiTodayStartUnix(), true)
-	} else if sortBy == "total_consumed_quota" {
-		users, err = getUsersSortedByTotalConsumedQuota(query, startIdx, num, sortOrder)
 	} else {
 		err = query.Omit("password").Order(GetUserOrder(sortBy, sortOrder)).Limit(num).Offset(startIdx).Find(&users).Error
 	}
@@ -386,8 +388,9 @@ func SearchUsers(keyword string, group string, role *int, status *int, startIdx 
 			return nil, 0, err
 		}
 	}
-	applyUserTotalConsumedQuota(users)
-	applyUserTodayConsumedQuota(users)
+	if sortBy != "today_consumed_quota" {
+		applyUserConsumedQuotaStats(users)
+	}
 
 	return users, total, nil
 }
@@ -442,15 +445,11 @@ func buildUserSearchCondition(keyword string, viewerRole int) (string, []interfa
 	return strings.Join(conditions, " OR "), args
 }
 
-func applyUserTotalConsumedQuota(users []*User) {
-	applyUserConsumedQuota(users, 0, false)
+type userConsumedQuotaStats struct {
+	Today int64
 }
 
-func applyUserTodayConsumedQuota(users []*User) {
-	applyUserConsumedQuota(users, shanghaiTodayStartUnix(), true)
-}
-
-func applyUserConsumedQuota(users []*User, since int64, today bool) {
+func applyUserConsumedQuotaStats(users []*User) {
 	if len(users) == 0 {
 		return
 	}
@@ -462,7 +461,7 @@ func applyUserConsumedQuota(users []*User, since int64, today bool) {
 		}
 	}
 
-	quotaByUserID, err := getUserConsumedQuotaTotalsSince(userIDs, since)
+	statsByUserID, err := getUserTodayConsumedQuotaDB(LOG_DB, userIDs, shanghaiTodayStartUnix())
 	if err != nil {
 		common.SysError("failed to load user consumed quota: " + err.Error())
 		return
@@ -470,17 +469,30 @@ func applyUserConsumedQuota(users []*User, since int64, today bool) {
 
 	for _, user := range users {
 		if user != nil {
-			if today {
-				user.TodayConsumedQuota = quotaByUserID[user.Id]
-			} else {
-				user.TotalConsumedQuota = quotaByUserID[user.Id]
-			}
+			stats := statsByUserID[user.Id]
+			// used_quota is updated during billing and persists the lifetime total.
+			user.TotalConsumedQuota = int64(user.UsedQuota)
+			user.TodayConsumedQuota = stats.Today
 		}
 	}
 }
 
 func getUsersSortedByTotalConsumedQuota(query *gorm.DB, startIdx int, num int, sortOrder string) ([]*User, error) {
-	return getUsersSortedByConsumedQuota(query, startIdx, num, sortOrder, 0, false)
+	var users []*User
+	if err := query.Session(&gorm.Session{}).
+		Order("used_quota " + quotaSortDirection(sortOrder) + ", id desc").
+		Limit(num).Offset(startIdx).Omit("password").Find(&users).Error; err != nil {
+		return nil, err
+	}
+	applyTodayConsumedQuota(users)
+	return users, nil
+}
+
+func quotaSortDirection(sortOrder string) string {
+	if strings.EqualFold(sortOrder, "asc") {
+		return "asc"
+	}
+	return "desc"
 }
 
 func getUsersSortedByConsumedQuota(query *gorm.DB, startIdx int, num int, sortOrder string, since int64, today bool) ([]*User, error) {
@@ -497,14 +509,30 @@ func getUsersSortedByConsumedQuota(query *gorm.DB, startIdx int, num int, sortOr
 	if LOG_DB == DB {
 		quotaDB = query.Session(&gorm.Session{NewDB: true})
 	}
-	quotaByUserID, err := getUserConsumedQuotaTotalsSinceDB(quotaDB, userIDs, since)
+	statsByUserID, err := getUserTodayConsumedQuotaDB(quotaDB, userIDs, shanghaiTodayStartUnix())
 	if err != nil {
 		return nil, err
 	}
+	type userQuotaRow struct {
+		ID    int `gorm:"column:id"`
+		Quota int `gorm:"column:quota"`
+	}
+	var quotaRows []userQuotaRow
+	if err := query.Session(&gorm.Session{}).Select("id, quota").Find(&quotaRows).Error; err != nil {
+		return nil, err
+	}
+	quotaByUserID := make(map[int]int, len(quotaRows))
+	for _, row := range quotaRows {
+		quotaByUserID[row.ID] = row.Quota
+	}
 	ascending := strings.EqualFold(sortOrder, "asc")
 	sort.Slice(userIDs, func(i, j int) bool {
-		left, right := quotaByUserID[userIDs[i]], quotaByUserID[userIDs[j]]
+		left, right := statsByUserID[userIDs[i]].Today, statsByUserID[userIDs[j]].Today
 		if left == right {
+			// When daily consumption is tied, show users with more remaining balance first.
+			if quotaByUserID[userIDs[i]] != quotaByUserID[userIDs[j]] {
+				return quotaByUserID[userIDs[i]] > quotaByUserID[userIDs[j]]
+			}
 			return userIDs[i] > userIDs[j]
 		}
 		if ascending {
@@ -524,11 +552,8 @@ func getUsersSortedByConsumedQuota(query *gorm.DB, startIdx int, num int, sortOr
 	}
 	usersByID := make(map[int]*User, len(fetchedUsers))
 	for _, user := range fetchedUsers {
-		if today {
-			user.TodayConsumedQuota = quotaByUserID[user.Id]
-		} else {
-			user.TotalConsumedQuota = quotaByUserID[user.Id]
-		}
+		user.TotalConsumedQuota = int64(user.UsedQuota)
+		user.TodayConsumedQuota = statsByUserID[user.Id].Today
 		usersByID[user.Id] = user
 	}
 	users := make([]*User, 0, len(pageUserIDs))
@@ -546,6 +571,57 @@ func getUserConsumedQuotaTotals(userIDs []int) (map[int]int64, error) {
 
 func getUserConsumedQuotaTotalsSince(userIDs []int, since int64) (map[int]int64, error) {
 	return getUserConsumedQuotaTotalsSinceDB(LOG_DB, userIDs, since)
+}
+
+func applyTodayConsumedQuota(users []*User) {
+	if len(users) == 0 {
+		return
+	}
+	userIDs := make([]int, 0, len(users))
+	for _, user := range users {
+		if user != nil {
+			userIDs = append(userIDs, user.Id)
+		}
+	}
+	statsByUserID, err := getUserTodayConsumedQuotaDB(LOG_DB, userIDs, shanghaiTodayStartUnix())
+	if err != nil {
+		common.SysError("failed to load today's user consumed quota: " + err.Error())
+		return
+	}
+	for _, user := range users {
+		if user != nil {
+			user.TotalConsumedQuota = int64(user.UsedQuota)
+			user.TodayConsumedQuota = statsByUserID[user.Id].Today
+		}
+	}
+}
+
+// getUserTodayConsumedQuotaDB only scans the active daily window. Lifetime
+// consumption is persisted in users.used_quota and does not need log replay.
+func getUserTodayConsumedQuotaDB(db *gorm.DB, userIDs []int, todayStart int64) (map[int]userConsumedQuotaStats, error) {
+	statsByUserID := make(map[int]userConsumedQuotaStats)
+	if len(userIDs) == 0 {
+		return statsByUserID, nil
+	}
+
+	type consumedQuotaStats struct {
+		UserID int   `gorm:"column:user_id"`
+		Today  int64 `gorm:"column:today_quota"`
+	}
+	var totals []consumedQuotaStats
+	query := db.Model(&Log{}).
+		Select("user_id, COALESCE(SUM(quota), 0) AS today_quota").
+		Where("type = ? AND created_at >= ? AND user_id IN ?", LogTypeConsume, todayStart, userIDs).
+		Group("user_id")
+	if err := query.Scan(&totals).Error; err != nil {
+		return nil, err
+	}
+	for _, total := range totals {
+		statsByUserID[total.UserID] = userConsumedQuotaStats{
+			Today: total.Today,
+		}
+	}
+	return statsByUserID, nil
 }
 
 func getUserConsumedQuotaTotalsSinceDB(db *gorm.DB, userIDs []int, since int64) (map[int]int64, error) {

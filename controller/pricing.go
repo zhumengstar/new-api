@@ -35,6 +35,50 @@ func filterPricingByUsableGroups(pricing []model.Pricing, usableGroup map[string
 	return filtered
 }
 
+func applyUserModelPriceRules(pricing []model.Pricing, userSetting dto.UserSetting) []model.Pricing {
+	if len(pricing) == 0 || (len(userSetting.UserModelPriceRules) == 0 && len(userSetting.UserModelPrices) == 0) {
+		return pricing
+	}
+
+	result := append([]model.Pricing(nil), pricing...)
+	indexByModel := make(map[string]int, len(result))
+	for i := range result {
+		indexByModel[result[i].ModelName] = i
+	}
+	applyPrice := func(modelName, group string, price float64) {
+		index, ok := indexByModel[modelName]
+		if !ok || price < 0 {
+			return
+		}
+		item := &result[index]
+		if group != "" && !common.StringsContains(item.EnableGroup, group) && !common.StringsContains(item.EnableGroup, "all") {
+			return
+		}
+		if item.UserGroupPrices == nil {
+			item.UserGroupPrices = make(map[string]float64)
+		}
+		item.UserGroupPrices[group] = price
+		item.QuotaType = 1
+		item.ModelRatio = 1
+		item.CompletionRatio = 1
+	}
+
+	for _, rule := range userSetting.UserModelPriceRules {
+		for _, modelName := range rule.Models {
+			applyPrice(modelName, rule.Group, rule.Price)
+		}
+	}
+	for modelName, price := range userSetting.UserModelPrices {
+		if _, hasRules := indexByModel[modelName]; !hasRules {
+			continue
+		}
+		for _, group := range result[indexByModel[modelName]].EnableGroup {
+			applyPrice(modelName, group, price)
+		}
+	}
+	return result
+}
+
 func GetPricing(c *gin.Context) {
 	pricing := model.GetPricing()
 	userId, exists := c.Get("id")
@@ -62,6 +106,7 @@ func GetPricing(c *gin.Context) {
 			}
 		}
 	}
+	pricing = applyUserModelPriceRules(pricing, userSetting)
 
 	usableGroup := map[string]string{}
 	if isAdmin {

@@ -35,6 +35,7 @@ type Pricing struct {
 	BillingMode            string                  `json:"billing_mode,omitempty"`
 	BillingExpr            string                  `json:"billing_expr,omitempty"`
 	PricingVersion         string                  `json:"pricing_version,omitempty"`
+	UserGroupPrices        map[string]float64      `json:"user_group_prices,omitempty"`
 }
 
 type PricingVendor struct {

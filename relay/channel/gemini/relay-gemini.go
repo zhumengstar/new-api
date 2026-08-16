@@ -1100,6 +1100,14 @@ func buildUsageFromGeminiMetadata(metadata dto.GeminiUsageMetadata, fallbackProm
 	return usage
 }
 
+// BuildUsageFromGeminiMetadata exposes the same accounting used by the
+// regular Gemini handlers to protocol bridges such as Responses-via-Chat.
+// Those bridges decode the native response themselves and must not lose
+// candidates or hidden reasoning tokens during the second conversion.
+func BuildUsageFromGeminiMetadata(metadata dto.GeminiUsageMetadata, fallbackPromptTokens int) dto.Usage {
+	return buildUsageFromGeminiMetadata(metadata, fallbackPromptTokens)
+}
+
 func responseGeminiChat2OpenAI(c *gin.Context, response *dto.GeminiChatResponse) *dto.OpenAITextResponse {
 	fullTextResponse := dto.OpenAITextResponse{
 		Id:      helper.GetResponseID(c),

@@ -60,6 +60,7 @@ const UsersPage = () => {
     incomeStats,
     todayConsumedQuota,
     totalConsumedQuota,
+    balanceQuota,
 
     // Translation
     t,
@@ -89,6 +90,7 @@ const UsersPage = () => {
             incomeStats={incomeStats}
             todayConsumedQuota={todayConsumedQuota}
             totalConsumedQuota={totalConsumedQuota}
+            balanceQuota={balanceQuota}
             t={t}
           />
         }

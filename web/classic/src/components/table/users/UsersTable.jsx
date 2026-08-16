@@ -17,8 +17,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useMemo, useState } from 'react';
-import { Empty } from '@douyinfe/semi-ui';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Button, Dropdown, Empty, Modal, Tag } from '@douyinfe/semi-ui';
 import CardTable from '../../common/ui/CardTable';
 import {
   IllustrationNoResult,
@@ -32,7 +32,36 @@ import DeleteUserModal from './modals/DeleteUserModal';
 import ResetPasskeyModal from './modals/ResetPasskeyModal';
 import ResetTwoFAModal from './modals/ResetTwoFAModal';
 import UserSubscriptionsModal from './modals/UserSubscriptionsModal';
-import { isRoot } from '../../../helpers';
+import { API, isRoot, showError, showSuccess } from '../../../helpers';
+
+const BATCH_CONCURRENCY = 5;
+
+const runBatchWithLimit = async (items, worker) => {
+  const results = new Array(items.length);
+  let nextIndex = 0;
+
+  const runWorker = async () => {
+    while (nextIndex < items.length) {
+      const index = nextIndex++;
+      try {
+        results[index] = await worker(items[index]);
+      } catch (error) {
+        results[index] = {
+          success: false,
+          message: error?.response?.data?.message || error?.message,
+        };
+      }
+    }
+  };
+
+  await Promise.all(
+    Array.from(
+      { length: Math.min(BATCH_CONCURRENCY, items.length) },
+      runWorker,
+    ),
+  );
+  return results;
+};
 
 const UsersTable = (usersData) => {
   const {
@@ -63,12 +92,84 @@ const UsersTable = (usersData) => {
   const [showDemoteModal, setShowDemoteModal] = useState(false);
   const [showEnableDisableModal, setShowEnableDisableModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [showDirectDeleteModal, setShowDirectDeleteModal] = useState(false);
   const [modalUser, setModalUser] = useState(null);
   const [enableDisableAction, setEnableDisableAction] = useState('');
   const [showResetPasskeyModal, setShowResetPasskeyModal] = useState(false);
   const [showResetTwoFAModal, setShowResetTwoFAModal] = useState(false);
   const [showUserSubscriptionsModal, setShowUserSubscriptionsModal] =
     useState(false);
+  const [selectedRowKeys, setSelectedRowKeys] = useState([]);
+  const [batchLoading, setBatchLoading] = useState(false);
+
+  const rootUser = isRoot();
+  const selectedUsers = useMemo(() => {
+    const selectedKeys = new Set(selectedRowKeys.map(String));
+    return users.filter((user) => selectedKeys.has(String(user.id)));
+  }, [selectedRowKeys, users]);
+
+  useEffect(() => {
+    const visibleKeys = new Set(users.map((user) => String(user.id)));
+    setSelectedRowKeys((keys) =>
+      keys.filter((key) => visibleKeys.has(String(key))),
+    );
+  }, [users]);
+
+  const executeBatchAction = async (action) => {
+    if (selectedUsers.length === 0 || batchLoading) return;
+
+    setBatchLoading(true);
+    try {
+      const results = await runBatchWithLimit(selectedUsers, async (user) => {
+        const response = await API.post('/api/user/manage', {
+          id: user.id,
+          action,
+        });
+        return response.data;
+      });
+
+      const successCount = results.filter((result) => result?.success).length;
+      const failedResults = results.filter((result) => !result?.success);
+      if (successCount > 0) {
+        showSuccess(
+          t('批量操作完成: {{success}}个成功, {{failed}}个失败', {
+            success: successCount,
+            failed: failedResults.length,
+          }),
+        );
+      }
+      if (failedResults.length > 0) {
+        const firstMessage = failedResults.find(
+          (result) => result?.message,
+        )?.message;
+        showError(firstMessage || t('批量操作失败'));
+      }
+
+      setSelectedRowKeys([]);
+      await refresh?.();
+    } catch (error) {
+      showError(
+        error?.response?.data?.message || error?.message || t('批量操作失败'),
+      );
+    } finally {
+      setBatchLoading(false);
+    }
+  };
+
+  const requestBatchAction = (action, label, destructive = false) => {
+    if (!destructive) {
+      executeBatchAction(action);
+      return;
+    }
+    Modal.confirm({
+      title: label,
+      content: t('确定要对选中的 {{count}} 个用户执行此操作吗？', {
+        count: selectedUsers.length,
+      }),
+      okType: 'danger',
+      onOk: () => executeBatchAction(action),
+    });
+  };
 
   // Modal handlers
   const showPromoteUserModal = (user) => {
@@ -90,6 +191,11 @@ const UsersTable = (usersData) => {
   const showDeleteUserModal = (user) => {
     setModalUser(user);
     setShowDeleteModal(true);
+  };
+
+  const showDirectDeleteUserModal = (user) => {
+    setModalUser(user);
+    setShowDirectDeleteModal(true);
   };
 
   const showResetPasskeyUserModal = (user) => {
@@ -143,11 +249,12 @@ const UsersTable = (usersData) => {
       showDemoteModal: showDemoteUserModal,
       showEnableDisableModal: showEnableDisableUserModal,
       showDeleteModal: showDeleteUserModal,
+      showDirectDeleteModal: showDirectDeleteUserModal,
       showResetPasskeyModal: showResetPasskeyUserModal,
       showResetTwoFAModal: showResetTwoFAUserModal,
       showUserSubscriptionsModal: showUserSubscriptionsUserModal,
       manageUser,
-      showWeChatContact: isRoot(),
+      showWeChatContact: rootUser,
       groupRatios,
       sortBy,
       sortOrder,
@@ -161,6 +268,7 @@ const UsersTable = (usersData) => {
     showDemoteUserModal,
     showEnableDisableUserModal,
     showDeleteUserModal,
+    showDirectDeleteUserModal,
     showResetPasskeyUserModal,
     showResetTwoFAUserModal,
     showUserSubscriptionsUserModal,
@@ -168,7 +276,7 @@ const UsersTable = (usersData) => {
     groupRatios,
     sortBy,
     sortOrder,
-    isRoot(),
+    rootUser,
     refresh,
   ]);
 
@@ -187,6 +295,68 @@ const UsersTable = (usersData) => {
 
   return (
     <>
+      {selectedUsers.length > 0 && (
+        <div className='mb-2 flex flex-wrap items-center gap-2'>
+          <Tag color='blue' shape='circle'>
+            {t('已选择 {{count}} 个用户', { count: selectedUsers.length })}
+          </Tag>
+          <Dropdown
+            trigger='click'
+            render={
+              <Dropdown.Menu>
+                <Dropdown.Item
+                  onClick={() => requestBatchAction('enable', t('批量启用'))}
+                >
+                  {t('批量启用')}
+                </Dropdown.Item>
+                <Dropdown.Item
+                  onClick={() => requestBatchAction('disable', t('批量禁用'))}
+                >
+                  {t('批量禁用')}
+                </Dropdown.Item>
+                {rootUser && (
+                  <>
+                    <Dropdown.Divider />
+                    <Dropdown.Item
+                      onClick={() => requestBatchAction('hide', t('批量隐藏'))}
+                    >
+                      {t('批量隐藏')}
+                    </Dropdown.Item>
+                    <Dropdown.Item
+                      onClick={() =>
+                        requestBatchAction('unhide', t('批量取消隐藏'))
+                      }
+                    >
+                      {t('批量取消隐藏')}
+                    </Dropdown.Item>
+                  </>
+                )}
+                <Dropdown.Divider />
+                <Dropdown.Item
+                  type='danger'
+                  onClick={() =>
+                    requestBatchAction('delete', t('批量逻辑删除'), true)
+                  }
+                >
+                  {t('批量逻辑删除')}
+                </Dropdown.Item>
+              </Dropdown.Menu>
+            }
+          >
+            <Button size='small' loading={batchLoading}>
+              {t('批量操作')}
+            </Button>
+          </Dropdown>
+          <Button
+            size='small'
+            type='tertiary'
+            disabled={batchLoading}
+            onClick={() => setSelectedRowKeys([])}
+          >
+            {t('取消选择')}
+          </Button>
+        </div>
+      )}
       <CardTable
         columns={tableColumns}
         dataSource={users}
@@ -204,6 +374,14 @@ const UsersTable = (usersData) => {
         loading={loading}
         onRow={handleRow}
         onChange={handleSortChange}
+        rowSelection={{
+          selectedRowKeys,
+          onChange: (keys) => setSelectedRowKeys(keys),
+          getCheckboxProps: (record) => ({
+            disabled: record.role >= 100 || Boolean(record.DeletedAt),
+            name: String(record.id),
+          }),
+        }}
         empty={
           <Empty
             image={<IllustrationNoResult style={{ width: 150, height: 150 }} />}
@@ -252,6 +430,18 @@ const UsersTable = (usersData) => {
         activePage={activePage}
         refresh={refresh}
         manageUser={manageUser}
+        t={t}
+      />
+
+      <DeleteUserModal
+        visible={showDirectDeleteModal}
+        onCancel={() => setShowDirectDeleteModal(false)}
+        user={modalUser}
+        users={users}
+        activePage={activePage}
+        refresh={refresh}
+        manageUser={manageUser}
+        directDelete
         t={t}
       />
 

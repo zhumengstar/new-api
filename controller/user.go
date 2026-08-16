@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -17,7 +19,9 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting"
+	"github.com/QuantumNous/new-api/setting/billing_setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 
 	"github.com/QuantumNous/new-api/constant"
 
@@ -705,11 +709,115 @@ func GetUserModels(c *gin.Context) {
 	return
 }
 
+func GetPerCallModelPrices(c *gin.Context) {
+	pricing := model.GetPricing()
+	result := make([]map[string]interface{}, 0, len(pricing))
+	for _, item := range pricing {
+		if item.QuotaType != 1 || billing_setting.GetBillingMode(item.ModelName) == billing_setting.BillingModeTieredExpr {
+			continue
+		}
+		result = append(result, map[string]interface{}{
+			"model":  item.ModelName,
+			"price":  item.ModelPrice,
+			"groups": item.EnableGroup,
+		})
+	}
+	sort.Slice(result, func(i, j int) bool {
+		return result[i]["model"].(string) < result[j]["model"].(string)
+	})
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": result})
+}
+
+func normalizeUserModelPriceRules(rules []dto.UserModelPriceRule, userGroup string) ([]dto.UserModelPriceRule, error) {
+	if rules == nil {
+		return nil, nil
+	}
+	usableGroups := service.GetUserUsableGroups(userGroup)
+	pricingByModel := make(map[string]model.Pricing)
+	for _, item := range model.GetPricing() {
+		if item.QuotaType == 1 && billing_setting.GetBillingMode(item.ModelName) != billing_setting.BillingModeTieredExpr {
+			pricingByModel[item.ModelName] = item
+		}
+	}
+
+	seen := make(map[string]struct{})
+	normalized := make([]dto.UserModelPriceRule, 0, len(rules))
+	for _, rawRule := range rules {
+		group := strings.TrimSpace(rawRule.Group)
+		if group == "" {
+			return nil, fmt.Errorf("per-call price group is required")
+		}
+		if _, ok := usableGroups[group]; !ok {
+			return nil, fmt.Errorf("group %s is not available to this user", group)
+		}
+		if math.IsNaN(rawRule.Price) || math.IsInf(rawRule.Price, 0) || rawRule.Price < 0 {
+			return nil, fmt.Errorf("invalid per-call price for group %s", group)
+		}
+		models := make([]string, 0, len(rawRule.Models))
+		for _, rawModelName := range rawRule.Models {
+			modelName := strings.TrimSpace(rawModelName)
+			item, ok := pricingByModel[modelName]
+			if !ok {
+				return nil, fmt.Errorf("model %s is not billed per call", modelName)
+			}
+			if !common.StringsContains(item.EnableGroup, group) && !common.StringsContains(item.EnableGroup, "all") {
+				return nil, fmt.Errorf("model %s is not available in group %s", modelName, group)
+			}
+			key := group + "\x00" + modelName
+			if _, ok := seen[key]; ok {
+				return nil, fmt.Errorf("model %s has more than one price in group %s", modelName, group)
+			}
+			seen[key] = struct{}{}
+			models = append(models, modelName)
+		}
+		if len(models) == 0 {
+			return nil, fmt.Errorf("at least one per-call model is required for group %s", group)
+		}
+		sort.Strings(models)
+		normalized = append(normalized, dto.UserModelPriceRule{Group: group, Models: models, Price: rawRule.Price})
+	}
+	return normalized, nil
+}
+
+func normalizeUserModelPrices(prices map[string]float64) (map[string]float64, error) {
+	if prices == nil {
+		return nil, nil
+	}
+	enabledModels := model.GetEnabledModels()
+	enabled := make(map[string]struct{}, len(enabledModels))
+	for _, modelName := range enabledModels {
+		enabled[strings.TrimSpace(modelName)] = struct{}{}
+	}
+	normalized := make(map[string]float64, len(prices))
+	for rawModelName, price := range prices {
+		modelName := strings.TrimSpace(rawModelName)
+		if modelName == "" || math.IsNaN(price) || math.IsInf(price, 0) || price < 0 {
+			return nil, fmt.Errorf("invalid per-call price for model %s", rawModelName)
+		}
+		if _, ok := enabled[modelName]; !ok {
+			return nil, fmt.Errorf("model %s is not enabled", modelName)
+		}
+		if billing_setting.GetBillingMode(modelName) == billing_setting.BillingModeTieredExpr {
+			return nil, fmt.Errorf("model %s is not billed per call", modelName)
+		}
+		if _, ok := ratio_setting.GetModelPrice(modelName, false); !ok {
+			return nil, fmt.Errorf("model %s is not billed per call", modelName)
+		}
+		normalized[modelName] = price
+	}
+	if len(normalized) == 0 {
+		return nil, nil
+	}
+	return normalized, nil
+}
+
 func UpdateUser(c *gin.Context) {
 	var request struct {
 		model.User
-		UserGroupRatios map[string]float64 `json:"user_group_ratios"`
-		Quota           *int               `json:"quota"`
+		UserGroupRatios     map[string]float64       `json:"user_group_ratios"`
+		UserModelPrices     map[string]float64       `json:"user_model_prices"`
+		UserModelPriceRules []dto.UserModelPriceRule `json:"user_model_price_rules"`
+		Quota               *int                     `json:"quota"`
 	}
 	err := json.NewDecoder(c.Request.Body).Decode(&request)
 	updatedUser := request.User
@@ -757,25 +865,54 @@ func UpdateUser(c *gin.Context) {
 		return
 	}
 	var nextSetting *dto.UserSetting
-	if request.UserGroupRatios != nil {
-		allowedRatioGroups := allowedUserRatioGroups(updatedUser.Group)
-		for group, ratio := range request.UserGroupRatios {
-			if ratio < 0 {
-				common.ApiErrorMsg(c, "user group ratio must be not less than 0")
-				return
-			}
-			if _, ok := allowedRatioGroups[group]; !ok {
-				delete(request.UserGroupRatios, group)
-			}
-		}
-		if err := validateManagedUserGroupRatios(c, request.UserGroupRatios); err != nil {
+	if (request.UserModelPrices != nil || request.UserModelPriceRules != nil) && myRole < common.RoleRootUser {
+		common.ApiErrorMsg(c, "only root users can set per-call model prices")
+		return
+	}
+	var normalizedUserModelPrices map[string]float64
+	var normalizedUserModelPriceRules []dto.UserModelPriceRule
+	if request.UserModelPrices != nil {
+		normalizedUserModelPrices, err = normalizeUserModelPrices(request.UserModelPrices)
+		if err != nil {
 			common.ApiError(c, err)
 			return
 		}
+	}
+	if request.UserModelPriceRules != nil {
+		normalizedUserModelPriceRules, err = normalizeUserModelPriceRules(request.UserModelPriceRules, updatedUser.Group)
+		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
+	}
+	if request.UserGroupRatios != nil || request.UserModelPrices != nil || request.UserModelPriceRules != nil {
 		currentSetting := originUser.GetSetting()
-		currentSetting.UserGroupRatios = request.UserGroupRatios
-		if len(currentSetting.UserGroupRatios) == 0 {
-			currentSetting.UserGroupRatios = nil
+		if request.UserModelPrices != nil {
+			currentSetting.UserModelPrices = normalizedUserModelPrices
+		}
+		if request.UserModelPriceRules != nil {
+			currentSetting.UserModelPriceRules = normalizedUserModelPriceRules
+			currentSetting.UserModelPrices = nil
+		}
+		if request.UserGroupRatios != nil {
+			allowedRatioGroups := allowedUserRatioGroups(updatedUser.Group)
+			for group, ratio := range request.UserGroupRatios {
+				if ratio < 0 {
+					common.ApiErrorMsg(c, "user group ratio must be not less than 0")
+					return
+				}
+				if _, ok := allowedRatioGroups[group]; !ok {
+					delete(request.UserGroupRatios, group)
+				}
+			}
+			if err := validateManagedUserGroupRatios(c, request.UserGroupRatios); err != nil {
+				common.ApiError(c, err)
+				return
+			}
+			currentSetting.UserGroupRatios = request.UserGroupRatios
+			if len(currentSetting.UserGroupRatios) == 0 {
+				currentSetting.UserGroupRatios = nil
+			}
 		}
 		nextSetting = &currentSetting
 	}
@@ -805,6 +942,12 @@ func UpdateUser(c *gin.Context) {
 			auditParams["quota_from"] = logger.LogQuota(originUser.Quota)
 			auditParams["quota_type"] = "actual"
 		}
+	}
+	if request.UserModelPrices != nil {
+		auditParams["custom_model_price_count"] = len(normalizedUserModelPrices)
+	}
+	if request.UserModelPriceRules != nil {
+		auditParams["custom_model_price_rule_count"] = len(normalizedUserModelPriceRules)
 	}
 	recordManageAuditFor(c, updatedUser.Id, "user.update", auditParams)
 	c.JSON(http.StatusOK, gin.H{
@@ -1041,7 +1184,9 @@ func DeleteSelf(c *gin.Context) {
 func CreateUser(c *gin.Context) {
 	var request struct {
 		model.User
-		UserGroupRatios map[string]float64 `json:"user_group_ratios"`
+		UserGroupRatios     map[string]float64       `json:"user_group_ratios"`
+		UserModelPrices     map[string]float64       `json:"user_model_prices"`
+		UserModelPriceRules []dto.UserModelPriceRule `json:"user_model_price_rules"`
 	}
 	err := json.NewDecoder(c.Request.Body).Decode(&request)
 	user := request.User
@@ -1063,6 +1208,26 @@ func CreateUser(c *gin.Context) {
 		return
 	}
 	myRole := c.GetInt("role")
+	if (request.UserModelPrices != nil || request.UserModelPriceRules != nil) && myRole < common.RoleRootUser {
+		common.ApiErrorMsg(c, "only root users can set per-call model prices")
+		return
+	}
+	var normalizedUserModelPrices map[string]float64
+	var normalizedUserModelPriceRules []dto.UserModelPriceRule
+	if request.UserModelPrices != nil {
+		normalizedUserModelPrices, err = normalizeUserModelPrices(request.UserModelPrices)
+		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
+	}
+	if request.UserModelPriceRules != nil {
+		normalizedUserModelPriceRules, err = normalizeUserModelPriceRules(request.UserModelPriceRules, user.Group)
+		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
+	}
 	if user.Role >= myRole {
 		common.ApiErrorI18n(c, i18n.MsgUserCannotCreateHigherLevel)
 		return
@@ -1084,35 +1249,49 @@ func CreateUser(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	if request.UserGroupRatios != nil {
-		allowedRatioGroups := allowedUserRatioGroups(cleanUser.Group)
-		for group, ratio := range request.UserGroupRatios {
-			if ratio < 0 {
-				common.ApiErrorMsg(c, "user group ratio must be not less than 0")
-				return
+	if request.UserGroupRatios != nil || request.UserModelPrices != nil || request.UserModelPriceRules != nil {
+		userSetting := cleanUser.GetSetting()
+		if request.UserGroupRatios != nil {
+			allowedRatioGroups := allowedUserRatioGroups(cleanUser.Group)
+			for group, ratio := range request.UserGroupRatios {
+				if ratio < 0 {
+					common.ApiErrorMsg(c, "user group ratio must be not less than 0")
+					return
+				}
+				if _, ok := allowedRatioGroups[group]; !ok {
+					delete(request.UserGroupRatios, group)
+				}
 			}
-			if _, ok := allowedRatioGroups[group]; !ok {
-				delete(request.UserGroupRatios, group)
-			}
-		}
-		if err := validateManagedUserGroupRatios(c, request.UserGroupRatios); err != nil {
-			common.ApiError(c, err)
-			return
-		}
-		if len(request.UserGroupRatios) > 0 {
-			setting := cleanUser.GetSetting()
-			setting.UserGroupRatios = request.UserGroupRatios
-			if err := model.UpdateUserSetting(cleanUser.Id, setting); err != nil {
+			if err := validateManagedUserGroupRatios(c, request.UserGroupRatios); err != nil {
 				common.ApiError(c, err)
 				return
 			}
+			userSetting.UserGroupRatios = request.UserGroupRatios
+		}
+		if request.UserModelPrices != nil {
+			userSetting.UserModelPrices = normalizedUserModelPrices
+		}
+		if request.UserModelPriceRules != nil {
+			userSetting.UserModelPriceRules = normalizedUserModelPriceRules
+			userSetting.UserModelPrices = nil
+		}
+		if err := model.UpdateUserSetting(cleanUser.Id, userSetting); err != nil {
+			common.ApiError(c, err)
+			return
 		}
 	}
 
-	recordManageAuditFor(c, cleanUser.Id, "user.create", map[string]interface{}{
+	auditParams := map[string]interface{}{
 		"username": cleanUser.Username,
 		"role":     cleanUser.Role,
-	})
+	}
+	if request.UserModelPrices != nil {
+		auditParams["custom_model_price_count"] = len(normalizedUserModelPrices)
+	}
+	if request.UserModelPriceRules != nil {
+		auditParams["custom_model_price_rule_count"] = len(normalizedUserModelPriceRules)
+	}
+	recordManageAuditFor(c, cleanUser.Id, "user.create", auditParams)
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",

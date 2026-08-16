@@ -31,6 +31,7 @@ const UsersDescription = ({
   incomeStats,
   todayConsumedQuota,
   totalConsumedQuota,
+  balanceQuota,
   t,
 }) => {
   return (
@@ -58,6 +59,17 @@ const UsersDescription = ({
             </Text>
             <Text size='small' className='whitespace-nowrap font-semibold'>
               {renderQuota(totalConsumedQuota || 0)}
+            </Text>
+          </div>
+          <div className='flex items-center gap-2'>
+            <Text type='tertiary' size='small' className='whitespace-nowrap'>
+              {t('余额合计（已启用非管理员）')}
+            </Text>
+            <Text
+              size='small'
+              className='whitespace-nowrap font-semibold text-emerald-600'
+            >
+              {renderQuota(balanceQuota || 0)}
             </Text>
           </div>
         </div>
