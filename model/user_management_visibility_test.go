@@ -392,8 +392,14 @@ func TestSumCurrentMinuteIncomeExcludesAdminsAndOldLogs(t *testing.T) {
 	require.NoError(t, LOG_DB.Create(&Log{UserId: 501, Type: LogTypeConsume, Quota: 125000, CreatedAt: now}).Error)
 	require.NoError(t, LOG_DB.Create(&Log{UserId: 502, Type: LogTypeConsume, Quota: 990000, CreatedAt: now}).Error)
 	require.NoError(t, LOG_DB.Create(&Log{UserId: 501, Type: LogTypeConsume, Quota: 250000, CreatedAt: now - 61}).Error)
+	require.NoError(t, LOG_DB.Create(&Log{UserId: 501, Type: LogTypeConsume, Quota: 500000, CreatedAt: now - 3601}).Error)
 
 	quota, err := SumCurrentMinuteIncome(nil, false)
 	require.NoError(t, err)
 	assert.Equal(t, int64(125000), quota)
+
+	income, err := SumRecentIncome(nil, false)
+	require.NoError(t, err)
+	assert.Equal(t, int64(125000), income.MinuteQuota)
+	assert.Equal(t, int64(375000), income.HourQuota)
 }

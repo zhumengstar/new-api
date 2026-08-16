@@ -901,33 +901,47 @@ type Stat struct {
 	Tpm   int `json:"tpm"`
 }
 
-func SumCurrentMinuteIncome(scopedUserIDs []int, scoped bool) (int64, error) {
+type RecentIncome struct {
+	MinuteQuota int64 `json:"minute_quota" gorm:"column:minute_quota"`
+	HourQuota   int64 `json:"hour_quota" gorm:"column:hour_quota"`
+}
+
+func SumRecentIncome(scopedUserIDs []int, scoped bool) (RecentIncome, error) {
+	var income RecentIncome
 	userQuery := DB.Unscoped().Model(&User{}).Where("role < ?", common.RoleAdminUser)
 	if scoped {
 		if len(scopedUserIDs) == 0 {
-			return 0, nil
+			return income, nil
 		}
 		userQuery = userQuery.Where("id IN ?", scopedUserIDs)
 	}
 
 	var userIDs []int
 	if err := userQuery.Pluck("id", &userIDs).Error; err != nil {
-		return 0, err
+		return income, err
 	}
 	if len(userIDs) == 0 {
-		return 0, nil
+		return income, nil
 	}
 
 	now := time.Now().Unix()
 	minuteStart := now - now%60
-	var quota int64
 	if err := LOG_DB.Model(&Log{}).
-		Select("COALESCE(SUM(quota), 0)").
-		Where("type = ? AND created_at >= ? AND created_at < ? AND user_id IN ?", LogTypeConsume, minuteStart, minuteStart+60, userIDs).
-		Scan(&quota).Error; err != nil {
-		return 0, err
+		Select(
+			"COALESCE(SUM(CASE WHEN created_at >= ? AND created_at < ? THEN quota ELSE 0 END), 0) AS minute_quota, "+
+				"COALESCE(SUM(CASE WHEN created_at >= ? AND created_at <= ? THEN quota ELSE 0 END), 0) AS hour_quota",
+			minuteStart, minuteStart+60, now-3600, now,
+		).
+		Where("type = ? AND created_at >= ? AND created_at < ? AND user_id IN ?", LogTypeConsume, now-3600, minuteStart+60, userIDs).
+		Scan(&income).Error; err != nil {
+		return income, err
 	}
-	return quota, nil
+	return income, nil
+}
+
+func SumCurrentMinuteIncome(scopedUserIDs []int, scoped bool) (int64, error) {
+	income, err := SumRecentIncome(scopedUserIDs, scoped)
+	return income.MinuteQuota, err
 }
 
 func SumUsedQuota(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, channel int, group string, scopedUserIDs []int, scoped bool) (stat Stat, err error) {

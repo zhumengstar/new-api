@@ -184,6 +184,7 @@ export const useLogsData = () => {
     token: 0,
   });
   const [minuteIncome, setMinuteIncome] = useState(0);
+  const [hourIncome, setHourIncome] = useState(0);
   const [modelRequestPeriod, setModelRequestPeriod] = useState('total');
   const [showModelRequestStats, setShowModelRequestStats] = useState(false);
   const [modelRequestStats, setModelRequestStats] = useState([]);
@@ -935,11 +936,29 @@ export const useLogsData = () => {
       });
   };
 
+  const loadIncomeMetrics = async () => {
+    if (!isAdminUser) return;
+    try {
+      const res = await API.get('/api/log/current_minute_income');
+      if (res.data.success) {
+        const data = res.data.data || {};
+        setMinuteIncome(data.minute_quota ?? data.quota ?? 0);
+        setHourIncome(data.hour_quota ?? 0);
+      }
+    } catch {
+      setMinuteIncome(0);
+      setHourIncome(0);
+    }
+  };
+
   // Refresh function
   const refresh = async () => {
     setActivePage(1);
-    handleEyeClick();
-    await loadLogs(1, pageSize);
+    await Promise.all([
+      handleEyeClick(),
+      loadIncomeMetrics(),
+      loadLogs(1, pageSize),
+    ]);
   };
 
   refreshRef.current = refresh;
@@ -1015,32 +1034,11 @@ export const useLogsData = () => {
   // Initialize statistics when formApi is available
   useEffect(() => {
     if (formApi) {
-      handleEyeClick();
+      Promise.all([handleEyeClick(), loadIncomeMetrics()]).catch((reason) => {
+        console.error('Failed to load usage statistics', reason);
+      });
     }
   }, [formApi]);
-
-  useEffect(() => {
-    if (!isAdminUser) return undefined;
-
-    let cancelled = false;
-    const loadMinuteIncome = async () => {
-      try {
-        const res = await API.get('/api/log/current_minute_income');
-        if (!cancelled && res.data.success) {
-          setMinuteIncome(res.data.data?.quota || 0);
-        }
-      } catch {
-        if (!cancelled) setMinuteIncome(0);
-      }
-    };
-
-    loadMinuteIncome();
-    const timer = setInterval(loadMinuteIncome, 10000);
-    return () => {
-      cancelled = true;
-      clearInterval(timer);
-    };
-  }, [isAdminUser]);
 
   useEffect(() => {
     if (!isAdminUser) return undefined;
@@ -1100,6 +1098,7 @@ export const useLogsData = () => {
     updateAutoRefreshSeconds,
     stat,
     minuteIncome,
+    hourIncome,
     modelRequestPeriod,
     setModelRequestPeriod,
     showModelRequestStats,

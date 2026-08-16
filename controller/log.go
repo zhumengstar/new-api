@@ -228,12 +228,16 @@ func GetCurrentMinuteIncome(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	quota, err := model.SumCurrentMinuteIncome(scopedUserIDs, scoped)
+	income, err := model.SumRecentIncome(scopedUserIDs, scoped)
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
-	common.ApiSuccess(c, gin.H{"quota": quota})
+	common.ApiSuccess(c, gin.H{
+		"quota":        income.MinuteQuota,
+		"minute_quota": income.MinuteQuota,
+		"hour_quota":   income.HourQuota,
+	})
 }
 
 func GetLogsSelfStat(c *gin.Context) {

@@ -39,6 +39,7 @@ const LogsActions = ({
   compactMode,
   setCompactMode,
   minuteIncome,
+  hourIncome,
   isAdminUser,
   modelRequestPeriod,
   setModelRequestPeriod,
@@ -108,14 +109,24 @@ const LogsActions = ({
 
         <div className='flex items-center gap-2'>
           {isAdminUser && (
-            <Tag
-              color='green'
-              title={t('当前自然分钟内非管理员用户的总消耗金额')}
-              style={{ fontWeight: 600, padding: 13 }}
-              className='!rounded-lg whitespace-nowrap'
-            >
-              MPM: {renderQuota(minuteIncome || 0, 6)}
-            </Tag>
+            <Space spacing={8}>
+              <Tag
+                color='green'
+                title={t('当前自然分钟内非管理员用户的总消耗金额')}
+                style={{ fontWeight: 600, padding: 13 }}
+                className='!rounded-lg whitespace-nowrap'
+              >
+                MPM: {renderQuota(minuteIncome || 0, 6)}
+              </Tag>
+              <Tag
+                color='cyan'
+                title={t('最近滚动 1 小时内非管理员用户的总消耗金额')}
+                style={{ fontWeight: 600, padding: 13 }}
+                className='!rounded-lg whitespace-nowrap'
+              >
+                MPH: {renderQuota(hourIncome || 0, 6)}
+              </Tag>
+            </Space>
           )}
           <CompactModeToggle
             compactMode={compactMode}
