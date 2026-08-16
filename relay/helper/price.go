@@ -101,10 +101,11 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 
 	groupRatioInfo := HandleGroupRatio(c, info)
 
-	// Check if this model uses tiered_expr billing
+	// Tiered models use their expression pricing and cannot be overridden by per-call rules.
 	if billing_setting.GetBillingMode(info.OriginModelName) == billing_setting.BillingModeTieredExpr {
 		return modelPriceHelperTiered(c, info, promptTokens, meta, groupRatioInfo)
 	}
+
 	if userModelPrice, ok := getUserPerCallModelPrice(info); ok {
 		modelPrice = userModelPrice
 		usePrice = true
@@ -113,7 +114,6 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 		groupRatioInfo.GroupSpecialRatio = 1
 		groupRatioInfo.HasSpecialRatio = true
 	}
-
 	var preConsumedQuota int
 	var modelRatio float64
 	var completionRatio float64

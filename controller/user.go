@@ -717,9 +717,11 @@ func GetPerCallModelPrices(c *gin.Context) {
 			continue
 		}
 		result = append(result, map[string]interface{}{
-			"model":  item.ModelName,
-			"price":  item.ModelPrice,
-			"groups": item.EnableGroup,
+			"model":       item.ModelName,
+			"price":       item.ModelPrice,
+			"quota_type":  item.QuotaType,
+			"model_ratio": item.ModelRatio,
+			"groups":      item.EnableGroup,
 		})
 	}
 	sort.Slice(result, func(i, j int) bool {

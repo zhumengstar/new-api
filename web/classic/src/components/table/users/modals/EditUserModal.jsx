@@ -199,6 +199,9 @@ const EditUserModal = (props) => {
   const [draftModelPrice, setDraftModelPrice] = useState(null);
   const [userModelPriceRules, setUserModelPriceRules] = useState([]);
   const isRootUser = isRoot();
+  const perCallGroups = new Set(
+    (perCallModels || []).flatMap((item) => item.groups || []),
+  );
   const quotaLabel = isRootUser ? t('额度') : t('虚拟额度');
   const adjustQuotaLabel = isRootUser ? t('调整额度') : t('调整虚拟额度');
 
@@ -774,8 +777,11 @@ const EditUserModal = (props) => {
                                   optionList={groupOptions
                                     .filter(
                                       (option) =>
-                                        option.isPublic ||
-                                        selectedGroups.includes(option.value),
+                                        perCallGroups.has(option.value) &&
+                                        (option.isPublic ||
+                                          selectedGroups.includes(
+                                            option.value,
+                                          )),
                                     )
                                     .map((option) => ({
                                       value: option.value,
