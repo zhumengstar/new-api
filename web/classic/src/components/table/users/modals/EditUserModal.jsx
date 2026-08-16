@@ -385,7 +385,43 @@ const EditUserModal = (props) => {
         ...privateGroups,
         ...getPublicGroups(groupOptions),
       ]);
-      payload.user_model_price_rules = userModelPriceRules
+      let submittedPriceRules = userModelPriceRules;
+      const hasDraftPriceRule =
+        Boolean(draftPriceGroup) ||
+        draftPriceModels.length > 0 ||
+        (draftModelPrice !== null && draftModelPrice !== '');
+      if (hasDraftPriceRule) {
+        const draftPrice = Number(draftModelPrice);
+        if (
+          !draftPriceGroup ||
+          draftPriceModels.length === 0 ||
+          !Number.isFinite(draftPrice) ||
+          draftPrice < 0
+        ) {
+          showError(t('请完成按次模型分组、模型和价格后再提交'));
+          setLoading(false);
+          return;
+        }
+        const duplicate = userModelPriceRules.some(
+          (rule) =>
+            rule.group === draftPriceGroup &&
+            rule.models.some((model) => draftPriceModels.includes(model)),
+        );
+        if (duplicate) {
+          showError(t('同一分组中的模型只能设置一个专属价格'));
+          setLoading(false);
+          return;
+        }
+        submittedPriceRules = [
+          ...userModelPriceRules,
+          {
+            group: draftPriceGroup,
+            models: draftPriceModels,
+            price: draftPrice,
+          },
+        ];
+      }
+      payload.user_model_price_rules = submittedPriceRules
         .map((rule) => ({
           group: rule.group,
           models: rule.models.filter((model) => allowedModels.has(model)),
