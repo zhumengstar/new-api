@@ -812,7 +812,9 @@ const EditUserModal = (props) => {
                                     )
                                     .map((item) => ({
                                       value: item.model,
-                                      label: `${item.model} (${getCurrencyConfig().symbol}${item.price}/${t('次')})`,
+                                      label: item.has_global_price
+                                        ? `${item.model} (${getCurrencyConfig().symbol}${item.price}/${t('次')})`
+                                        : `${item.model} (${t('设置后按次')})`,
                                     }))}
                                   style={{ flex: 1, minWidth: 0 }}
                                 />

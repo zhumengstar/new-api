@@ -711,23 +711,71 @@ func GetUserModels(c *gin.Context) {
 
 func GetPerCallModelPrices(c *gin.Context) {
 	pricing := model.GetPricing()
-	result := make([]map[string]interface{}, 0, len(pricing))
+	abilities, err := model.GetAllEnableAbilityWithChannels()
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	result := buildPerCallModelCatalog(pricing, abilities)
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": result})
+}
+
+type perCallModelCatalogItem struct {
+	Model          string   `json:"model"`
+	Price          float64  `json:"price"`
+	HasGlobalPrice bool     `json:"has_global_price"`
+	Groups         []string `json:"groups"`
+}
+
+// buildPerCallModelCatalog keeps the group eligibility strict while sourcing
+// each eligible group's model list from its enabled channels.
+func buildPerCallModelCatalog(pricing []model.Pricing, abilities []model.AbilityWithChannel) []perCallModelCatalogItem {
+	globalPrices := make(map[string]model.Pricing)
 	for _, item := range pricing {
-		if item.QuotaType != 1 || billing_setting.GetBillingMode(item.ModelName) == billing_setting.BillingModeTieredExpr {
+		if item.QuotaType == 1 && billing_setting.GetBillingMode(item.ModelName) != billing_setting.BillingModeTieredExpr {
+			globalPrices[item.ModelName] = item
+		}
+	}
+
+	eligibleGroups := make(map[string]struct{})
+	for _, ability := range abilities {
+		item, ok := globalPrices[ability.Model]
+		if !ok {
 			continue
 		}
-		result = append(result, map[string]interface{}{
-			"model":       item.ModelName,
-			"price":       item.ModelPrice,
-			"quota_type":  item.QuotaType,
-			"model_ratio": item.ModelRatio,
-			"groups":      item.EnableGroup,
+		if common.StringsContains(item.EnableGroup, ability.Group) || common.StringsContains(item.EnableGroup, "all") {
+			eligibleGroups[ability.Group] = struct{}{}
+		}
+	}
+
+	groupsByModel := make(map[string]map[string]struct{})
+	for _, ability := range abilities {
+		if _, ok := eligibleGroups[ability.Group]; !ok || billing_setting.GetBillingMode(ability.Model) == billing_setting.BillingModeTieredExpr {
+			continue
+		}
+		if groupsByModel[ability.Model] == nil {
+			groupsByModel[ability.Model] = make(map[string]struct{})
+		}
+		groupsByModel[ability.Model][ability.Group] = struct{}{}
+	}
+
+	result := make([]perCallModelCatalogItem, 0, len(groupsByModel))
+	for modelName, groupSet := range groupsByModel {
+		groups := make([]string, 0, len(groupSet))
+		for group := range groupSet {
+			groups = append(groups, group)
+		}
+		sort.Strings(groups)
+		item, hasGlobalPrice := globalPrices[modelName]
+		result = append(result, perCallModelCatalogItem{
+			Model:          modelName,
+			Price:          item.ModelPrice,
+			HasGlobalPrice: hasGlobalPrice,
+			Groups:         groups,
 		})
 	}
-	sort.Slice(result, func(i, j int) bool {
-		return result[i]["model"].(string) < result[j]["model"].(string)
-	})
-	c.JSON(http.StatusOK, gin.H{"success": true, "data": result})
+	sort.Slice(result, func(i, j int) bool { return result[i].Model < result[j].Model })
+	return result
 }
 
 func normalizeUserModelPriceRules(rules []dto.UserModelPriceRule, userGroup string) ([]dto.UserModelPriceRule, error) {
@@ -735,10 +783,17 @@ func normalizeUserModelPriceRules(rules []dto.UserModelPriceRule, userGroup stri
 		return nil, nil
 	}
 	usableGroups := service.GetUserUsableGroups(userGroup)
-	pricingByModel := make(map[string]model.Pricing)
-	for _, item := range model.GetPricing() {
-		if item.QuotaType == 1 && billing_setting.GetBillingMode(item.ModelName) != billing_setting.BillingModeTieredExpr {
-			pricingByModel[item.ModelName] = item
+	abilities, err := model.GetAllEnableAbilityWithChannels()
+	if err != nil {
+		return nil, err
+	}
+	modelsByGroup := make(map[string]map[string]struct{})
+	for _, item := range buildPerCallModelCatalog(model.GetPricing(), abilities) {
+		for _, group := range item.Groups {
+			if modelsByGroup[group] == nil {
+				modelsByGroup[group] = make(map[string]struct{})
+			}
+			modelsByGroup[group][item.Model] = struct{}{}
 		}
 	}
 
@@ -758,12 +813,8 @@ func normalizeUserModelPriceRules(rules []dto.UserModelPriceRule, userGroup stri
 		models := make([]string, 0, len(rawRule.Models))
 		for _, rawModelName := range rawRule.Models {
 			modelName := strings.TrimSpace(rawModelName)
-			item, ok := pricingByModel[modelName]
-			if !ok {
+			if _, ok := modelsByGroup[group][modelName]; !ok {
 				return nil, fmt.Errorf("model %s is not billed per call", modelName)
-			}
-			if !common.StringsContains(item.EnableGroup, group) && !common.StringsContains(item.EnableGroup, "all") {
-				return nil, fmt.Errorf("model %s is not available in group %s", modelName, group)
 			}
 			key := group + "\x00" + modelName
 			if _, ok := seen[key]; ok {
@@ -1146,10 +1197,15 @@ func DeleteUser(c *gin.Context) {
 		common.ApiErrorI18n(c, i18n.MsgUserNoPermissionHigherLevel)
 		return
 	}
-	err = model.HardDeleteUserById(id)
+	// Keep user data recoverable and make existing sessions fail closed through
+	// the cache invalidation performed by DeleteUserById.
+	err = model.DeleteUserById(id)
 	if err != nil {
 		common.ApiError(c, err)
 		return
+	}
+	if err := model.InvalidateUserTokensCache(id); err != nil {
+		common.SysLog(fmt.Sprintf("failed to invalidate tokens cache for user %d: %s", id, err.Error()))
 	}
 	recordManageAuditFor(c, originUser.Id, "user.delete", map[string]interface{}{
 		"username": originUser.Username,

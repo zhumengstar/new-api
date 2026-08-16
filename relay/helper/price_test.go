@@ -159,6 +159,32 @@ func TestModelPriceHelperUsesGroupSpecificUserPerCallPrice(t *testing.T) {
 	require.Equal(t, int(0.8*common.QuotaPerUnit), priceData.QuotaToPreConsume)
 }
 
+func TestModelPriceHelperUsesUserRuleForModelWithoutGlobalPerCallPrice(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	ctx.Set("group", "custom-per-call")
+
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "channel-model-without-global-price",
+		UserGroup:       "custom-per-call",
+		UsingGroup:      "custom-per-call",
+		UserSetting: dto.UserSetting{
+			UserModelPriceRules: []dto.UserModelPriceRule{
+				{Group: "custom-per-call", Models: []string{"channel-model-without-global-price"}, Price: 0.018},
+			},
+		},
+	}
+
+	priceData, err := ModelPriceHelper(ctx, info, 1000, &types.TokenCountMeta{})
+	require.NoError(t, err)
+	require.True(t, priceData.UsePrice)
+	require.Equal(t, 0.018, priceData.ModelPrice)
+	require.Equal(t, int(0.018*common.QuotaPerUnit), priceData.QuotaToPreConsume)
+}
+
 func TestModelPriceHelperPerCallUsesUserPrice(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

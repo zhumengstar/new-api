@@ -692,12 +692,16 @@ func HardDeleteUserById(id int) error {
 	if id == 0 {
 		return errors.New("id 为空！")
 	}
-	return DB.Transaction(func(tx *gorm.DB) error {
+	err := DB.Transaction(func(tx *gorm.DB) error {
 		if err := deleteUserOAuthBindingsByUserId(tx, id); err != nil {
 			return err
 		}
 		return tx.Unscoped().Delete(&User{}, "id = ?", id).Error
 	})
+	if err != nil {
+		return err
+	}
+	return invalidateUserCache(id)
 }
 
 func inviteUser(inviterId int) (err error) {

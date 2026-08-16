@@ -43,11 +43,6 @@ func getUserPerCallModelPrice(info *relaycommon.RelayInfo) (float64, bool) {
 	if billing_setting.GetBillingMode(info.OriginModelName) == billing_setting.BillingModeTieredExpr {
 		return 0, false
 	}
-	if _, ok := ratio_setting.GetModelPrice(info.OriginModelName, false); !ok {
-		if _, ok = ratio_setting.GetDefaultModelPriceMap()[info.OriginModelName]; !ok {
-			return 0, false
-		}
-	}
 	for _, rule := range info.UserSetting.UserModelPriceRules {
 		if strings.TrimSpace(rule.Group) != info.UsingGroup || rule.Price < 0 {
 			continue

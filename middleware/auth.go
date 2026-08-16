@@ -91,6 +91,44 @@ func authHelper(c *gin.Context, minRole int) {
 			c.Abort()
 			return
 		}
+	} else {
+		// The cookie can outlive the user record. Refresh the identity from the
+		// current user cache so deleted or disabled accounts fail closed.
+		sessionID, ok := id.(int)
+		if !ok || sessionID == 0 {
+			session.Clear()
+			_ = session.Save()
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"success": false,
+				"message": common.TranslateMessage(c, i18n.MsgAuthNotLoggedIn),
+			})
+			c.Abort()
+			return
+		}
+		userCache, authErr := model.GetUserCache(sessionID)
+		if authErr != nil {
+			session.Clear()
+			_ = session.Save()
+			if errors.Is(authErr, gorm.ErrRecordNotFound) {
+				c.JSON(http.StatusUnauthorized, gin.H{
+					"success": false,
+					"message": common.TranslateMessage(c, i18n.MsgAuthNotLoggedIn),
+				})
+			} else {
+				common.SysLog("Load session user error: " + authErr.Error())
+				c.JSON(http.StatusInternalServerError, gin.H{
+					"success": false,
+					"message": common.TranslateMessage(c, i18n.MsgDatabaseError),
+				})
+			}
+			c.Abort()
+			return
+		}
+		username = userCache.Username
+		status = userCache.Status
+		session.Set("username", username)
+		session.Set("status", status)
+		session.Set("group", userCache.Group)
 	}
 	// get header New-Api-User
 	apiUserIdStr := c.Request.Header.Get("New-Api-User")
@@ -171,11 +209,15 @@ func TryUserAuth() func(c *gin.Context) {
 		session := sessions.Default(c)
 		id := session.Get("id")
 		if id != nil {
-			c.Set("id", id)
-			c.Set("username", session.Get("username"))
-			c.Set("role", session.Get("role"))
-			c.Set("group", session.Get("group"))
-			c.Set("user_group", session.Get("group"))
+			if sessionID, ok := id.(int); ok {
+				if userCache, err := model.GetUserCache(sessionID); err == nil && userCache.Status == common.UserStatusEnabled {
+					c.Set("id", sessionID)
+					c.Set("username", userCache.Username)
+					c.Set("role", session.Get("role"))
+					c.Set("group", userCache.Group)
+					c.Set("user_group", userCache.Group)
+				}
+			}
 		}
 		c.Next()
 	}
@@ -210,10 +252,14 @@ func TokenOrUserAuth() func(c *gin.Context) {
 		// Try session auth first (dashboard users)
 		session := sessions.Default(c)
 		if id := session.Get("id"); id != nil {
-			if status, ok := session.Get("status").(int); ok && status == common.UserStatusEnabled {
-				c.Set("id", id)
-				c.Next()
-				return
+			if sessionID, ok := id.(int); ok {
+				if userCache, authErr := model.GetUserCache(sessionID); authErr == nil && userCache.Status == common.UserStatusEnabled {
+					c.Set("id", sessionID)
+					c.Set("username", userCache.Username)
+					c.Set("group", userCache.Group)
+					c.Next()
+					return
+				}
 			}
 		}
 		// Fall back to token auth (API clients)
