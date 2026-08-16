@@ -1020,7 +1020,7 @@ export const useLogsData = () => {
   }, [formApi]);
 
   useEffect(() => {
-    if (!isAdminUser || !showModelRequestStats) return undefined;
+    if (!isAdminUser) return undefined;
 
     let cancelled = false;
     const loadMinuteIncome = async () => {

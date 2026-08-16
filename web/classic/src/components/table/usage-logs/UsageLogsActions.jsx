@@ -114,7 +114,7 @@ const LogsActions = ({
               style={{ fontWeight: 600, padding: 13 }}
               className='!rounded-lg whitespace-nowrap'
             >
-              MPM: {renderQuota(minuteIncome || 0)}
+              MPM: {renderQuota(minuteIncome || 0, 6)}
             </Tag>
           )}
           <CompactModeToggle
