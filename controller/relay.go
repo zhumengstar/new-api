@@ -89,6 +89,9 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	defer func() {
 		if newAPIError != nil {
 			logger.LogError(c, fmt.Sprintf("relay error: %s", common.LocalLogPreview(newAPIError.Error())))
+			if shouldHideCapacityError(c, newAPIError) {
+				newAPIError.SetMessage("服务暂时繁忙，请稍后重试")
+			}
 			newAPIError.SetMessage(common.MessageWithRequestId(newAPIError.Error(), requestId))
 			switch relayFormat {
 			case types.RelayFormatOpenAIRealtime:
@@ -400,17 +403,22 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) b
 	if service.ShouldSkipRetryAfterChannelAffinityFailure(c) {
 		return false
 	}
-	if types.IsSkipRetryError(openaiErr) {
+	if retryTimes <= 0 {
 		return false
 	}
-	if retryTimes <= 0 {
+	if _, ok := c.Get("specific_channel_id"); ok {
+		return false
+	}
+	// Capacity exhaustion is a channel-local failure. Some GPM-compatible
+	// upstreams mark it skip-retry, but another channel may still have capacity.
+	if isCapacityUnavailableError(openaiErr) {
+		return true
+	}
+	if types.IsSkipRetryError(openaiErr) {
 		return false
 	}
 	if types.IsChannelError(openaiErr) {
 		return true
-	}
-	if _, ok := c.Get("specific_channel_id"); ok {
-		return false
 	}
 	code := openaiErr.StatusCode
 	if code >= 200 && code < 300 {
@@ -423,6 +431,23 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) b
 		return false
 	}
 	return operation_setting.ShouldRetryByStatusCode(code)
+}
+
+func isCapacityUnavailableError(err *types.NewAPIError) bool {
+	if err == nil || err.StatusCode != http.StatusServiceUnavailable {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	for _, marker := range []string{"容量", "capacity", "no available", "暂时无可用"} {
+		if strings.Contains(message, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func shouldHideCapacityError(c *gin.Context, err *types.NewAPIError) bool {
+	return isCapacityUnavailableError(err) && c.GetInt("role") < common.RoleAdminUser
 }
 
 func preservePreviousRelayError(previous, selectionErr *types.NewAPIError) *types.NewAPIError {
