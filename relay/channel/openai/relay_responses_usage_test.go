@@ -10,6 +10,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
@@ -67,6 +68,64 @@ func TestOaiResponsesStreamHandlerEstimatesOutputEventsWhenUsageIsPartial(t *tes
 	require.NotNil(t, usage)
 	require.Greater(t, usage.CompletionTokens, 0)
 	require.Equal(t, "estimated_stream_output", usage.UsageSource)
+}
+
+func TestOaiResponsesStreamHandlerCorrectsOneTokenUsageWhenStreamContainsMoreOutput(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	service.InitTokenEncoders()
+	previousTimeout := constant.StreamingTimeout
+	constant.StreamingTimeout = 60
+	t.Cleanup(func() { constant.StreamingTimeout = previousTimeout })
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	info := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "gpt-5.6-sol"}}
+	longOutput := strings.Repeat("reliable streamed output ", 32)
+	stream := strings.Join([]string{
+		`data: {"type":"response.output_text.delta","delta":"` + longOutput + `"}`,
+		`data: {"type":"response.reasoning_summary_text.delta","delta":"thinking through the answer"}`,
+		`data: {"type":"response.completed","response":{"usage":{"input_tokens":100,"output_tokens":1,"total_tokens":101}}}`,
+		`data: [DONE]`,
+	}, "\n\n") + "\n\n"
+
+	usage, apiErr := OaiResponsesStreamHandler(c, info, &http.Response{
+		Body:    io.NopCloser(strings.NewReader(stream)),
+		Request: httptest.NewRequest(http.MethodPost, "/v1/responses", nil),
+	})
+
+	require.Nil(t, apiErr)
+	require.NotNil(t, usage)
+	require.Greater(t, usage.CompletionTokens, 1)
+	require.Equal(t, usage.CompletionTokens, usage.OutputTokens)
+	require.Equal(t, "estimated_stream_output", usage.UsageSource)
+	require.Equal(t, usage.PromptTokens+usage.CompletionTokens, usage.TotalTokens)
+}
+
+func TestOaiResponsesStreamHandlerKeepsGenuineOneTokenUsage(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	service.InitTokenEncoders()
+	previousTimeout := constant.StreamingTimeout
+	constant.StreamingTimeout = 60
+	t.Cleanup(func() { constant.StreamingTimeout = previousTimeout })
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	info := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "gpt-5.6-sol"}}
+	stream := strings.Join([]string{
+		`data: {"type":"response.output_text.delta","delta":"OK"}`,
+		`data: {"type":"response.completed","response":{"usage":{"input_tokens":10,"output_tokens":1,"total_tokens":11}}}`,
+		`data: [DONE]`,
+	}, "\n\n") + "\n\n"
+
+	usage, apiErr := OaiResponsesStreamHandler(c, info, &http.Response{
+		Body:    io.NopCloser(strings.NewReader(stream)),
+		Request: httptest.NewRequest(http.MethodPost, "/v1/responses", nil),
+	})
+
+	require.Nil(t, apiErr)
+	require.NotNil(t, usage)
+	require.Equal(t, 1, usage.CompletionTokens)
+	require.Equal(t, "upstream_responses", usage.UsageSource)
 }
 
 func TestOaiResponsesStreamHandlerRejectsTrulyEmptyResponse(t *testing.T) {

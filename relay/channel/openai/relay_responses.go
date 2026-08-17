@@ -240,14 +240,17 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 	}
 
 	// Some compatible Responses upstreams send response.completed with an empty
-	// or partial usage object. Estimate all output-bearing events received here
-	// instead of recording a successful request with zero output tokens. Tool
-	// execution results arrive in a later request and belong to that request's
-	// input tokens, so they are intentionally not added here.
-	if usage.CompletionTokens == 0 {
-		tempStr := responseTextBuilder.String()
-		if len(tempStr) > 0 && info != nil {
-			usage.CompletionTokens = service.CountTextToken(tempStr, info.UpstreamModelName)
+	// or obviously underreported usage object. Count the output-bearing events
+	// received here before persisting billing. Tool execution results arrive in a
+	// later request and belong to that request's input tokens, so they are not
+	// added here. A real one-token answer stays unchanged because its locally
+	// counted content is also one token.
+	streamOutput := responseTextBuilder.String()
+	if len(streamOutput) > 0 && info != nil {
+		estimatedOutputTokens := service.CountTextToken(streamOutput, info.UpstreamModelName)
+		if usage.CompletionTokens == 0 || (usage.CompletionTokens <= 1 && estimatedOutputTokens > usage.CompletionTokens) {
+			usage.CompletionTokens = estimatedOutputTokens
+			usage.OutputTokens = estimatedOutputTokens
 			usage.UsageSource = "estimated_stream_output"
 		}
 	}

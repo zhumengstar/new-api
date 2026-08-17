@@ -197,6 +197,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	}
 	relayInfo.RetryIndex = 0
 	relayInfo.LastError = nil
+	hasUpstreamAttempt := false
 
 	for ; retryParam.GetRetry() <= common.RetryTimes; retryParam.IncreaseRetry() {
 		relayInfo.RetryIndex = retryParam.GetRetry()
@@ -214,6 +215,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		}
 
 		addUsedChannel(c, channel.Id)
+		hasUpstreamAttempt = true
 		bodyStorage, bodyErr := common.GetBodyStorage(c)
 		if bodyErr != nil {
 			// Ensure consistent 413 for oversized bodies even when error occurs later (e.g., retry path)
@@ -246,11 +248,20 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		newAPIError = service.NormalizeViolationFeeError(newAPIError)
 		relayInfo.LastError = newAPIError
 
-		processChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError)
+		// Keep channel health handling per attempt, but delay the user-visible
+		// error log until all candidate channels have failed.
+		processChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError, false)
 
 		attemptDuration := time.Since(attemptStartedAt)
 		if shouldStopRetryAfterSlowImageAttempt(relayInfo, attemptDuration) {
 			logger.LogInfo(c, fmt.Sprintf("图片请求单次连接耗时 %.0fs，超过 60s，跳过后续重试", attemptDuration.Seconds()))
+			break
+		}
+		// Responses streams can write lifecycle events before receiving any usable
+		// content. Permit a retry for that explicitly detected empty-output case;
+		// every other started response remains non-retryable to avoid duplicates.
+		if c.Writer.Written() && !isEmptyResponsesOutputError(newAPIError) {
+			logger.LogInfo(c, "upstream response has started; skip channel retry")
 			break
 		}
 
@@ -266,6 +277,9 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		logger.LogInfo(c, retryLogStr)
 	}
 	if newAPIError != nil {
+		if shouldRecordFinalRelayError(hasUpstreamAttempt, newAPIError) {
+			recordChannelErrorLog(c, newAPIError)
+		}
 		gopool.Go(func() {
 			perfmetrics.RecordRelaySample(relayInfo, false, 0)
 		})
@@ -411,7 +425,7 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) b
 	}
 	// Capacity exhaustion is a channel-local failure. Some GPM-compatible
 	// upstreams mark it skip-retry, but another channel may still have capacity.
-	if isCapacityUnavailableError(openaiErr) {
+	if isCapacityUnavailableError(openaiErr) || isChannelBalanceExhaustedError(openaiErr) || isRetryableUpstreamError(openaiErr) {
 		return true
 	}
 	if types.IsSkipRetryError(openaiErr) {
@@ -431,6 +445,68 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) b
 		return false
 	}
 	return operation_setting.ShouldRetryByStatusCode(code)
+}
+
+func isRetryableUpstreamError(err *types.NewAPIError) bool {
+	if err == nil {
+		return false
+	}
+
+	// The request reached an upstream channel but NewAPI has no usable response.
+	// These failures are safe to retry only before anything is written downstream.
+	switch err.GetErrorCode() {
+	case types.ErrorCodeDoRequestFailed,
+		types.ErrorCodeReadResponseBodyFailed,
+		types.ErrorCodeBadResponse,
+		types.ErrorCodeBadResponseBody,
+		types.ErrorCodeEmptyResponse,
+		types.ErrorCodeAwsInvokeError:
+		return err.StatusCode == 0 || err.StatusCode == http.StatusRequestTimeout ||
+			err.StatusCode == http.StatusTooManyRequests || err.StatusCode >= http.StatusInternalServerError
+	case types.ErrorCodeBadResponseStatusCode:
+		return err.StatusCode == http.StatusRequestTimeout ||
+			err.StatusCode == http.StatusTooManyRequests || err.StatusCode >= http.StatusInternalServerError
+	}
+	return false
+}
+
+func isEmptyResponsesOutputError(err *types.NewAPIError) bool {
+	return err != nil &&
+		err.GetErrorCode() == types.ErrorCodeBadResponse &&
+		err.StatusCode == http.StatusBadGateway &&
+		strings.Contains(err.Error(), "upstream responses returned no output")
+}
+
+func isChannelBalanceExhaustedError(err *types.NewAPIError) bool {
+	if err == nil || err.GetErrorCode() == types.ErrorCodeInsufficientUserQuota {
+		return false
+	}
+
+	// 402 is reserved for an upstream payment/credit failure. Some compatible
+	// providers instead return 403 with a balance-specific message. Both are
+	// channel-local and another channel may still be able to serve the request.
+	if err.StatusCode == http.StatusPaymentRequired {
+		return true
+	}
+	if err.StatusCode != http.StatusForbidden {
+		return false
+	}
+
+	message := strings.ToLower(err.Error())
+	for _, marker := range []string{
+		"insufficient balance", "insufficient funds", "insufficient credit",
+		"insufficient quota", "credit balance", "no credits", "billing hard limit",
+		"balance is not enough", "余额不足", "额度不足", "余额已用完", "额度已用完",
+	} {
+		if strings.Contains(message, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func shouldRecordFinalRelayError(hasUpstreamAttempt bool, err *types.NewAPIError) bool {
+	return hasUpstreamAttempt && err != nil
 }
 
 func isCapacityUnavailableError(err *types.NewAPIError) bool {
@@ -457,7 +533,7 @@ func preservePreviousRelayError(previous, selectionErr *types.NewAPIError) *type
 	return selectionErr
 }
 
-func processChannelError(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError) {
+func processChannelError(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError, recordErrorLog bool) {
 	logger.LogError(c, fmt.Sprintf("channel error (channel #%d, status code: %d): %s", channelError.ChannelId, err.StatusCode, common.LocalLogPreview(err.Error())))
 	// 不要使用context获取渠道信息，异步处理时可能会出现渠道信息不一致的情况
 	// do not use context to get channel info, there may be inconsistent channel info when processing asynchronously
@@ -467,41 +543,46 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 		})
 	}
 
-	if constant.ErrorLogEnabled && types.IsRecordErrorLog(err) {
-		// 保存错误日志到mysql中
-		userId := c.GetInt("id")
-		tokenName := c.GetString("token_name")
-		modelName := c.GetString("original_model")
-		tokenId := c.GetInt("token_id")
-		userGroup := c.GetString("group")
-		channelId := c.GetInt("channel_id")
-		other := make(map[string]interface{})
-		if c.Request != nil && c.Request.URL != nil {
-			other["request_path"] = c.Request.URL.Path
-		}
-		other["error_type"] = err.GetErrorType()
-		other["error_code"] = err.GetErrorCode()
-		other["status_code"] = err.StatusCode
-		other["channel_id"] = channelId
-		other["channel_name"] = c.GetString("channel_name")
-		other["channel_type"] = c.GetInt("channel_type")
-		adminInfo := make(map[string]interface{})
-		adminInfo["use_channel"] = c.GetStringSlice("use_channel")
-		isMultiKey := common.GetContextKeyBool(c, constant.ContextKeyChannelIsMultiKey)
-		if isMultiKey {
-			adminInfo["is_multi_key"] = true
-			adminInfo["multi_key_index"] = common.GetContextKeyInt(c, constant.ContextKeyChannelMultiKeyIndex)
-		}
-		service.AppendChannelAffinityAdminInfo(c, adminInfo)
-		other["admin_info"] = adminInfo
-		startTime := common.GetContextKeyTime(c, constant.ContextKeyRequestStartTime)
-		if startTime.IsZero() {
-			startTime = time.Now()
-		}
-		useTimeSeconds := int(time.Since(startTime).Seconds())
-		model.RecordErrorLog(c, userId, channelId, modelName, tokenName, err.MaskSensitiveErrorWithStatusCode(), tokenId, useTimeSeconds, common.GetContextKeyBool(c, constant.ContextKeyIsStream), userGroup, other)
+	if recordErrorLog {
+		recordChannelErrorLog(c, err)
 	}
+}
 
+func recordChannelErrorLog(c *gin.Context, err *types.NewAPIError) {
+	if !constant.ErrorLogEnabled || !types.IsRecordErrorLog(err) {
+		return
+	}
+	userId := c.GetInt("id")
+	tokenName := c.GetString("token_name")
+	modelName := c.GetString("original_model")
+	tokenId := c.GetInt("token_id")
+	userGroup := c.GetString("group")
+	channelId := c.GetInt("channel_id")
+	other := make(map[string]interface{})
+	if c.Request != nil && c.Request.URL != nil {
+		other["request_path"] = c.Request.URL.Path
+	}
+	other["error_type"] = err.GetErrorType()
+	other["error_code"] = err.GetErrorCode()
+	other["status_code"] = err.StatusCode
+	other["channel_id"] = channelId
+	other["channel_name"] = c.GetString("channel_name")
+	other["channel_type"] = c.GetInt("channel_type")
+	adminInfo := make(map[string]interface{})
+	adminInfo["use_channel"] = c.GetStringSlice("use_channel")
+	isMultiKey := common.GetContextKeyBool(c, constant.ContextKeyChannelIsMultiKey)
+	if isMultiKey {
+		adminInfo["is_multi_key"] = true
+		adminInfo["multi_key_index"] = common.GetContextKeyInt(c, constant.ContextKeyChannelMultiKeyIndex)
+	}
+	service.AppendChannelAffinityAdminInfo(c, adminInfo)
+	other["admin_info"] = adminInfo
+	startTime := common.GetContextKeyTime(c, constant.ContextKeyRequestStartTime)
+	if startTime.IsZero() {
+		startTime = time.Now()
+	}
+	useTimeSeconds := int(time.Since(startTime).Seconds())
+	model.RecordErrorLog(c, userId, channelId, modelName, tokenName, err.MaskSensitiveErrorWithStatusCode(), tokenId, useTimeSeconds, common.GetContextKeyBool(c, constant.ContextKeyIsStream), userGroup, other)
 }
 
 func RelayMidjourney(c *gin.Context) {
@@ -660,7 +741,7 @@ func RelayTask(c *gin.Context) {
 			processChannelError(c,
 				*types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey,
 					common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()),
-				types.NewOpenAIError(taskErr.Error, types.ErrorCodeBadResponseStatusCode, taskErr.StatusCode))
+				types.NewOpenAIError(taskErr.Error, types.ErrorCodeBadResponseStatusCode, taskErr.StatusCode), true)
 		}
 
 		if !shouldRetryTaskRelay(c, channel.Id, taskErr, common.RetryTimes-retryParam.GetRetry()) {
