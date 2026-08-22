@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"golang.org/x/sync/singleflight"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -39,7 +40,61 @@ type ModelRequestStat struct {
 
 var modelRequestStatsMu sync.Mutex
 
+type modelRequestStatsCacheEntry struct {
+	stats     []ModelRequestStat
+	expiresAt time.Time
+}
+
+var modelRequestStatsCache = struct {
+	sync.RWMutex
+	entries map[string]modelRequestStatsCacheEntry
+}{entries: make(map[string]modelRequestStatsCacheEntry)}
+
+var modelRequestStatsGroup singleflight.Group
+
 func GetModelRequestStats(period string) ([]ModelRequestStat, error) {
+	ttlSeconds := common.GetEnvOrDefault("MODEL_REQUEST_STATS_CACHE_TTL_SECONDS", 10)
+	if ttlSeconds <= 0 {
+		return getModelRequestStatsUncached(period)
+	}
+
+	now := time.Now()
+	modelRequestStatsCache.RLock()
+	entry, ok := modelRequestStatsCache.entries[period]
+	modelRequestStatsCache.RUnlock()
+	if ok && now.Before(entry.expiresAt) {
+		return append([]ModelRequestStat(nil), entry.stats...), nil
+	}
+
+	value, err, _ := modelRequestStatsGroup.Do(period, func() (interface{}, error) {
+		now := time.Now()
+		modelRequestStatsCache.RLock()
+		entry, ok := modelRequestStatsCache.entries[period]
+		modelRequestStatsCache.RUnlock()
+		if ok && now.Before(entry.expiresAt) {
+			return append([]ModelRequestStat(nil), entry.stats...), nil
+		}
+
+		stats, loadErr := getModelRequestStatsUncached(period)
+		if loadErr != nil {
+			return nil, loadErr
+		}
+		cachedStats := append([]ModelRequestStat(nil), stats...)
+		modelRequestStatsCache.Lock()
+		modelRequestStatsCache.entries[period] = modelRequestStatsCacheEntry{
+			stats:     cachedStats,
+			expiresAt: now.Add(time.Duration(ttlSeconds) * time.Second),
+		}
+		modelRequestStatsCache.Unlock()
+		return append([]ModelRequestStat(nil), cachedStats...), nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return value.([]ModelRequestStat), nil
+}
+
+func getModelRequestStatsUncached(period string) ([]ModelRequestStat, error) {
 	location := time.FixedZone("Asia/Shanghai", 8*60*60)
 	now := time.Now().In(location)
 	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, location)

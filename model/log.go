@@ -16,6 +16,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/bytedance/gopkg/util/gopool"
+	"golang.org/x/sync/errgroup"
 	"gorm.io/gorm"
 )
 
@@ -784,16 +785,32 @@ func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName
 	if group != "" {
 		tx = tx.Where("logs."+logGroupCol+" = ?", group)
 	}
-	err = tx.Model(&Log{}).Count(&total).Error
-	if err != nil {
-		return nil, 0, err
-	}
 	order := "logs.created_at desc, logs.id desc"
 	if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
 		order = clickHouseLogOrder("logs.")
 	}
-	err = tx.Order(order).Limit(num).Offset(startIdx).Find(&logs).Error
-	if err != nil {
+	countKey := buildLogCountCacheKey(
+		"all",
+		strconv.Itoa(logType), strconv.FormatInt(startTimestamp, 10), strconv.FormatInt(endTimestamp, 10),
+		modelName, username, tokenName, strconv.Itoa(channel), group, requestId, upstreamRequestId,
+		logScopeCacheValue(scoped, scopedUserIDs),
+	)
+	countTx := tx.Session(&gorm.Session{})
+	listTx := tx.Session(&gorm.Session{})
+	queryGroup := new(errgroup.Group)
+	queryGroup.Go(func() error {
+		var countErr error
+		total, countErr = getCachedLogCount(countKey, func() (int64, error) {
+			var count int64
+			countErr := countTx.Model(&Log{}).Count(&count).Error
+			return count, countErr
+		})
+		return countErr
+	})
+	queryGroup.Go(func() error {
+		return listTx.Order(order).Limit(num).Offset(startIdx).Find(&logs).Error
+	})
+	if err = queryGroup.Wait(); err != nil {
 		return nil, 0, err
 	}
 	if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
@@ -875,17 +892,31 @@ func GetUserLogs(userId int, logType int, startTimestamp int64, endTimestamp int
 	if group != "" {
 		tx = tx.Where("logs."+logGroupCol+" = ?", group)
 	}
-	err = tx.Model(&Log{}).Limit(logSearchCountLimit).Count(&total).Error
-	if err != nil {
-		common.SysError("failed to count user logs: " + err.Error())
-		return nil, 0, errors.New("查询日志失败")
-	}
 	order := "logs.id desc"
 	if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
 		order = clickHouseLogOrder("logs.")
 	}
-	err = tx.Order(order).Limit(num).Offset(startIdx).Find(&logs).Error
-	if err != nil {
+	countKey := buildLogCountCacheKey(
+		"user", strconv.Itoa(userId), strconv.Itoa(logType),
+		strconv.FormatInt(startTimestamp, 10), strconv.FormatInt(endTimestamp, 10),
+		modelName, tokenName, group, requestId, upstreamRequestId,
+	)
+	countTx := tx.Session(&gorm.Session{})
+	listTx := tx.Session(&gorm.Session{})
+	queryGroup := new(errgroup.Group)
+	queryGroup.Go(func() error {
+		var countErr error
+		total, countErr = getCachedLogCount(countKey, func() (int64, error) {
+			var count int64
+			countErr := countTx.Model(&Log{}).Limit(logSearchCountLimit).Count(&count).Error
+			return count, countErr
+		})
+		return countErr
+	})
+	queryGroup.Go(func() error {
+		return listTx.Order(order).Limit(num).Offset(startIdx).Find(&logs).Error
+	})
+	if err = queryGroup.Wait(); err != nil {
 		common.SysError("failed to search user logs: " + err.Error())
 		return nil, 0, errors.New("查询日志失败")
 	}

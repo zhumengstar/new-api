@@ -163,6 +163,7 @@ export const useLogsData = () => {
   );
   const autoRefreshInFlightRef = useRef(false);
   const refreshRef = useRef(null);
+  const logsRequestIdRef = useRef(0);
   const [isGeneratedImagePreviewOpen, setIsGeneratedImagePreviewOpen] =
     useState(false);
   const [generatedImagePreviewUrl, setGeneratedImagePreviewUrl] = useState('');
@@ -873,50 +874,67 @@ export const useLogsData = () => {
   };
 
   // Load logs function
-  const loadLogs = async (startIdx, pageSize, customLogType = null) => {
-    setLoading(true);
-
-    let url = '';
-    const {
-      username,
-      token_name,
-      model_name,
-      start_timestamp,
-      end_timestamp,
-      channel,
-      group,
-      request_id,
-      logType: formLogType,
-    } = getFormValues();
-
-    const currentLogType =
-      customLogType !== null
-        ? customLogType
-        : formLogType !== undefined
-          ? formLogType
-          : logType;
-
-    let localStartTimestamp = Date.parse(start_timestamp) / 1000;
-    let localEndTimestamp = Date.parse(end_timestamp) / 1000;
-    if (isAdminUser) {
-      url = `/api/log/?p=${startIdx}&page_size=${pageSize}&type=${currentLogType}&username=${username}&token_name=${token_name}&model_name=${model_name}&start_timestamp=${localStartTimestamp}&end_timestamp=${localEndTimestamp}&channel=${channel}&group=${group}&request_id=${request_id}`;
-    } else {
-      url = `/api/log/self/?p=${startIdx}&page_size=${pageSize}&type=${currentLogType}&token_name=${token_name}&model_name=${model_name}&start_timestamp=${localStartTimestamp}&end_timestamp=${localEndTimestamp}&group=${group}&request_id=${request_id}`;
+  const loadLogs = async (
+    startIdx,
+    pageSize,
+    customLogType = null,
+    options = {},
+  ) => {
+    const background = options.background === true;
+    const requestId = ++logsRequestIdRef.current;
+    if (!background) {
+      setLoading(true);
     }
-    url = encodeURI(url);
-    const res = await API.get(url);
-    const { success, message, data } = res.data;
-    if (success) {
-      const newPageData = data.items;
-      setActivePage(data.page);
-      setPageSize(data.page_size);
-      setLogCount(data.total);
 
-      setLogsFormat(newPageData);
-    } else {
-      showError(message);
+    try {
+      let url = '';
+      const {
+        username,
+        token_name,
+        model_name,
+        start_timestamp,
+        end_timestamp,
+        channel,
+        group,
+        request_id,
+        logType: formLogType,
+      } = getFormValues();
+
+      const currentLogType =
+        customLogType !== null
+          ? customLogType
+          : formLogType !== undefined
+            ? formLogType
+            : logType;
+
+      let localStartTimestamp = Date.parse(start_timestamp) / 1000;
+      let localEndTimestamp = Date.parse(end_timestamp) / 1000;
+      if (isAdminUser) {
+        url = `/api/log/?p=${startIdx}&page_size=${pageSize}&type=${currentLogType}&username=${username}&token_name=${token_name}&model_name=${model_name}&start_timestamp=${localStartTimestamp}&end_timestamp=${localEndTimestamp}&channel=${channel}&group=${group}&request_id=${request_id}`;
+      } else {
+        url = `/api/log/self/?p=${startIdx}&page_size=${pageSize}&type=${currentLogType}&token_name=${token_name}&model_name=${model_name}&start_timestamp=${localStartTimestamp}&end_timestamp=${localEndTimestamp}&group=${group}&request_id=${request_id}`;
+      }
+      url = encodeURI(url);
+      const res = await API.get(url);
+      if (requestId !== logsRequestIdRef.current) {
+        return;
+      }
+      const { success, message, data } = res.data;
+      if (success) {
+        const newPageData = data.items;
+        setActivePage(data.page);
+        setPageSize(data.page_size);
+        setLogCount(data.total);
+
+        setLogsFormat(newPageData);
+      } else {
+        showError(message);
+      }
+    } finally {
+      if (!background && requestId === logsRequestIdRef.current) {
+        setLoading(false);
+      }
     }
-    setLoading(false);
   };
 
   // Page handlers
@@ -952,12 +970,12 @@ export const useLogsData = () => {
   };
 
   // Refresh function
-  const refresh = async () => {
+  const refresh = async (options = {}) => {
     setActivePage(1);
     await Promise.all([
       handleEyeClick(),
       loadIncomeMetrics(),
-      loadLogs(1, pageSize),
+      loadLogs(1, pageSize, null, options),
     ]);
   };
 
@@ -1019,7 +1037,7 @@ export const useLogsData = () => {
 
       autoRefreshInFlightRef.current = true;
       try {
-        await refreshRef.current?.();
+        await refreshRef.current?.({ background: true });
       } catch (reason) {
         console.error('Failed to auto-refresh usage logs', reason);
       } finally {
@@ -1067,10 +1085,15 @@ export const useLogsData = () => {
     };
 
     loadModelRequestStats();
-    const timer = setInterval(loadModelRequestStats, 10000);
+    const timer = showModelRequestStats
+      ? setInterval(
+          loadModelRequestStats,
+          modelRequestPeriod === 'today' ? 10000 : 30000,
+        )
+      : null;
     return () => {
       cancelled = true;
-      clearInterval(timer);
+      if (timer) clearInterval(timer);
     };
   }, [isAdminUser, modelRequestPeriod, showModelRequestStats]);
 

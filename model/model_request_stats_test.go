@@ -9,6 +9,7 @@ import (
 )
 
 func TestGetModelRequestStatsPersistsHistoryAndRefreshesToday(t *testing.T) {
+	t.Setenv("MODEL_REQUEST_STATS_CACHE_TTL_SECONDS", "0")
 	truncateTables(t)
 	location := time.FixedZone("Asia/Shanghai", 8*60*60)
 	now := time.Now().In(location)
