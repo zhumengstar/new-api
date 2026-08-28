@@ -72,12 +72,12 @@ type responseTask struct {
 	Content struct {
 		VideoURL string `json:"video_url"`
 	} `json:"content"`
-	Seed            int    `json:"seed"`
-	Resolution      string `json:"resolution"`
-	Duration        int    `json:"duration"`
-	Ratio           string `json:"ratio"`
-	FramesPerSecond int    `json:"framespersecond"`
-	ServiceTier     string `json:"service_tier"`
+	Seed            int          `json:"seed"`
+	Resolution      string       `json:"resolution"`
+	Duration        dto.IntValue `json:"duration"`
+	Ratio           string       `json:"ratio"`
+	FramesPerSecond int          `json:"framespersecond"`
+	ServiceTier     string       `json:"service_tier"`
 	Tools           []struct {
 		Type string `json:"type"`
 	} `json:"tools"`
