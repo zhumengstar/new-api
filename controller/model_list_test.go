@@ -240,3 +240,56 @@ func TestListModelsTokenLimitIncludesTieredBillingModel(t *testing.T) {
 	require.NotContains(t, ids, "zz-token-tiered-missing-expr-model")
 	require.NotContains(t, ids, "zz-token-unpriced-model")
 }
+
+func TestHasUserModelPriceForGroups(t *testing.T) {
+	userSetting := dto.UserSetting{
+		UserModelPriceRules: []dto.UserModelPriceRule{
+			{Group: "private-per-call", Models: []string{"custom-per-call-model"}, Price: 0.02},
+		},
+	}
+
+	require.True(t, hasUserModelPriceForGroups(userSetting, []string{"private-per-call"}, "custom-per-call-model"))
+	require.False(t, hasUserModelPriceForGroups(userSetting, []string{"default"}, "custom-per-call-model"))
+	require.False(t, hasUserModelPriceForGroups(userSetting, []string{"private-per-call"}, "another-model"))
+}
+
+func TestListModelsIncludesUserPricedPrivateGroupModel(t *testing.T) {
+	withSelfUseModeDisabled(t)
+	db := setupModelListControllerTestDB(t)
+
+	user := model.User{
+		Id:       1002,
+		Username: "private-model-user",
+		Password: "password",
+		Group:    "private-per-call",
+		Status:   common.UserStatusEnabled,
+	}
+	user.SetSetting(dto.UserSetting{
+		UserModelPriceRules: []dto.UserModelPriceRule{
+			{Group: "private-per-call", Models: []string{"zz-private-per-call-model"}, Price: 0.02},
+		},
+	})
+	require.NoError(t, db.Create(&user).Error)
+	require.NoError(t, db.Create(&model.Channel{
+		Id:     2,
+		Name:   "private-model-channel",
+		Status: common.ChannelStatusEnabled,
+	}).Error)
+	require.NoError(t, db.Create(&model.Ability{
+		Group:     "private-per-call",
+		Model:     "zz-private-per-call-model",
+		ChannelId: 2,
+		Enabled:   true,
+	}).Error)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	ctx.Set("id", user.Id)
+	common.SetContextKey(ctx, constant.ContextKeyUserGroup, user.Group)
+
+	ListModels(ctx, constant.ChannelTypeOpenAI)
+
+	ids := decodeListModelsResponse(t, recorder)
+	require.Contains(t, ids, "zz-private-per-call-model")
+}

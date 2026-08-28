@@ -187,6 +187,13 @@ func getModelListGroups(c *gin.Context) (modelListGroups, error) {
 	}
 
 	if tokenGroup == "auto" {
+		if c.GetInt("role") >= common.RoleRootUser {
+			return modelListGroups{
+				userGroup:   userGroup,
+				tokenGroup:  tokenGroup,
+				ownerGroups: roleUsableGroupNames(c.GetInt("role"), userGroup),
+			}, nil
+		}
 		return modelListGroups{
 			userGroup:   userGroup,
 			tokenGroup:  tokenGroup,
@@ -197,6 +204,12 @@ func getModelListGroups(c *gin.Context) (modelListGroups, error) {
 	group := userGroup
 	if tokenGroup != "" {
 		group = tokenGroup
+	} else if c.GetInt("role") >= common.RoleRootUser {
+		return modelListGroups{
+			userGroup:   userGroup,
+			tokenGroup:  tokenGroup,
+			ownerGroups: roleUsableGroupNames(c.GetInt("role"), userGroup),
+		}, nil
 	}
 	return modelListGroups{
 		userGroup:   userGroup,
@@ -205,16 +218,46 @@ func getModelListGroups(c *gin.Context) (modelListGroups, error) {
 	}, nil
 }
 
-func ListModels(c *gin.Context, modelType int) {
-	acceptUnsetRatioModel := operation_setting.SelfUseModeEnabled
-	if !acceptUnsetRatioModel {
-		userId := c.GetInt("id")
-		if userId > 0 {
-			userSettings, _ := model.GetUserSetting(userId, false)
-			if userSettings.AcceptUnsetRatioModel {
-				acceptUnsetRatioModel = true
+func roleUsableGroupNames(role int, userGroup string) []string {
+	usableGroups := service.GetRoleUsableGroups(role, userGroup)
+	groups := make([]string, 0, len(usableGroups))
+	for group := range usableGroups {
+		if group != "auto" {
+			groups = append(groups, group)
+		}
+	}
+	return groups
+}
+
+func hasUserModelPriceForGroups(userSetting dto.UserSetting, groups []string, modelName string) bool {
+	if price, ok := userSetting.UserModelPrices[modelName]; ok && price >= 0 {
+		return true
+	}
+	for _, rule := range userSetting.UserModelPriceRules {
+		if !common.StringsContains(groups, strings.TrimSpace(rule.Group)) || rule.Price < 0 {
+			continue
+		}
+		for _, configuredModel := range rule.Models {
+			if strings.TrimSpace(configuredModel) == modelName {
+				return true
 			}
 		}
+	}
+	return false
+}
+
+func ListModels(c *gin.Context, modelType int) {
+	acceptUnsetRatioModel := operation_setting.SelfUseModeEnabled
+	userSettings := dto.UserSetting{}
+	userId := c.GetInt("id")
+	if userId > 0 {
+		userSettings, _ = model.GetUserSetting(userId, false)
+		if userSettings.AcceptUnsetRatioModel {
+			acceptUnsetRatioModel = true
+		}
+	}
+	if c.GetInt("role") >= common.RoleRootUser {
+		acceptUnsetRatioModel = true
 	}
 
 	userModelNames := make([]string, 0)
@@ -227,6 +270,10 @@ func ListModels(c *gin.Context, modelType int) {
 		return
 	}
 	ownerGroups := groups.ownerGroups
+	hasBillingAccess := func(modelName string) bool {
+		return acceptUnsetRatioModel || helper.HasModelBillingConfig(modelName) ||
+			hasUserModelPriceForGroups(userSettings, ownerGroups, modelName)
+	}
 	modelLimitEnable := common.GetContextKeyBool(c, constant.ContextKeyTokenModelLimitEnabled)
 	if modelLimitEnable {
 		s, ok := common.GetContextKey(c, constant.ContextKeyTokenModelLimit)
@@ -237,10 +284,8 @@ func ListModels(c *gin.Context, modelType int) {
 			tokenModelLimit = map[string]bool{}
 		}
 		for allowModel, _ := range tokenModelLimit {
-			if !acceptUnsetRatioModel {
-				if !helper.HasModelBillingConfig(allowModel) {
-					continue
-				}
+			if !hasBillingAccess(allowModel) {
+				continue
 			}
 			userModelNames = append(userModelNames, allowModel)
 		}
@@ -255,10 +300,8 @@ func ListModels(c *gin.Context, modelType int) {
 			}
 		}
 		for _, modelName := range models {
-			if !acceptUnsetRatioModel {
-				if !helper.HasModelBillingConfig(modelName) {
-					continue
-				}
+			if !hasBillingAccess(modelName) {
+				continue
 			}
 			userModelNames = append(userModelNames, modelName)
 		}

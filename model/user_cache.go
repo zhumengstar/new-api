@@ -16,6 +16,7 @@ import (
 // UserBase struct remains the same as it represents the cached data structure
 type UserBase struct {
 	Id       int    `json:"id"`
+	Role     int    `json:"role"`
 	Group    string `json:"group"`
 	Email    string `json:"email"`
 	Quota    int    `json:"quota"`
@@ -25,6 +26,7 @@ type UserBase struct {
 }
 
 func (user *UserBase) WriteContext(c *gin.Context) {
+	c.Set("role", user.Role)
 	common.SetContextKey(c, constant.ContextKeyUserGroup, user.Group)
 	common.SetContextKey(c, constant.ContextKeyUserQuota, user.Quota)
 	common.SetContextKey(c, constant.ContextKeyUserStatus, user.Status)
@@ -107,6 +109,7 @@ func GetUserCache(userId int) (userCache *UserBase, err error) {
 	// Create cache object from user data
 	userCache = &UserBase{
 		Id:       user.Id,
+		Role:     user.Role,
 		Group:    user.Group,
 		Quota:    user.Quota,
 		Status:   user.Status,
@@ -127,6 +130,11 @@ func cacheGetUserBase(userId int) (*UserBase, error) {
 	err := common.RedisHGetObj(getUserCacheKey(userId), &userCache)
 	if err != nil {
 		return nil, err
+	}
+	// Cached entries created before Role was added deserialize it as zero. Force
+	// a database refresh so token requests never lose administrator privileges.
+	if userCache.Id > 0 && userCache.Role == common.RoleGuestUser {
+		return nil, fmt.Errorf("cached user role is missing")
 	}
 	return &userCache, nil
 }

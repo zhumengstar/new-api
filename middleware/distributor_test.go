@@ -18,6 +18,18 @@ func TestCanAccessPlaygroundGroup(t *testing.T) {
 	}
 }
 
+func TestCanAccessTokenGroup(t *testing.T) {
+	if !canAccessTokenGroup(common.RoleRootUser, "default", "private-only") {
+		t.Fatal("a root user must be able to use every token group")
+	}
+	if !canAccessTokenGroup(common.RoleCommonUser, "default,private-only", "private-only") {
+		t.Fatal("an explicitly assigned private group must be usable by a common user token")
+	}
+	if canAccessTokenGroup(common.RoleCommonUser, "default", "private-only") {
+		t.Fatal("an unassigned private group must remain unavailable to a common user token")
+	}
+}
+
 func TestExtractModelNameFromGeminiPath(t *testing.T) {
 	tests := []struct {
 		name string
