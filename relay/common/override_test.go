@@ -2848,6 +2848,24 @@ func TestEnsureClaudeRequestCleanliness(t *testing.T) {
 		require.NoError(t, err)
 		assert.Contains(t, string(cleanedValidBytes), `"top_p":0.95`)
 	})
+
+	t.Run("Clean final assistant trailing whitespace and unsupported OpenAI fields", func(t *testing.T) {
+		inputJSON := `{
+			"model":"claude-opus-4-6",
+			"stream_options":{"include_usage":true},
+			"reasoning_effort":"none",
+			"messages":[
+				{"role":"user","content":"Hi"},
+				{"role":"assistant","content":"Thinking:\n   "}
+			]
+		}`
+		cleanedBytes, err := EnsureClaudeRequestCleanliness([]byte(inputJSON))
+		require.NoError(t, err)
+		cleanedStr := string(cleanedBytes)
+		assert.NotContains(t, cleanedStr, "stream_options")
+		assert.NotContains(t, cleanedStr, "reasoning_effort")
+		assert.Contains(t, cleanedStr, `"content":"Thinking:"`)
+	})
 }
 
 

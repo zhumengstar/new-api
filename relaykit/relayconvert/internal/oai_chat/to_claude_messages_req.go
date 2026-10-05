@@ -161,7 +161,7 @@ func OpenAIChatRequestToClaudeMessages(c context.Context, info convmeta.Meta, te
 				formatMessages = formatMessages[:len(formatMessages)-1]
 			}
 		}
-		if fmtMessage.Content == nil || (fmtMessage.IsStringContent() && fmtMessage.StringContent() == "") {
+		if fmtMessage.Content == nil || (fmtMessage.IsStringContent() && strings.TrimSpace(fmtMessage.StringContent()) == "") {
 			fmtMessage.SetStringContent("...")
 		}
 		formatMessages = append(formatMessages, fmtMessage)
@@ -253,7 +253,7 @@ func OpenAIChatRequestToClaudeMessages(c context.Context, info convmeta.Meta, te
 			}
 		} else if message.IsStringContent() && message.ToolCalls == nil {
 			text := message.StringContent()
-			if text == "" {
+			if strings.TrimSpace(text) == "" {
 				text = "..."
 			}
 			claudeMessage.Content = text
@@ -262,7 +262,7 @@ func OpenAIChatRequestToClaudeMessages(c context.Context, info convmeta.Meta, te
 			for _, mediaMessage := range message.ParseContent() {
 				switch mediaMessage.Type {
 				case "text":
-					if mediaMessage.Text != "" {
+					if strings.TrimSpace(mediaMessage.Text) != "" {
 						claudeMediaMessages = append(claudeMediaMessages, dto.ClaudeMediaMessage{
 							Type: "text",
 							Text: kitutil.GetPointer[string](mediaMessage.Text),

@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/QuantumNous/new-api/common"
 	kitreasoning "github.com/QuantumNous/new-api/relaykit/relayconvert/reasoning"
@@ -2821,11 +2822,48 @@ func EnsureClaudeRequestCleanliness(data []byte) ([]byte, error) {
 					cleanedMessages = append(cleanedMessages, msgMap)
 				}
 			}
+			// 3. 清洗最后一条 assistant 消息的尾部空白（Anthropic 官方强规范：final assistant content cannot end with trailing whitespace）
+			if len(cleanedMessages) > 0 {
+				lastIdx := len(cleanedMessages) - 1
+				if lastMsg, ok := cleanedMessages[lastIdx].(map[string]any); ok {
+					if strings.ToLower(fmt.Sprintf("%v", lastMsg["role"])) == "assistant" {
+						if cStr, isStr := lastMsg["content"].(string); isStr {
+							trimmed := strings.TrimRightFunc(cStr, unicode.IsSpace)
+							if trimmed == "" {
+								trimmed = "."
+							}
+							if trimmed != cStr {
+								lastMsg["content"] = trimmed
+								dirty = true
+							}
+						} else if cBlocks, isBlocks := lastMsg["content"].([]any); isBlocks && len(cBlocks) > 0 {
+							for bIdx := len(cBlocks) - 1; bIdx >= 0; bIdx-- {
+								if bMap, bOk := cBlocks[bIdx].(map[string]any); bOk {
+									if strings.ToLower(fmt.Sprintf("%v", bMap["type"])) == "text" {
+										if tVal, hasT := bMap["text"].(string); hasT {
+											trimmed := strings.TrimRightFunc(tVal, unicode.IsSpace)
+											if trimmed == "" {
+												trimmed = "."
+											}
+											if trimmed != tVal {
+												bMap["text"] = trimmed
+												dirty = true
+											}
+										}
+										break
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+
 			rootMap["messages"] = cleanedMessages
 		}
 	}
 
-	// 3. 校验 thinking 与 top_p 冲突：
+	// 4. 校验 thinking 与 top_p 冲突：
 	// Anthropic 官方规范：当 thinking 启用时，top_p 必须 >= 0.95 或直接未设置；若低于 0.95 直接删除 top_p 避免 400 报错
 	if thinkingVal, hasThinking := rootMap["thinking"]; hasThinking && thinkingVal != nil {
 		if tMap, ok := thinkingVal.(map[string]any); ok {
@@ -2845,6 +2883,15 @@ func EnsureClaudeRequestCleanliness(data []byte) ([]byte, error) {
 					}
 				}
 			}
+		}
+	}
+
+	// 5. 清理 Anthropic 不支持的 OpenAI 专有/冗余字段
+	unsupportedFields := []string{"stream_options", "reasoning_effort", "frequency_penalty", "presence_penalty", "logit_bias", "seed"}
+	for _, field := range unsupportedFields {
+		if _, exists := rootMap[field]; exists {
+			delete(rootMap, field)
+			dirty = true
 		}
 	}
 

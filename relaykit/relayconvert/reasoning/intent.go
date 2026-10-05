@@ -122,7 +122,7 @@ func StateFromIntent(intent Intent) *dto.ReasoningConversionState {
 
 func ParseEffort(value string) (Effort, error) {
 	effort := Effort(strings.ToLower(strings.TrimSpace(value)))
-	if effort == "" {
+	if effort == "" || effort == "auto" || effort == "default" {
 		return "", nil
 	}
 	switch effort {

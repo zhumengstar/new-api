@@ -57,11 +57,7 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 	}
 
 	clientIsStream := lo.FromPtrOr(request.Stream, false)
-	if info.ShouldConvertNonStreamToStream(clientIsStream) {
-		info.ConvertNonStreamToStream = true
-		info.IsStream = true
-		request.Stream = lo.ToPtr(true)
-	}
+	info.IsStream = clientIsStream
 
 	includeUsage := true
 	// 判断用户是否需要返回使用情况
@@ -73,8 +69,8 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 	if !info.SupportStreamOptions || !lo.FromPtrOr(request.Stream, false) {
 		request.StreamOptions = nil
 	} else {
-		// 如果支持StreamOptions，且请求中没有设置StreamOptions，根据配置文件或流转非流模式设置StreamOptions
-		if constant.ForceStreamOption || info.ConvertNonStreamToStream {
+		// 如果支持StreamOptions，且请求中没有设置StreamOptions，根据配置文件设置StreamOptions
+		if constant.ForceStreamOption {
 			request.StreamOptions = &dto.StreamOptions{
 				IncludeUsage: true,
 			}
@@ -115,7 +111,7 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 	var requestBody io.Reader
 	var convertedRequest any
 
-	if !info.ConvertNonStreamToStream && (passThroughGlobal || info.ChannelSetting.PassThroughBodyEnabled) {
+	if passThroughGlobal || info.ChannelSetting.PassThroughBodyEnabled {
 		storage, err := common.GetBodyStorage(c)
 		if err != nil {
 			return types.NewErrorWithStatusCode(err, types.ErrorCodeReadRequestBodyFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
@@ -160,6 +156,11 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 		// 安全防护：确保发送给 Claude/反重力渠道的所有 tool_use 块均携带合法非空 id，避免上游 400 Field required
 		if repaired, repErr := relaycommon.EnsureClaudeToolIDs(jsonData); repErr == nil && len(repaired) > 0 {
 			jsonData = repaired
+		}
+
+		// 增强兼容性清洗：清洗空 content 块、尾部空白、思考参数与 top_p 冲突、剥离不支持的 OpenAI 字段
+		if cleaned, cerr := relaycommon.EnsureClaudeRequestCleanliness(jsonData); cerr == nil && len(cleaned) > 0 {
+			jsonData = cleaned
 		}
 
 		logger.LogDebug(c, "text request body: %s", jsonData)
