@@ -235,9 +235,7 @@ func HandleStreamResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 			}
 		}
 		countClaudeStreamBillableTools(c, info, &claudeResponse)
-		if !info.ConvertNonStreamToStream {
-			helper.ClaudeChunkData(c, claudeResponse, data)
-		}
+		helper.ClaudeChunkData(c, claudeResponse, data)
 	} else if info.RelayFormat == types.RelayFormatOpenAI {
 		state, err := claudeToChatStreamState(info)
 		if err != nil {
@@ -257,11 +255,9 @@ func HandleStreamResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 		if response == nil {
 			return nil
 		}
-		if !info.ConvertNonStreamToStream {
-			err = helper.ObjectData(c, response)
-			if err != nil {
-				logger.LogError(c, "send_stream_response_failed: "+err.Error())
-			}
+		err = helper.ObjectData(c, response)
+		if err != nil {
+			logger.LogError(c, "send_stream_response_failed: "+err.Error())
 		}
 	} else if info.RelayFormat == types.RelayFormatGemini {
 		state, err := claudeToGeminiStreamState(info)
@@ -276,10 +272,8 @@ func HandleStreamResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 			return nil
 		}
 		countClaudeStreamBillableTools(c, info, &claudeResponse)
-		if !info.ConvertNonStreamToStream {
-			if sendErr := sendGeminiStreamResults(c, results); sendErr != nil {
-				return sendErr
-			}
+		if sendErr := sendGeminiStreamResults(c, results); sendErr != nil {
+			return sendErr
 		}
 	}
 	return nil
@@ -391,10 +385,6 @@ func HandleStreamFinalResponse(c *gin.Context, info *relaycommon.RelayInfo, clau
 	relayconvert.FinalizeClaudeStreamBillingUsage(claudeInfo)
 	if shouldStripClaudeCacheCreation(c, info) && claudeInfo != nil {
 		stripClaudeInfoUsageCacheCreation(claudeInfo.Usage)
-	}
-
-	if info.ConvertNonStreamToStream {
-		return
 	}
 
 	if info.RelayFormat == types.RelayFormatClaude {
@@ -515,14 +505,6 @@ func ClaudeStreamHandler(c *gin.Context, resp *http.Response, info *relaycommon.
 			return
 		}
 
-		if info.ConvertNonStreamToStream {
-			err = HandleStreamResponseData(c, info, claudeInfo, data)
-			if err != nil {
-				sr.Stop(err)
-			}
-			return
-		}
-
 		if !flushed {
 			if claudeAgg.HasMeaningfulContent() || claudeInfo.ResponseText.Len() > 0 {
 				if ferr := flushPending(); ferr != nil {
@@ -554,7 +536,7 @@ func ClaudeStreamHandler(c *gin.Context, resp *http.Response, info *relaycommon.
 		return nil, err
 	}
 
-	if !flushed && !info.ConvertNonStreamToStream {
+	if !flushed {
 		info.ReceivedResponseCount = 0
 		logger.LogWarn(c, fmt.Sprintf("upstream claude returned empty stream response before writing to client, req_id=%s, model=%s", c.GetString(common.RequestIdKey), info.UpstreamModelName))
 		return nil, types.NewOpenAIError(
@@ -565,21 +547,6 @@ func ClaudeStreamHandler(c *gin.Context, resp *http.Response, info *relaycommon.
 	}
 
 	HandleStreamFinalResponse(c, info, claudeInfo)
-
-	if info.ConvertNonStreamToStream {
-		if !claudeAgg.HasMeaningfulContent() && strings.TrimSpace(claudeInfo.ResponseText.String()) == "" {
-			logger.LogWarn(c, fmt.Sprintf("upstream claude returned empty stream response (no content, reasoning, or tool_use), req_id=%s, model=%s", c.GetString(common.RequestIdKey), info.UpstreamModelName))
-			return nil, types.NewOpenAIError(
-				fmt.Errorf("upstream claude returned empty stream response"),
-				types.ErrorCodeEmptyResponse,
-				http.StatusBadGateway,
-			)
-		}
-		claudeResp := claudeAgg.Build(claudeInfo, info.UpstreamModelName)
-		if sendErr := sendNonStreamResponseFromClaude(c, info, claudeResp, claudeInfo); sendErr != nil {
-			return claudeInfo.Usage, sendErr
-		}
-	}
 
 	return claudeInfo.Usage, nil
 }

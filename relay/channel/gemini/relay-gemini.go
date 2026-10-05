@@ -355,7 +355,6 @@ func GeminiChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *
 	finishReason := constant.FinishReasonStop
 	toolCallIndexByChoice := make(map[int]map[string]int)
 	nextToolCallIndexByChoice := make(map[int]int)
-	streamAgg := openai.NewOpenAIStreamAggregator()
 	var responseTextBuilder strings.Builder
 
 	usage, err := geminiStreamHandler(c, info, resp, func(data string, geminiResponse *dto.GeminiChatResponse) bool {
@@ -399,11 +398,6 @@ func GeminiChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *
 				m[tool.ID] = idx
 				tool.SetIndex(idx)
 			}
-		}
-
-		if info.ConvertNonStreamToStream {
-			streamAgg.Feed(response)
-			return true
 		}
 
 		logger.LogDebug(c, "info.SendResponseCount = %d", info.SendResponseCount)
@@ -455,40 +449,6 @@ func GeminiChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *
 
 	if err != nil {
 		return usage, err
-	}
-
-	if info.ConvertNonStreamToStream {
-		if info.StreamStatus != nil && info.StreamStatus.EndReason == relaycommon.StreamEndReasonClientGone {
-			return usage, types.NewErrorWithStatusCode(context.Canceled, types.ErrorCodeInvalidRequest, 499)
-		}
-		if info.StreamStatus != nil && (info.StreamStatus.EndReason == relaycommon.StreamEndReasonTimeout || info.StreamStatus.EndReason == relaycommon.StreamEndReasonScannerErr || info.StreamStatus.EndReason == relaycommon.StreamEndReasonPingFail) {
-			errToReport := info.StreamStatus.EndError
-			if errToReport == nil {
-				errToReport = fmt.Errorf("upstream gemini stream ended abnormally: %s", info.StreamStatus.EndReason)
-			}
-			return usage, types.NewErrorWithStatusCode(errToReport, types.ErrorCodeBadResponseBody, http.StatusBadGateway)
-		}
-
-		if !streamAgg.HasMeaningfulContent() && strings.TrimSpace(responseTextBuilder.String()) == "" {
-			logger.LogWarn(c, fmt.Sprintf("upstream gemini returned empty stream response (no content, reasoning, or tools), req_id=%s, model=%s", c.GetString(common.RequestIdKey), info.UpstreamModelName))
-			return nil, types.NewOpenAIError(
-				fmt.Errorf("upstream gemini returned empty stream response"),
-				types.ErrorCodeEmptyResponse,
-				http.StatusBadGateway,
-			)
-		}
-
-		chatResponse := streamAgg.BuildResponse(id, info.UpstreamModelName, createAt, usage, info.ChannelSetting.ThinkingToContent)
-		if chatResponse.Id == "" {
-			chatResponse.Id = helper.GetResponseID(c)
-		}
-		if chatResponse.Created == 0 {
-			chatResponse.Created = common.GetTimestamp()
-		}
-		if sendErr := openai.SendNonStreamResponseFromOpenAI(c, info, chatResponse); sendErr != nil {
-			return usage, sendErr
-		}
-		return usage, nil
 	}
 
 	if c.Writer != nil && !c.Writer.Written() && strings.TrimSpace(responseTextBuilder.String()) == "" && len(toolCallIndexByChoice) == 0 {

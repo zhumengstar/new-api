@@ -52,12 +52,7 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 	}
 
 	clientIsStream := claudeReq.Stream != nil && *claudeReq.Stream
-	if info.ShouldConvertNonStreamToStream(clientIsStream) {
-		trueVal := true
-		info.ConvertNonStreamToStream = true
-		info.IsStream = true
-		request.Stream = &trueVal
-	}
+	info.IsStream = clientIsStream
 
 	adaptor := GetAdaptor(info.ApiType)
 	if adaptor == nil {
@@ -104,7 +99,7 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 	}
 
 	var requestBody io.Reader
-	if !info.ConvertNonStreamToStream && (model_setting.GetGlobalSettings().PassThroughRequestEnabled || info.ChannelSetting.PassThroughBodyEnabled) {
+	if model_setting.GetGlobalSettings().PassThroughRequestEnabled || info.ChannelSetting.PassThroughBodyEnabled {
 		storage, err := common.GetBodyStorage(c)
 		if err != nil {
 			return types.NewErrorWithStatusCode(err, types.ErrorCodeReadRequestBodyFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry())

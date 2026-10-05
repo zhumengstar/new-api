@@ -22,6 +22,7 @@ import (
 	"github.com/QuantumNous/new-api/service/authz"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 
 	"github.com/QuantumNous/new-api/constant"
 
@@ -973,7 +974,24 @@ func UpdateUser(c *gin.Context) {
 	if updatedUser.Password == "$I_LOVE_U" {
 		updatedUser.Password = "" // rollback to what it should be
 	}
-	updatedUser.Group = service.JoinUserGroupsWithDefault(service.ParseUserGroups(updatedUser.Group))
+	if myRole >= common.RoleAdminUser {
+		allGroups := service.ParseUserGroups(updatedUser.Group)
+		for group := range request.UserGroupRatios {
+			group = strings.TrimSpace(group)
+			if group != "" && ratio_setting.ContainsGroupRatio(group) {
+				allGroups = append(allGroups, group)
+			}
+		}
+		for _, rule := range request.UserModelPriceRules {
+			group := strings.TrimSpace(rule.Group)
+			if group != "" && ratio_setting.ContainsGroupRatio(group) {
+				allGroups = append(allGroups, group)
+			}
+		}
+		updatedUser.Group = service.JoinUserGroupsWithDefault(allGroups)
+	} else {
+		updatedUser.Group = service.JoinUserGroupsWithDefault(service.ParseUserGroups(updatedUser.Group))
+	}
 	if len(updatedUser.Group) > 512 {
 		common.ApiErrorMsg(c, "user group is too long")
 		return
@@ -1003,7 +1021,7 @@ func UpdateUser(c *gin.Context) {
 					common.ApiErrorMsg(c, "user group ratio must be a non-negative finite number")
 					return
 				}
-				if !service.GroupInUserUsableGroups(updatedUser.Group, group) {
+				if !service.GroupInUserUsableGroups(updatedUser.Group, group) && !ratio_setting.ContainsGroupRatio(group) {
 					delete(request.UserGroupRatios, group)
 				}
 			}

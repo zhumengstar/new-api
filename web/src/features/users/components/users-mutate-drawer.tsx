@@ -375,6 +375,26 @@ export function UsersMutateDrawer({
       }
       finalData.user_model_price_rules = finalPriceRules
 
+      // 确保用户配置的所有非公开分组（包括倍率和按次专属定价中的分组）都包含在 group 列表中
+      const currentSelectedGroups = (finalData.group || '')
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean)
+      const allActiveGroups = new Set(currentSelectedGroups)
+      if (finalData.user_group_ratios) {
+        Object.keys(finalData.user_group_ratios).forEach((g) => {
+          if (g && !groupMeta[g]?.is_public) {
+            allActiveGroups.add(g)
+          }
+        })
+      }
+      finalPriceRules.forEach((rule) => {
+        if (rule.group && !groupMeta[rule.group]?.is_public) {
+          allActiveGroups.add(rule.group)
+        }
+      })
+      finalData.group = Array.from(allActiveGroups).join(',')
+
       const payload = transformFormDataToPayload(
         finalData,
         currentRow?.id,

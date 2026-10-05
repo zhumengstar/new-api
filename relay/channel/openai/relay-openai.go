@@ -1,7 +1,6 @@
 package openai
 
 import (
-	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -121,10 +120,9 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 	var secondLastStreamData string // 保留倒数第二个stream data；部分兼容网关把完整usage放在倒数第二个事件
 	seenStreamToolCalls := make(map[string]struct{})
 	var streamFunctionCallNames []string
-	streamAgg := NewOpenAIStreamAggregator()
 
 	helper.StreamScannerHandler(c, resp, info, func(data string, sr *helper.StreamResult) {
-		if lastStreamData != "" && !info.ConvertNonStreamToStream {
+		if lastStreamData != "" {
 			if err := HandleStreamFormat(c, info, lastStreamData, info.ChannelSetting.ForceFormat, info.ChannelSetting.ThinkingToContent); err != nil {
 				common.SysLog("error handling stream format: " + err.Error())
 				sr.Error(err)
@@ -140,12 +138,6 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 			if err := processTokenData(info.RelayMode, data, &responseTextBuilder, &toolCount); err != nil {
 				logger.LogError(c, "error processing stream token data: "+err.Error())
 				sr.Error(err)
-			}
-			if info.ConvertNonStreamToStream {
-				var streamResp dto.ChatCompletionsStreamResponse
-				if err := common.UnmarshalJsonStr(data, &streamResp); err == nil {
-					streamAgg.Feed(&streamResp)
-				}
 			}
 		}
 	})
@@ -180,7 +172,7 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 		}
 	}
 
-	if info.RelayFormat == types.RelayFormatOpenAI && !info.ConvertNonStreamToStream {
+	if info.RelayFormat == types.RelayFormatOpenAI {
 		if shouldSendLastResp {
 			_ = sendStreamData(c, info, lastStreamData, info.ChannelSetting.ForceFormat, info.ChannelSetting.ThinkingToContent)
 		}
@@ -204,48 +196,15 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 		info.CountBillableToolCall(dto.BuildInCallFunctionCall, name)
 	}
 
-	if !info.ConvertNonStreamToStream {
-		if c.Writer != nil && !c.Writer.Written() && strings.TrimSpace(responseTextBuilder.String()) == "" && toolCount == 0 && len(streamFunctionCallNames) == 0 {
-			logger.LogWarn(c, fmt.Sprintf("upstream returned empty stream response before writing to client, req_id=%s, model=%s", c.GetString(common.RequestIdKey), model))
-			return nil, types.NewOpenAIError(
-				fmt.Errorf("upstream returned empty stream response"),
-				types.ErrorCodeEmptyResponse,
-				http.StatusBadGateway,
-			)
-		}
-		HandleFinalResponse(c, info, lastStreamData, responseId, createAt, model, systemFingerprint, usage, containStreamUsage)
-	} else {
-		if info.StreamStatus != nil && info.StreamStatus.EndReason == relaycommon.StreamEndReasonClientGone {
-			return usage, types.NewErrorWithStatusCode(context.Canceled, types.ErrorCodeInvalidRequest, 499)
-		}
-		if info.StreamStatus != nil && (info.StreamStatus.EndReason == relaycommon.StreamEndReasonTimeout || info.StreamStatus.EndReason == relaycommon.StreamEndReasonScannerErr || info.StreamStatus.EndReason == relaycommon.StreamEndReasonPingFail) {
-			errToReport := info.StreamStatus.EndError
-			if errToReport == nil {
-				errToReport = fmt.Errorf("upstream stream ended abnormally: %s", info.StreamStatus.EndReason)
-			}
-			return usage, types.NewErrorWithStatusCode(errToReport, types.ErrorCodeBadResponseBody, http.StatusBadGateway)
-		}
-
-		if !streamAgg.HasMeaningfulContent() && strings.TrimSpace(responseTextBuilder.String()) == "" && toolCount == 0 && len(streamFunctionCallNames) == 0 {
-			logger.LogWarn(c, fmt.Sprintf("upstream returned empty stream response (no content, reasoning, or tool calls), req_id=%s, model=%s", c.GetString(common.RequestIdKey), model))
-			return nil, types.NewOpenAIError(
-				fmt.Errorf("upstream returned empty stream response"),
-				types.ErrorCodeEmptyResponse,
-				http.StatusBadGateway,
-			)
-		}
-
-		chatResponse := streamAgg.BuildResponse(responseId, model, createAt, usage, info.ChannelSetting.ThinkingToContent)
-		if chatResponse.Id == "" {
-			chatResponse.Id = helper.GetResponseID(c)
-		}
-		if chatResponse.Created == 0 {
-			chatResponse.Created = common.GetTimestamp()
-		}
-		if sendErr := SendNonStreamResponseFromOpenAI(c, info, chatResponse); sendErr != nil {
-			return usage, sendErr
-		}
+	if c.Writer != nil && !c.Writer.Written() && strings.TrimSpace(responseTextBuilder.String()) == "" && toolCount == 0 && len(streamFunctionCallNames) == 0 {
+		logger.LogWarn(c, fmt.Sprintf("upstream returned empty stream response before writing to client, req_id=%s, model=%s", c.GetString(common.RequestIdKey), model))
+		return nil, types.NewOpenAIError(
+			fmt.Errorf("upstream returned empty stream response"),
+			types.ErrorCodeEmptyResponse,
+			http.StatusBadGateway,
+		)
 	}
+	HandleFinalResponse(c, info, lastStreamData, responseId, createAt, model, systemFingerprint, usage, containStreamUsage)
 
 	return usage, nil
 }

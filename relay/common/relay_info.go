@@ -1219,11 +1219,5 @@ func RemoveGeminiDisabledFields(jsonData []byte) ([]byte, error) {
 }
 
 func (info *RelayInfo) ShouldConvertNonStreamToStream(clientIsStream bool) bool {
-	if info == nil || clientIsStream {
-		return false
-	}
-	if info.ChannelSetting.NonStreamToStream {
-		return true
-	}
-	return common.GetEnvOrDefaultBool("NON_STREAM_TO_STREAM", false)
+	return false
 }
