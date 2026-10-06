@@ -1561,7 +1561,7 @@ func TestPostTextConsumeQuota_Scenario5_FallbackOnMissingOrZeroUsage(t *testing.
 		assert.Equal(t, 800, zeroUsage.TotalTokens)
 	})
 
-	t.Run("mysandbox channel strips cache creation tokens and merges into prompt tokens", func(t *testing.T) {
+	t.Run("mysandbox channel preserves cache creation tokens", func(t *testing.T) {
 		ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
 		relayInfo := &relaycommon.RelayInfo{
 			ChannelMeta: &relaycommon.ChannelMeta{
@@ -1587,10 +1587,9 @@ func TestPostTextConsumeQuota_Scenario5_FallbackOnMissingOrZeroUsage(t *testing.
 		var extraContent []string
 		PostTextConsumeQuota(ctx, relayInfo, usage, extraContent)
 
-		// 验证 promptTokens 吸收了 cache creation
-		assert.Equal(t, 29299, usage.PromptTokens, "9643 + 19656 = 29299")
-		assert.Equal(t, 0, usage.PromptTokensDetails.CachedCreationTokens)
-		assert.Equal(t, 0, usage.PromptTokensDetails.CacheWriteTokens)
+		// 验证保留真实的 promptTokens 与 cache creation
+		assert.Equal(t, 9643, usage.PromptTokens)
+		assert.Equal(t, 19656, usage.PromptTokensDetails.CachedCreationTokens)
 	})
 }
 

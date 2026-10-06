@@ -504,7 +504,7 @@ func TestClaudeStreamHandler_NormalStreamFlushesPreContentChunks(t *testing.T) {
 	assert.Equal(t, 5, usage.CompletionTokens)
 }
 
-func TestStripClaudeCacheCreation_StreamMysandbox(t *testing.T) {
+func TestPreserveClaudeCacheCreation_StreamMysandbox(t *testing.T) {
 	constant.StreamingTimeout = 30
 	gin.SetMode(gin.TestMode)
 	w := httptest.NewRecorder()
@@ -548,20 +548,17 @@ func TestStripClaudeCacheCreation_StreamMysandbox(t *testing.T) {
 	assert.Nil(t, err)
 	require.NotNil(t, usage)
 
-	// 验证 usage 统计合并
-	assert.Equal(t, 20975, usage.PromptTokens, "input_tokens 必须是 4183 + 16792 = 20975")
-	assert.Equal(t, 0, usage.PromptTokensDetails.CachedCreationTokens, "CachedCreationTokens 必须为 0")
-	assert.Equal(t, 0, usage.ClaudeCacheCreation5mTokens)
-	assert.Equal(t, 0, usage.ClaudeCacheCreation1hTokens)
+	// 验证 usage 统计保留真实缓存写入
+	assert.Equal(t, 4183, usage.PromptTokens)
+	assert.Equal(t, 16792, usage.PromptTokensDetails.CachedCreationTokens)
 
-	// 验证下发给客户端的 SSE 块已彻底移除 cache_creation_input_tokens
+	// 验证下发给客户端的 SSE 块完整保留 cache_creation_input_tokens
 	bodyStr := w.Body.String()
-	assert.NotContains(t, bodyStr, "cache_creation_input_tokens")
-	assert.NotContains(t, bodyStr, "cache_creation")
-	assert.Contains(t, bodyStr, `"input_tokens":20975`)
+	assert.Contains(t, bodyStr, `"cache_creation_input_tokens":16792`)
+	assert.Contains(t, bodyStr, `"input_tokens":4183`)
 }
 
-func TestStripClaudeCacheCreation_NonStreamMysandbox(t *testing.T) {
+func TestPreserveClaudeCacheCreation_NonStreamMysandbox(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
@@ -587,43 +584,11 @@ func TestStripClaudeCacheCreation_NonStreamMysandbox(t *testing.T) {
 	assert.Nil(t, err)
 	require.NotNil(t, claudeInfo.Usage)
 
-	assert.Equal(t, 20975, claudeInfo.Usage.PromptTokens)
-	assert.Equal(t, 0, claudeInfo.Usage.PromptTokensDetails.CachedCreationTokens)
+	assert.Equal(t, 4183, claudeInfo.Usage.PromptTokens)
+	assert.Equal(t, 16792, claudeInfo.Usage.PromptTokensDetails.CachedCreationTokens)
 
 	// 验证返回给客户端的 JSON
 	respBody := w.Body.String()
-	assert.NotContains(t, respBody, "cache_creation_input_tokens")
-	assert.Contains(t, respBody, `"input_tokens":20975`)
-}
-
-func TestStripClaudeCacheCreation_OtherChannelPreserved(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	w := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(w)
-	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
-
-	rawJSON := `{"id":"msg_1","type":"message","role":"assistant","model":"claude-opus-4-6","content":[{"type":"text","text":"hello"}],"usage":{"input_tokens":4183,"cache_creation_input_tokens":16792,"output_tokens":608}}`
-
-	info := &relaycommon.RelayInfo{
-		RelayFormat: types.RelayFormatClaude,
-		ChannelMeta: &relaycommon.ChannelMeta{
-			ChannelBaseUrl:    "https://api.anthropic.com",
-			UpstreamModelName: "claude-opus-4-6",
-		},
-	}
-
-	claudeInfo := &ClaudeResponseInfo{}
-	httpResp := &http.Response{
-		StatusCode: http.StatusOK,
-		Header:     make(http.Header),
-	}
-
-	err := HandleClaudeResponseData(c, info, claudeInfo, httpResp, []byte(rawJSON))
-	assert.Nil(t, err)
-	require.NotNil(t, claudeInfo.Usage)
-
-	// 其它渠道保持原样
-	assert.Equal(t, 4183, claudeInfo.Usage.PromptTokens)
-	assert.Equal(t, 16792, claudeInfo.Usage.PromptTokensDetails.CachedCreationTokens)
-	assert.Contains(t, w.Body.String(), "cache_creation_input_tokens")
+	assert.Contains(t, respBody, `"cache_creation_input_tokens":16792`)
+	assert.Contains(t, respBody, `"input_tokens":4183`)
 }

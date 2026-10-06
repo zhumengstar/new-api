@@ -18,7 +18,6 @@ import (
 	"github.com/QuantumNous/new-api/setting/model_setting"
 
 	"github.com/gin-gonic/gin"
-	"github.com/tidwall/sjson"
 )
 
 func stopReasonClaude2OpenAI(reason string) string {
@@ -85,121 +84,12 @@ func FormatClaudeResponseInfo(claudeResponse *dto.ClaudeResponse, oaiResponse *d
 	return relayconvert.FormatClaudeResponseInfo(claudeResponse, oaiResponse, claudeInfo)
 }
 
-func shouldStripClaudeCacheCreation(c *gin.Context, info *relaycommon.RelayInfo) bool {
-	if info != nil && info.ChannelMeta != nil {
-		if strings.Contains(strings.ToLower(info.ChannelMeta.ChannelBaseUrl), "mysandbox") {
-			return true
-		}
-		switch info.ChannelMeta.ChannelId {
-		case 384, 385, 393, 394, 401, 402, 403, 404:
-			return true
-		}
-	}
-	if c != nil {
-		baseURL := common.GetContextKeyString(c, constant.ContextKeyChannelBaseUrl)
-		if strings.Contains(strings.ToLower(baseURL), "mysandbox") {
-			return true
-		}
-		channelId := common.GetContextKeyInt(c, constant.ContextKeyChannelId)
-		switch channelId {
-		case 384, 385, 393, 394, 401, 402, 403, 404:
-			return true
-		}
-	}
-	return false
-}
-
-func stripClaudeUsageCacheCreation(u *dto.ClaudeUsage) int {
-	if u == nil {
-		return 0
-	}
-	creationTokens := u.GetCacheCreationTotalTokens()
-	if creationTokens > 0 {
-		u.InputTokens += creationTokens
-		u.CacheCreationInputTokens = 0
-		u.CacheCreation = nil
-		u.ClaudeCacheCreation5mTokens = 0
-		u.ClaudeCacheCreation1hTokens = 0
-	}
-	return creationTokens
-}
-
-func stripClaudeInfoUsageCacheCreation(usage *dto.Usage) {
-	if usage == nil {
-		return
-	}
-	creation := usage.PromptTokensDetails.CacheCreationTokensTotal()
-	if creation == 0 {
-		creation = usage.ClaudeCacheCreation5mTokens + usage.ClaudeCacheCreation1hTokens
-	}
-	if creation > 0 {
-		usage.PromptTokens += creation
-		usage.PromptTokensDetails.CachedCreationTokens = 0
-		usage.PromptTokensDetails.CacheWriteTokens = 0
-		usage.ClaudeCacheCreation5mTokens = 0
-		usage.ClaudeCacheCreation1hTokens = 0
-	}
-	if usage.BillingUsage != nil {
-		if usage.BillingUsage.ClaudeUsage != nil {
-			cUsage := usage.BillingUsage.ClaudeUsage
-			cCreation := cUsage.GetCacheCreationTotalTokens()
-			if cCreation > 0 {
-				cUsage.InputTokens += cCreation
-				cUsage.CacheCreationInputTokens = 0
-				cUsage.CacheCreation = nil
-				cUsage.ClaudeCacheCreation5mTokens = 0
-				cUsage.ClaudeCacheCreation1hTokens = 0
-			}
-		}
-		if usage.BillingUsage.OpenAIUsage != nil {
-			oUsage := usage.BillingUsage.OpenAIUsage
-			oCreation := oUsage.PromptTokensDetails.CacheCreationTokensTotal()
-			if oCreation == 0 {
-				oCreation = oUsage.ClaudeCacheCreation5mTokens + oUsage.ClaudeCacheCreation1hTokens
-			}
-			if oCreation > 0 {
-				oUsage.PromptTokens += oCreation
-				oUsage.PromptTokensDetails.CachedCreationTokens = 0
-				oUsage.PromptTokensDetails.CacheWriteTokens = 0
-				oUsage.ClaudeCacheCreation5mTokens = 0
-				oUsage.ClaudeCacheCreation1hTokens = 0
-			}
-		}
-	}
-}
-
-func stripClaudeStreamChunkCacheCreation(resp *dto.ClaudeResponse, data string) string {
-	if resp == nil {
-		return data
-	}
-	if resp.Message != nil && resp.Message.Usage != nil {
-		stripClaudeUsageCacheCreation(resp.Message.Usage)
-		data, _ = sjson.Set(data, "message.usage.input_tokens", resp.Message.Usage.InputTokens)
-		data, _ = sjson.Delete(data, "message.usage.cache_creation_input_tokens")
-		data, _ = sjson.Delete(data, "message.usage.cache_creation")
-		data, _ = sjson.Delete(data, "message.usage.claude_cache_creation_5_m_tokens")
-		data, _ = sjson.Delete(data, "message.usage.claude_cache_creation_1_h_tokens")
-	}
-	if resp.Usage != nil {
-		stripClaudeUsageCacheCreation(resp.Usage)
-		data, _ = sjson.Set(data, "usage.input_tokens", resp.Usage.InputTokens)
-		data, _ = sjson.Delete(data, "usage.cache_creation_input_tokens")
-		data, _ = sjson.Delete(data, "usage.cache_creation")
-		data, _ = sjson.Delete(data, "usage.claude_cache_creation_5_m_tokens")
-		data, _ = sjson.Delete(data, "usage.claude_cache_creation_1_h_tokens")
-	}
-	return data
-}
-
 func HandleStreamResponseData(c *gin.Context, info *relaycommon.RelayInfo, claudeInfo *ClaudeResponseInfo, data string) *types.NewAPIError {
 	var claudeResponse dto.ClaudeResponse
 	err := common.UnmarshalJsonStr(data, &claudeResponse)
 	if err != nil {
 		common.SysLog("error unmarshalling stream response: " + err.Error())
 		return types.NewError(err, types.ErrorCodeBadResponseBody)
-	}
-	if shouldStripClaudeCacheCreation(c, info) {
-		data = stripClaudeStreamChunkCacheCreation(&claudeResponse, data)
 	}
 	if claudeError := claudeResponse.GetClaudeError(); claudeError != nil && claudeError.Type != "" {
 		return types.WithClaudeError(*claudeError, http.StatusInternalServerError)
@@ -212,9 +102,6 @@ func HandleStreamResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 	}
 	if info.RelayFormat == types.RelayFormatClaude {
 		FormatClaudeResponseInfo(&claudeResponse, nil, claudeInfo)
-		if shouldStripClaudeCacheCreation(c, info) && claudeInfo != nil {
-			stripClaudeInfoUsageCacheCreation(claudeInfo.Usage)
-		}
 
 		if claudeResponse.Type == "message_start" {
 			// message_start, 获取usage
@@ -226,12 +113,6 @@ func HandleStreamResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 			// 解决 AWS Bedrock 等上游返回的 message_delta 缺少这些字段的问题
 			if !shouldSkipClaudeMessageDeltaUsagePatch(info) {
 				data = patchClaudeMessageDeltaUsageData(data, buildMessageDeltaPatchUsage(&claudeResponse, claudeInfo))
-			}
-			if shouldStripClaudeCacheCreation(c, info) {
-				data, _ = sjson.Delete(data, "usage.cache_creation_input_tokens")
-				data, _ = sjson.Delete(data, "usage.cache_creation")
-				data, _ = sjson.Delete(data, "usage.claude_cache_creation_5_m_tokens")
-				data, _ = sjson.Delete(data, "usage.claude_cache_creation_1_h_tokens")
 			}
 		}
 		countClaudeStreamBillableTools(c, info, &claudeResponse)
@@ -375,17 +256,11 @@ func HandleStreamFinalResponse(c *gin.Context, info *relaycommon.RelayInfo, clau
 	}
 	if claudeInfo.Usage != nil {
 		claudeInfo.Usage.UsageSemantic = "anthropic"
-		if shouldStripClaudeCacheCreation(c, info) {
-			stripClaudeInfoUsageCacheCreation(claudeInfo.Usage)
-		}
 		if claudeInfo.Usage.BillingUsage != nil && claudeInfo.Usage.CompletionTokens > 0 {
 			claudeInfo.Usage.BillingUsage = dto.CloneBillingUsageWithEstimatedCompletion(claudeInfo.Usage.BillingUsage, claudeInfo.Usage.CompletionTokens)
 		}
 	}
 	relayconvert.FinalizeClaudeStreamBillingUsage(claudeInfo)
-	if shouldStripClaudeCacheCreation(c, info) && claudeInfo != nil {
-		stripClaudeInfoUsageCacheCreation(claudeInfo.Usage)
-	}
 
 	if info.RelayFormat == types.RelayFormatClaude {
 		// 当中途异常中断且下游客户端已在接收流式数据时，优雅发送最终 message_delta 与 message_stop 附带实际统计
@@ -494,15 +369,31 @@ func ClaudeStreamHandler(c *gin.Context, resp *http.Response, info *relaycommon.
 	helper.StreamScannerHandler(c, resp, info, func(data string, sr *helper.StreamResult) {
 		var claudeResponse dto.ClaudeResponse
 		if uerr := common.UnmarshalJsonStr(data, &claudeResponse); uerr == nil {
-			if shouldStripClaudeCacheCreation(c, info) {
-				data = stripClaudeStreamChunkCacheCreation(&claudeResponse, data)
-			}
 			claudeAgg.Feed(&claudeResponse)
 		}
 		if claudeError := claudeResponse.GetClaudeError(); claudeError != nil && claudeError.Type != "" {
 			err = types.WithClaudeError(*claudeError, http.StatusInternalServerError)
 			sr.Stop(err)
 			return
+		}
+
+		// Some upstream reverse proxies return OpenAI-style errors in stream instead of Claude format: {"error": {"message": "..."}}
+		if strings.Contains(data, `"error"`) {
+			var errWrapper struct {
+				Error struct {
+					Message string `json:"message"`
+					Type    string `json:"type"`
+				} `json:"error"`
+			}
+			if common.UnmarshalJsonStr(data, &errWrapper) == nil && errWrapper.Error.Message != "" {
+				err = types.NewOpenAIError(
+					fmt.Errorf("%s", errWrapper.Error.Message),
+					types.ErrorCodeBadResponse,
+					http.StatusInternalServerError,
+				)
+				sr.Stop(err)
+				return
+			}
 		}
 
 		if !flushed {
@@ -538,9 +429,17 @@ func ClaudeStreamHandler(c *gin.Context, resp *http.Response, info *relaycommon.
 
 	if !flushed {
 		info.ReceivedResponseCount = 0
-		logger.LogWarn(c, fmt.Sprintf("upstream claude returned empty stream response before writing to client, req_id=%s, model=%s", c.GetString(common.RequestIdKey), info.UpstreamModelName))
+		errMsg := "upstream claude returned empty stream response"
+		if len(pendingChunks) > 0 {
+			joined := strings.Join(pendingChunks, "; ")
+			if len(joined) > 500 {
+				joined = joined[:500] + "..."
+			}
+			errMsg = fmt.Sprintf("upstream claude returned empty stream response: %s", joined)
+		}
+		logger.LogWarn(c, fmt.Sprintf("%s, req_id=%s, model=%s", errMsg, c.GetString(common.RequestIdKey), info.UpstreamModelName))
 		return nil, types.NewOpenAIError(
-			fmt.Errorf("upstream claude returned empty stream response"),
+			fmt.Errorf("%s", errMsg),
 			types.ErrorCodeEmptyResponse,
 			http.StatusBadGateway,
 		)
@@ -565,9 +464,6 @@ func HandleClaudeResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 		claudeInfo.Usage = &dto.Usage{}
 	}
 	if claudeResponse.Usage != nil {
-		if shouldStripClaudeCacheCreation(c, info) {
-			stripClaudeUsageCacheCreation(claudeResponse.Usage)
-		}
 		claudeInfo.Usage.PromptTokens = claudeResponse.Usage.InputTokens
 		claudeInfo.Usage.CompletionTokens = claudeResponse.Usage.OutputTokens
 		claudeInfo.Usage.TotalTokens = claudeResponse.Usage.InputTokens + claudeResponse.Usage.OutputTokens
@@ -580,9 +476,6 @@ func HandleClaudeResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 		claudeInfo.Usage.PromptTokensDetails.CachedCreationTokens = claudeResponse.Usage.CacheCreationInputTokens
 		claudeInfo.Usage.ClaudeCacheCreation5mTokens = claudeResponse.Usage.GetCacheCreation5mTokens()
 		claudeInfo.Usage.ClaudeCacheCreation1hTokens = claudeResponse.Usage.GetCacheCreation1hTokens()
-		if shouldStripClaudeCacheCreation(c, info) {
-			stripClaudeInfoUsageCacheCreation(claudeInfo.Usage)
-		}
 	}
 	var responseData []byte
 	switch info.RelayFormat {
@@ -610,17 +503,7 @@ func HandleClaudeResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 			return types.NewError(err, types.ErrorCodeBadResponseBody)
 		}
 	case types.RelayFormatClaude:
-		if shouldStripClaudeCacheCreation(c, info) && claudeResponse.Usage != nil {
-			dataStr := string(data)
-			dataStr, _ = sjson.Set(dataStr, "usage.input_tokens", claudeResponse.Usage.InputTokens)
-			dataStr, _ = sjson.Delete(dataStr, "usage.cache_creation_input_tokens")
-			dataStr, _ = sjson.Delete(dataStr, "usage.cache_creation")
-			dataStr, _ = sjson.Delete(dataStr, "usage.claude_cache_creation_5_m_tokens")
-			dataStr, _ = sjson.Delete(dataStr, "usage.claude_cache_creation_1_h_tokens")
-			responseData = []byte(dataStr)
-		} else {
-			responseData = data
-		}
+		responseData = data
 	case types.RelayFormatGemini:
 		{
 			convertResult, convertErr := service.ConvertResponse(c, info, types.RelayFormatGemini, &claudeResponse)
