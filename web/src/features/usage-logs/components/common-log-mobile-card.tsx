@@ -216,98 +216,144 @@ export function CommonLogMobileCard<TData>(props: {
           )}
       </div>
       {visibleMetadata.length > 0 && (
-        <div className='grid min-w-0 grid-cols-2 gap-x-4 gap-y-0.5'>
-          {visibleMetadata.map((id) => {
-            const field = fields[id]
-            let fieldContent = <span className='truncate'>{field.value}</span>
-            if (id === 'group') {
-              fieldContent = (
-                <GroupBadge
-                  group={field.value}
-                  type='text'
-                  className='max-w-full text-sm'
-                />
-              )
-            } else if (id === 'token') {
-              fieldContent = (
-                <StatusBadge
-                  label={field.value}
-                  copyable={false}
-                  icon={KeyRound}
-                  className='border-border/60 bg-muted/30 text-foreground max-w-full rounded-md border px-1.5 py-0.5 text-sm'
-                />
-              )
-            }
-            return (
-              <div key={id} className='flex min-w-0 items-center gap-2'>
-                <span className='text-muted-foreground max-w-[40%] shrink-0 text-xs [overflow-wrap:anywhere]'>
-                  {id === 'user' ? (
-                    <Avatar className='ring-border/60 size-6 shrink-0 ring-1'>
-                      <AvatarFallback
-                        className='text-[11px] font-semibold'
-                        style={
-                          context.sensitiveVisible
-                            ? getUserAvatarStyle(log.username)
-                            : undefined
-                        }
-                      >
-                        {context.sensitiveVisible
-                          ? getUserAvatarFallback(log.username)
-                          : '•'}
-                      </AvatarFallback>
-                    </Avatar>
+        <div className='flex min-w-0 flex-col gap-1.5 border-t border-border/40 pt-2 text-xs'>
+          {/* Row 1: User & Token side-by-side */}
+          {(fields.user.visible || fields.token.visible) && (
+            <div className='grid min-w-0 grid-cols-2 gap-x-3 gap-y-1 items-center'>
+              {fields.user.visible && (
+                <div className='flex min-w-0 items-center gap-1.5'>
+                  <Avatar className='ring-border/60 size-5 shrink-0 ring-1'>
+                    <AvatarFallback
+                      className='text-[10px] font-semibold'
+                      style={
+                        context.sensitiveVisible
+                          ? getUserAvatarStyle(log.username)
+                          : undefined
+                      }
+                    >
+                      {context.sensitiveVisible
+                        ? getUserAvatarFallback(log.username)
+                        : '•'}
+                    </AvatarFallback>
+                  </Avatar>
+                  {context.sensitiveVisible ? (
+                    <Button
+                      variant='ghost'
+                      aria-label={`${fields.user.label}: ${fields.user.value}`}
+                      aria-haspopup='dialog'
+                      onClick={() => setSelectedField('user')}
+                      className='text-foreground hover:text-primary h-auto min-h-6 min-w-0 flex-1 justify-start px-0 py-0.5 text-left text-xs font-normal'
+                    >
+                      <span className='truncate'>{fields.user.value}</span>
+                    </Button>
                   ) : (
-                    field.label
+                    <span className='text-muted-foreground/60 text-xs'>••••</span>
                   )}
-                </span>
-                {context.sensitiveVisible ? (
-                  <Button
-                    variant='ghost'
-                    aria-label={`${field.label}: ${field.value}`}
-                    aria-haspopup='dialog'
-                    onClick={() => setSelectedField(id)}
-                    className='text-foreground h-auto min-h-8 min-w-0 flex-1 shrink justify-start px-0 py-1 text-left text-sm font-normal'
-                  >
-                    {fieldContent}
-                  </Button>
-                ) : (
-                  <span className='min-w-0 py-1.5'>••••</span>
+                </div>
+              )}
+              {fields.token.visible && (
+                <div className='flex min-w-0 items-center justify-end gap-1.5'>
+                  {context.sensitiveVisible ? (
+                    <Button
+                      variant='ghost'
+                      aria-label={`${fields.token.label}: ${fields.token.value}`}
+                      aria-haspopup='dialog'
+                      onClick={() => setSelectedField('token')}
+                      className='text-foreground hover:text-primary h-auto min-h-6 max-w-full justify-end px-0 py-0.5 text-right text-xs font-normal'
+                    >
+                      <StatusBadge
+                        label={fields.token.value}
+                        copyable={false}
+                        icon={KeyRound}
+                        className='border-border/60 bg-muted/40 text-foreground max-w-full rounded border px-1.5 py-0.5 text-[11px]'
+                      />
+                    </Button>
+                  ) : (
+                    <span className='text-muted-foreground/60 text-xs'>••••</span>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Row 2: Channel Full-Width Row to prevent truncation */}
+          {fields.channel.visible && (
+            <div className='flex min-w-0 items-center gap-1.5'>
+              <span className='text-muted-foreground/80 shrink-0 text-[11px] font-medium'>
+                {fields.channel.label}
+              </span>
+              {context.sensitiveVisible ? (
+                <Button
+                  variant='ghost'
+                  aria-label={`${fields.channel.label}: ${fields.channel.value}`}
+                  aria-haspopup='dialog'
+                  onClick={() => setSelectedField('channel')}
+                  className='text-foreground/90 hover:text-primary bg-muted/20 hover:bg-muted/40 h-auto min-h-6 min-w-0 flex-1 justify-start rounded px-1.5 py-0.5 text-left font-mono text-[11px]'
+                >
+                  <span className='truncate'>{fields.channel.value}</span>
+                </Button>
+              ) : (
+                <span className='text-muted-foreground/60 text-xs'>••••</span>
+              )}
+            </div>
+          )}
+
+          {/* Row 3: Group & Group Ratio */}
+          {fields.group.visible && (
+            <div className='flex min-w-0 flex-wrap items-center gap-1.5 text-[11px]'>
+              <span className='text-muted-foreground/80 shrink-0 font-medium'>
+                {fields.group.label}
+              </span>
+              {context.sensitiveVisible ? (
+                <Button
+                  variant='ghost'
+                  aria-label={`${fields.group.label}: ${fields.group.value}`}
+                  aria-haspopup='dialog'
+                  onClick={() => setSelectedField('group')}
+                  className='text-foreground h-auto min-h-5 px-0 py-0 text-left font-normal'
+                >
+                  <GroupBadge
+                    group={fields.group.value}
+                    type='text'
+                    className='text-[11px]'
+                  />
+                </Button>
+              ) : (
+                <span className='text-muted-foreground/60 text-xs'>••••</span>
+              )}
+              {groupRatio != null &&
+                groupRatio !== 1 &&
+                Number.isFinite(groupRatio) && (
+                  <Badge variant='outline' className='bg-muted/30 px-1 py-0 text-[10px] text-muted-foreground font-mono'>
+                    {groupRatio}×
+                  </Badge>
                 )}
-              </div>
-            )
-          })}
-          {groupRatio != null &&
-            groupRatio !== 1 &&
-            Number.isFinite(groupRatio) &&
-            props.cells.has('token_name') && (
-              <div className='text-muted-foreground col-span-2 [overflow-wrap:anywhere]'>
-                {t('Group Ratio')}: {groupRatio}×
-              </div>
-            )}
+            </div>
+          )}
         </div>
       )}
       {showTokens && (
-        <div className='text-muted-foreground flex flex-wrap gap-x-3 gap-y-1 text-xs [overflow-wrap:anywhere]'>
-          <span>
-            {t('Input')}{' '}
-            <span className='text-foreground tabular-nums'>
+        <div className='flex flex-wrap items-center gap-1.5 border-t border-border/30 pt-2 text-[11px] [overflow-wrap:anywhere]'>
+          <span className='bg-muted/35 text-muted-foreground inline-flex items-center gap-1 rounded px-1.5 py-0.5'>
+            <span>{t('Input')}</span>
+            <span className='text-foreground font-mono font-medium tabular-nums'>
               {log.prompt_tokens.toLocaleString()}
             </span>
           </span>
-          <span>
-            {t('Output')}{' '}
-            <span className='text-foreground tabular-nums'>
+          <span className='bg-primary/10 text-primary dark:bg-primary/20 inline-flex items-center gap-1 rounded px-1.5 py-0.5'>
+            <span>{t('Output')}</span>
+            <span className='font-mono font-semibold tabular-nums'>
               {log.completion_tokens.toLocaleString()}
             </span>
           </span>
           {cacheRead > 0 && (
-            <span>
-              {t('Cache')} ↓ {cacheRead.toLocaleString()}
+            <span className='bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 font-mono'>
+              {t('Cache')} ↓{cacheRead.toLocaleString()}
             </span>
           )}
           {cacheWrite > 0 && (
-            <span>
-              {t('Cache')} ↑ {cacheWrite.toLocaleString()}
+            <span className='bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 font-mono'>
+              {t('Cache')} ↑{cacheWrite.toLocaleString()}
             </span>
           )}
         </div>

@@ -153,45 +153,49 @@ export function LogsFilterToolbar<TData>(props: LogsFilterToolbarProps<TData>) {
           compact={props.compactMobile}
           className={props.className}
           actions={
-            <>
-              {props.actionStart}
-              <DrawerTrigger asChild>
+            <div className='flex w-full flex-col gap-1.5'>
+              <div className='flex flex-wrap items-center justify-end gap-1.5'>
+                {props.actionStart}
+                {props.showAutoRefresh !== false && (
+                  <AutoRefreshControl showManualButton={true} />
+                )}
+                <DataTableViewOptions table={props.table} />
+              </div>
+              <div className='flex flex-wrap items-center justify-end gap-1.5'>
+                {props.actionEnd}
+                <DrawerTrigger asChild>
+                  <Button
+                    type='button'
+                    variant='outline'
+                    size='sm'
+                    aria-label={t('Filter')}
+                    className={cn(
+                      'text-muted-foreground hover:text-foreground h-8 gap-1 px-2.5 text-xs font-normal',
+                      activeMobileFilterCount > 0 &&
+                        'border-primary/50 text-primary font-medium'
+                    )}
+                  >
+                    {t('Filter')}
+                    {activeMobileFilterCount > 0 && (
+                      <Badge className='ml-0.5 size-4 justify-center p-0 text-[10px] leading-none'>
+                        {activeMobileFilterCount}
+                      </Badge>
+                    )}
+                  </Button>
+                </DrawerTrigger>
                 <Button
                   type='button'
-                  variant='ghost'
-                  aria-label={t('Filter')}
-                  className={cn(
-                    'text-muted-foreground hover:text-foreground gap-1 px-2',
-                    props.compactMobile && 'min-h-9 gap-1.5',
-                    activeMobileFilterCount > 0 &&
-                      'text-primary hover:text-primary'
-                  )}
+                  size='sm'
+                  className='h-8 min-w-[68px] px-3 text-xs font-medium'
+                  onClick={props.onSearch}
+                  disabled={props.searchLoading}
+                  aria-busy={props.searchLoading}
                 >
-                  {t('Filter')}
-                  {activeMobileFilterCount > 0 && (
-                    <Badge
-                      className={cn(
-                        !props.compactMobile &&
-                          'ml-0.5 size-5 justify-center p-0 text-[10px]'
-                      )}
-                    >
-                      {activeMobileFilterCount}
-                    </Badge>
-                  )}
+                  {props.searchLoading && <Loader2 className='mr-1 size-3 animate-spin' />}
+                  {t('Search')}
                 </Button>
-              </DrawerTrigger>
-              <Button
-                type='button'
-                onClick={props.onSearch}
-                disabled={props.searchLoading}
-                aria-busy={props.searchLoading}
-              >
-                {props.searchLoading && <Loader2 className='animate-spin' />}
-                {t('Search')}
-              </Button>
-              <DataTableViewOptions table={props.table} />
-              {props.actionEnd}
-            </>
+              </div>
+            </div>
           }
         >
           {props.compactMobile ? (
