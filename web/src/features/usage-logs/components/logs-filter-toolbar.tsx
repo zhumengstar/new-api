@@ -70,15 +70,18 @@ interface LogsFilterFieldProps {
 }
 
 export function LogsFilterField(props: LogsFilterFieldProps) {
+  let widthClass = 'w-full sm:w-auto sm:min-w-[80px] shrink-0'
+  if (props.wide) {
+    widthClass = 'w-full sm:w-auto sm:min-w-[210px] shrink-0'
+  } else if (props.flex) {
+    widthClass = 'w-full sm:flex-1'
+  }
+
   return (
     <div
       className={cn(
         'min-w-0 [&_[data-slot=select-trigger]]:w-full [&_[data-slot=select-trigger]]:text-sm [&_[data-slot=select-value]]:leading-5',
-        props.wide
-          ? 'w-full sm:w-auto sm:min-w-[210px] shrink-0'
-          : props.flex
-            ? 'w-full sm:flex-1'
-            : 'w-full sm:w-auto sm:min-w-[80px] shrink-0',
+        widthClass,
         props.className
       )}
     >
@@ -157,7 +160,7 @@ export function LogsFilterToolbar<TData>(props: LogsFilterToolbarProps<TData>) {
               <div className='flex flex-wrap items-center justify-end gap-1.5'>
                 {props.actionStart}
                 {props.showAutoRefresh !== false && (
-                  <AutoRefreshControl showManualButton={true} />
+                  <AutoRefreshControl showManualButton />
                 )}
                 <DataTableViewOptions table={props.table} />
               </div>
