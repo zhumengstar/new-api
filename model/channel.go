@@ -465,6 +465,102 @@ func GetGroupModelsMap() (map[string][]string, error) {
 	return res, nil
 }
 
+type ChannelGroupItem struct {
+	Id           int    `json:"id"`
+	Name         string `json:"name"`
+	Type         int    `json:"type"`
+	Status       int    `json:"status"`
+	Priority     int64  `json:"priority"`
+	Weight       uint   `json:"weight"`
+	ResponseTime int    `json:"response_time"`
+}
+
+func GetGroupChannelsMap() (map[string][]ChannelGroupItem, error) {
+	var channels []Channel
+	if err := DB.Model(&Channel{}).Select("id", "name", "type", "status", "priority", "weight", "response_time", commonGroupCol).Find(&channels).Error; err != nil {
+		return nil, err
+	}
+
+	res := make(map[string][]ChannelGroupItem)
+	for i := range channels {
+		p := int64(0)
+		if channels[i].Priority != nil {
+			p = *channels[i].Priority
+		}
+		w := uint(0)
+		if channels[i].Weight != nil {
+			w = *channels[i].Weight
+		}
+		item := ChannelGroupItem{
+			Id:           channels[i].Id,
+			Name:         channels[i].Name,
+			Type:         channels[i].Type,
+			Status:       channels[i].Status,
+			Priority:     p,
+			Weight:       w,
+			ResponseTime: channels[i].ResponseTime,
+		}
+		for _, group := range channels[i].GetGroups() {
+			if group == "" {
+				continue
+			}
+			res[group] = append(res[group], item)
+		}
+	}
+	// 按 ID 升序排序
+	for g := range res {
+		sort.Slice(res[g], func(i, j int) bool {
+			return res[g][i].Id < res[g][j].Id
+		})
+	}
+	return res, nil
+}
+
+func GetGroupChannelIds(group string) []int {
+	channelSyncLock.RLock()
+	defer channelSyncLock.RUnlock()
+	res := make([]int, 0)
+	for id, ch := range channelsIDM {
+		if ch != nil {
+			for _, g := range ch.GetGroups() {
+				if g == group {
+					res = append(res, id)
+					break
+				}
+			}
+		}
+	}
+	return res
+}
+
+func GetGroupChannelIdsWithBaseURL(group string, baseURL string) []int {
+	if baseURL == "" {
+		return nil
+	}
+	channelSyncLock.RLock()
+	defer channelSyncLock.RUnlock()
+	res := make([]int, 0)
+	cleanURL := strings.TrimRight(strings.ToLower(baseURL), "/")
+	for id, ch := range channelsIDM {
+		if ch != nil && strings.TrimRight(strings.ToLower(ch.GetBaseURL()), "/") == cleanURL {
+			for _, g := range ch.GetGroups() {
+				if g == group {
+					res = append(res, id)
+					break
+				}
+			}
+		}
+	}
+	return res
+}
+
+func GetCacheChannel(id int) *Channel {
+	channelSyncLock.RLock()
+	defer channelSyncLock.RUnlock()
+	return channelsIDM[id]
+}
+
+
 // UpdateChannelGroupAdaptiveEnabled updates every channel that belongs to the
 // exact group. Group membership is stored as a comma-separated list, so use
 // the shared cross-database filter instead of a dialect-specific expression.

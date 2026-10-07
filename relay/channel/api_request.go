@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -487,6 +489,15 @@ func keepUpstreamRedirectResponse(_ *http.Request, _ []*http.Request) error {
 	return http.ErrUseLastResponse
 }
 
+func getStreamingFirstByteTimeout() time.Duration {
+	if val := os.Getenv("STREAMING_FIRST_BYTE_TIMEOUT"); val != "" {
+		if sec, err := strconv.Atoi(val); err == nil && sec > 0 {
+			return time.Duration(sec) * time.Second
+		}
+	}
+	return 60 * time.Second
+}
+
 func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http.Response, error) {
 	client, err := service.GetHttpClientWithProxySettingsAndStream(info.ChannelSetting.Proxy, info.ChannelSetting, info.IsStream)
 	if err != nil {
@@ -508,6 +519,30 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 			policy.IsStream,
 			policy.String(),
 		))
+	}
+
+	var attemptCtx context.Context
+	var cancelAttempt context.CancelFunc
+	var firstByteTimer *time.Timer
+	if info != nil && info.IsStream && c != nil && c.Request != nil {
+		firstByteTimeout := getStreamingFirstByteTimeout()
+		attemptCtx, cancelAttempt = context.WithCancel(c.Request.Context())
+		info.DisarmFirstByteTimer = func() {
+			if firstByteTimer != nil {
+				firstByteTimer.Stop()
+			}
+		}
+		firstByteTimer = time.AfterFunc(firstByteTimeout, func() {
+			logger.LogWarn(c, fmt.Sprintf("upstream stream first-byte timeout after %v, canceling upstream attempt", firstByteTimeout))
+			cancelAttempt()
+		})
+		defer func() {
+			if firstByteTimer != nil {
+				firstByteTimer.Stop()
+			}
+			info.DisarmFirstByteTimer = nil
+		}()
+		req = req.WithContext(attemptCtx)
 	}
 
 	var stopPinger context.CancelFunc
@@ -535,6 +570,10 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 		if service.IsClientCanceled(c, err) {
 			logger.LogWarn(c, "client canceled request: "+err.Error())
 			return nil, types.NewErrorWithStatusCode(err, types.ErrorCodeDoRequestFailed, 499, types.ErrOptionWithSkipRetry(), types.ErrOptionWithHideErrMsg("client closed request"))
+		}
+		if attemptCtx != nil && attemptCtx.Err() != nil && c.Request.Context().Err() == nil {
+			logger.LogError(c, fmt.Sprintf("upstream stream first-byte timeout after 60s: %v", err))
+			return nil, types.NewErrorWithStatusCode(fmt.Errorf("upstream stream first-byte timeout after 60s"), types.ErrorCodeBadResponse, http.StatusGatewayTimeout)
 		}
 		logger.LogError(c, "do request failed: "+err.Error())
 		return nil, types.NewError(err, types.ErrorCodeDoRequestFailed, types.ErrOptionWithHideErrMsg("upstream error: do request failed"))

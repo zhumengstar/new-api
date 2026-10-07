@@ -265,7 +265,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			service.SettleInterruptedRequestIfNeeded(c, relayInfo, nil, newAPIError)
 			break
 		}
-		if c.Writer.Written() && !isEmptyResponsesOutputError(newAPIError) {
+		if shouldStopRetryAfterResponseStarted(c, relayInfo, newAPIError) {
 			logger.LogInfo(c, "upstream response has started; skip channel retry")
 			service.SettleInterruptedRequestIfNeeded(c, relayInfo, nil, newAPIError)
 			break
@@ -292,6 +292,11 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			break
 		}
 		retryParam.MarkChannelTried(channel.Id)
+		if isHostLevelFailure(newAPIError) && channel.GetBaseURL() != "" {
+			for _, peerId := range model.GetGroupChannelIdsWithBaseURL(relayInfo.TokenGroup, channel.GetBaseURL()) {
+				retryParam.MarkChannelTried(peerId)
+			}
+		}
 		if !waitBeforeChannelRetry(c, newAPIError, retryParam.GetRetry()) {
 			service.SettleInterruptedRequestIfNeeded(c, relayInfo, nil, newAPIError)
 			break
@@ -300,6 +305,8 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		// 为下一次渠道重试重置单次尝试的流状态
 		relayInfo.ReceivedResponseCount = 0
 		relayInfo.SendResponseCount = 0
+		relayInfo.StreamContentSent = false
+		relayInfo.DisarmFirstByteTimer = nil
 		relayInfo.StreamStatus = nil
 		relayInfo.ClaudeToChatStreamState = nil
 		relayInfo.ChatToGeminiStreamState = nil
@@ -593,6 +600,32 @@ func isRetryableUpstreamError(err *types.NewAPIError) bool {
 	default:
 		return false
 	}
+}
+
+func shouldStopRetryAfterResponseStarted(c *gin.Context, info *relaycommon.RelayInfo, err *types.NewAPIError) bool {
+	if isEmptyResponsesOutputError(err) {
+		return false
+	}
+	if info != nil && info.IsStream {
+		// 流式请求：如果尚未向客户端发送任何实质内容（仅发送了保活心跳 Ping 或 SSE Header），允许重试
+		if !info.HasStreamContentSent() {
+			return false
+		}
+		return true
+	}
+	// 非流式请求：如果已写入响应头或 Body，不能重试
+	return c != nil && c.Writer != nil && c.Writer.Written()
+}
+
+func isHostLevelFailure(err *types.NewAPIError) bool {
+	if err == nil {
+		return false
+	}
+	if err.StatusCode == http.StatusGatewayTimeout || err.StatusCode == http.StatusBadGateway {
+		return true
+	}
+	errMsg := strings.ToLower(err.Error())
+	return strings.Contains(errMsg, "first-byte timeout") || strings.Contains(errMsg, "upstream service temporarily unavailable") || strings.Contains(errMsg, "upstream request failed")
 }
 
 func isEmptyResponsesOutputError(err *types.NewAPIError) bool {

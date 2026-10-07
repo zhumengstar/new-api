@@ -357,6 +357,7 @@ func ClaudeStreamHandler(c *gin.Context, resp *http.Response, info *relaycommon.
 			return nil
 		}
 		flushed = true
+		info.MarkStreamContentSent()
 		for _, pendingData := range pendingChunks {
 			if ferr := HandleStreamResponseData(c, info, claudeInfo, pendingData); ferr != nil {
 				return ferr
@@ -403,6 +404,7 @@ func ClaudeStreamHandler(c *gin.Context, resp *http.Response, info *relaycommon.
 					sr.Stop(err)
 					return
 				}
+				info.MarkStreamContentSent()
 				err = HandleStreamResponseData(c, info, claudeInfo, data)
 				if err != nil {
 					sr.Stop(err)
@@ -411,6 +413,7 @@ func ClaudeStreamHandler(c *gin.Context, resp *http.Response, info *relaycommon.
 				pendingChunks = append(pendingChunks, data)
 			}
 		} else {
+			info.MarkStreamContentSent()
 			err = HandleStreamResponseData(c, info, claudeInfo, data)
 			if err != nil {
 				sr.Stop(err)
@@ -430,7 +433,11 @@ func ClaudeStreamHandler(c *gin.Context, resp *http.Response, info *relaycommon.
 	if !flushed {
 		info.ReceivedResponseCount = 0
 		errMsg := "upstream claude returned empty stream response"
-		if len(pendingChunks) > 0 {
+		statusCode := http.StatusBadGateway
+		if resp != nil && resp.Request != nil && resp.Request.Context().Err() != nil && (c == nil || c.Request == nil || c.Request.Context().Err() == nil) {
+			errMsg = "upstream stream first-byte timeout after 60s"
+			statusCode = http.StatusGatewayTimeout
+		} else if len(pendingChunks) > 0 {
 			joined := strings.Join(pendingChunks, "; ")
 			if len(joined) > 500 {
 				joined = joined[:500] + "..."
@@ -441,7 +448,7 @@ func ClaudeStreamHandler(c *gin.Context, resp *http.Response, info *relaycommon.
 		return nil, types.NewOpenAIError(
 			fmt.Errorf("%s", errMsg),
 			types.ErrorCodeEmptyResponse,
-			http.StatusBadGateway,
+			statusCode,
 		)
 	}
 

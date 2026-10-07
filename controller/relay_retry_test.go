@@ -92,3 +92,39 @@ func TestRetryAfterIsBounded(t *testing.T) {
 	require.Equal(t, 250*time.Millisecond, boundedRetryAfter(250*time.Millisecond))
 	require.Zero(t, boundedRetryAfter(0))
 }
+
+func TestShouldStopRetryAfterResponseStarted(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(nil)
+
+	// Stream request without content sent (e.g. only ping sent) -> allow retry (returns false)
+	streamInfoNoContent := &relaycommon.RelayInfo{IsStream: true, StreamContentSent: false}
+	err502 := types.NewOpenAIError(errors.New("Upstream request failed"), types.ErrorCodeBadResponse, http.StatusBadGateway)
+	require.False(t, shouldStopRetryAfterResponseStarted(ctx, streamInfoNoContent, err502))
+
+	// Stream request with content sent -> stop retry (returns true)
+	streamInfoWithContent := &relaycommon.RelayInfo{IsStream: true, StreamContentSent: true}
+	require.True(t, shouldStopRetryAfterResponseStarted(ctx, streamInfoWithContent, err502))
+
+	// Responses empty output error always allows retry
+	emptyResponses := types.NewOpenAIError(errors.New("upstream responses returned no output"), types.ErrorCodeBadResponse, http.StatusBadGateway)
+	require.False(t, shouldStopRetryAfterResponseStarted(ctx, streamInfoWithContent, emptyResponses))
+}
+
+func TestIsHostLevelFailure(t *testing.T) {
+	timeoutErr := types.NewErrorWithStatusCode(errors.New("upstream stream first-byte timeout after 60s"), types.ErrorCodeBadResponse, http.StatusGatewayTimeout)
+	require.True(t, isHostLevelFailure(timeoutErr))
+
+	badGatewayErr := types.NewOpenAIError(errors.New("Upstream request failed"), types.ErrorCodeBadResponse, http.StatusBadGateway)
+	require.True(t, isHostLevelFailure(badGatewayErr))
+
+	unavailableErr := types.NewOpenAIError(errors.New("Upstream service temporarily unavailable"), types.ErrorCodeBadResponse, http.StatusBadGateway)
+	require.True(t, isHostLevelFailure(unavailableErr))
+
+	rateLimitErr := types.NewOpenAIError(errors.New("rate limited"), types.ErrorCodeBadResponseStatusCode, http.StatusTooManyRequests)
+	require.False(t, isHostLevelFailure(rateLimitErr))
+
+	authErr := types.NewOpenAIError(errors.New("invalid api key"), types.ErrorCodeChannelInvalidKey, http.StatusUnauthorized)
+	require.False(t, isHostLevelFailure(authErr))
+}
+

@@ -21,6 +21,7 @@ import (
 
 // 辅助函数
 func HandleStreamFormat(c *gin.Context, info *relaycommon.RelayInfo, data string, forceFormat bool, thinkToContent bool) error {
+	info.MarkStreamContentSent()
 	switch info.RelayFormat {
 	case types.RelayFormatOpenAI:
 		info.SendResponseCount++

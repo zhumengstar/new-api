@@ -137,6 +137,8 @@ type RelayInfo struct {
 	// 强制预扣全额。用于异步任务（视频/音乐生成等），因为请求返回后任务仍在运行，
 	// 必须在提交前锁定全额。
 	ForcePreConsume bool
+	StreamContentSent    bool
+	DisarmFirstByteTimer func()
 	// Billing 是计费会话，封装了预扣费/结算/退款的统一生命周期。
 	// 初始免费组可为 nil；若 auto 重试切换到付费组，会在发送前创建。
 	Billing BillingSettler
@@ -246,6 +248,8 @@ func (info *RelayInfo) InitChannelMeta(c *gin.Context) {
 	// LastError, or billing accumulators — those are request-scoped.
 	info.SendResponseCount = 0
 	info.ReceivedResponseCount = 0
+	info.StreamContentSent = false
+	info.DisarmFirstByteTimer = nil
 	info.ClaudeToChatStreamState = nil
 	info.ChatToGeminiStreamState = nil
 	channelType := common.GetContextKeyInt(c, constant.ContextKeyChannelType)
@@ -897,6 +901,23 @@ func (info *RelayInfo) IncrSendResponseCount() {
 		return
 	}
 	info.SendResponseCount++
+}
+
+func (info *RelayInfo) MarkStreamContentSent() {
+	if info != nil {
+		info.StreamContentSent = true
+		if info.DisarmFirstByteTimer != nil {
+			info.DisarmFirstByteTimer()
+			info.DisarmFirstByteTimer = nil
+		}
+	}
+}
+
+func (info *RelayInfo) HasStreamContentSent() bool {
+	if info == nil {
+		return false
+	}
+	return info.StreamContentSent || info.SendResponseCount > 0
 }
 
 // ConvOptions snapshots host settings for the converters. Rebuilt on each
