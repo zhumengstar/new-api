@@ -316,7 +316,7 @@ func TestSettleInterruptedRequestIfNeeded(t *testing.T) {
 		assert.False(t, c.GetBool("partial_stream_settled"))
 	})
 
-	t.Run("Scenario 2: settles client canceled before first stream chunk (ReceivedResponseCount == 0)", func(t *testing.T) {
+	t.Run("Scenario 2: does NOT settle client canceled before first stream chunk (ReceivedResponseCount == 0, full refund)", func(t *testing.T) {
 		w := httptest.NewRecorder()
 		c, _ := gin.CreateTestContext(w)
 		ctx, cancel := context.WithCancel(context.Background())
@@ -340,9 +340,8 @@ func TestSettleInterruptedRequestIfNeeded(t *testing.T) {
 
 		apiErr := types.NewErrorWithStatusCode(context.Canceled, types.ErrorCodeDoRequestFailed, 499)
 		ok := SettleInterruptedRequestIfNeeded(c, info, nil, apiErr)
-		assert.True(t, ok)
-		assert.True(t, c.GetBool("partial_stream_settled"))
-		assert.True(t, common.GetContextKeyBool(c, constant.ContextKeyErrorLogRecorded))
+		assert.False(t, ok) // 严禁扣费，必须全额退款
+		assert.False(t, c.GetBool("partial_stream_settled"))
 	})
 }
 

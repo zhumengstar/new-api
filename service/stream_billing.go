@@ -87,6 +87,11 @@ func ShouldSettleClientCanceled(c *gin.Context, info *relaycommon.RelayInfo, err
 	if info.Billing != nil && info.Billing.IsSettled() {
 		return false
 	}
+	// 关键保护：若尚未接收到上游任何流式数据（首字未产生），用户未消费到任何有效内容，
+	// 严禁按输入 Prompt 强制扣费！必须放行让其退款（Refund），彻底杜绝 0 返回扣费！
+	if info.IsStream && info.ReceivedResponseCount == 0 && !info.HasStreamContentSent() {
+		return false
+	}
 	if info.StreamStatus != nil && info.StreamStatus.EndReason == relaycommon.StreamEndReasonClientGone {
 		return true
 	}
@@ -95,6 +100,12 @@ func ShouldSettleClientCanceled(c *gin.Context, info *relaycommon.RelayInfo, err
 
 // SettleInterruptedRequestIfNeeded 统一检查并结算因客户端断连或流式中途中断的请求
 func SettleInterruptedRequestIfNeeded(c *gin.Context, info *relaycommon.RelayInfo, usage any, apiErr *types.NewAPIError) bool {
+	// 如果是流式请求且尚未收到任何上游响应 chunk，严禁扣费
+	if info != nil && info.IsStream && info.ReceivedResponseCount == 0 && !info.HasStreamContentSent() {
+		if u, ok := usage.(*dto.Usage); !ok || u == nil || u.CompletionTokens == 0 {
+			return false
+		}
+	}
 	if ShouldSettleClientCanceled(c, info, apiErr) {
 		return SettleClientCanceled(c, info, usage, apiErr)
 	}
@@ -124,6 +135,13 @@ func settleInterruptedRequest(c *gin.Context, info *relaycommon.RelayInfo, usage
 	}
 	if u == nil {
 		u = &dto.Usage{}
+	}
+
+	// 防御性保护：如果上游未输出任何 completion tokens 且未收到任何响应包，绝对不扣费
+	if info.IsStream && info.ReceivedResponseCount == 0 && !info.HasStreamContentSent() && u.CompletionTokens == 0 {
+		logger.LogInfo(c, fmt.Sprintf("客户端断开但在出字前未产生任何内容，跳过扣费执行全额退款: userId=%d, channelId=%d, model=%s",
+			info.UserId, info.ChannelId, info.OriginModelName))
+		return false
 	}
 
 	if u.PromptTokens == 0 {
