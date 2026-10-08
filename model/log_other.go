@@ -68,6 +68,13 @@ func (o *LogOther) SetPublic(key string, value any) bool {
 	return true
 }
 
+func (o *LogOther) DeletePublic(key string) {
+	if o == nil || o.public == nil {
+		return
+	}
+	delete(o.public, key)
+}
+
 func (o *LogOther) MergePublic(values map[string]any) {
 	for key, value := range values {
 		o.SetPublic(key, value)
