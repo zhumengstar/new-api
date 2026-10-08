@@ -533,6 +533,22 @@ func GetGroupChannelIds(group string) []int {
 	return res
 }
 
+func GetChannelIdsWithBaseURL(baseURL string) []int {
+	if baseURL == "" {
+		return nil
+	}
+	channelSyncLock.RLock()
+	defer channelSyncLock.RUnlock()
+	res := make([]int, 0)
+	cleanURL := strings.TrimRight(strings.ToLower(baseURL), "/")
+	for id, ch := range channelsIDM {
+		if ch != nil && strings.TrimRight(strings.ToLower(ch.GetBaseURL()), "/") == cleanURL {
+			res = append(res, id)
+		}
+	}
+	return res
+}
+
 func GetGroupChannelIdsWithBaseURL(group string, baseURL string) []int {
 	if baseURL == "" {
 		return nil

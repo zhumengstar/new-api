@@ -298,7 +298,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		}
 		retryParam.MarkChannelTried(channel.Id)
 		if isHostLevelFailure(newAPIError) && channel.GetBaseURL() != "" {
-			for _, peerId := range model.GetGroupChannelIdsWithBaseURL(relayInfo.TokenGroup, channel.GetBaseURL()) {
+			for _, peerId := range model.GetChannelIdsWithBaseURL(channel.GetBaseURL()) {
 				retryParam.MarkChannelTried(peerId)
 			}
 		}
