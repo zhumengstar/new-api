@@ -435,6 +435,7 @@ func GeminiChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *
 			}
 		}
 
+		info.MarkStreamContentSent()
 		err := handleStream(c, info, response)
 		if err != nil {
 			logger.LogError(c, err.Error())
@@ -451,12 +452,19 @@ func GeminiChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *
 		return usage, err
 	}
 
-	if c.Writer != nil && !c.Writer.Written() && strings.TrimSpace(responseTextBuilder.String()) == "" && len(toolCallIndexByChoice) == 0 {
-		logger.LogWarn(c, fmt.Sprintf("upstream gemini returned empty stream response before writing to client, req_id=%s, model=%s", c.GetString(common.RequestIdKey), info.UpstreamModelName))
+	if !info.HasStreamContentSent() && strings.TrimSpace(responseTextBuilder.String()) == "" && len(toolCallIndexByChoice) == 0 && !strings.Contains(common.GetContextKeyString(c, constant.ContextKeyAdminRejectReason), "gemini_block_reason=") {
+		info.ReceivedResponseCount = 0
+		statusCode := http.StatusBadGateway
+		errMsg := "upstream gemini returned empty stream response"
+		if resp != nil && resp.Request != nil && resp.Request.Context().Err() != nil && (c == nil || c.Request == nil || c.Request.Context().Err() == nil) {
+			errMsg = "upstream stream first-byte timeout"
+			statusCode = http.StatusGatewayTimeout
+		}
+		logger.LogWarn(c, fmt.Sprintf("%s before writing to client, req_id=%s, model=%s", errMsg, c.GetString(common.RequestIdKey), info.UpstreamModelName))
 		return nil, types.NewOpenAIError(
-			fmt.Errorf("upstream gemini returned empty stream response"),
+			fmt.Errorf("%s", errMsg),
 			types.ErrorCodeEmptyResponse,
-			http.StatusBadGateway,
+			statusCode,
 		)
 	}
 

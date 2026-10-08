@@ -6,9 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"regexp"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -489,13 +487,16 @@ func keepUpstreamRedirectResponse(_ *http.Request, _ []*http.Request) error {
 	return http.ErrUseLastResponse
 }
 
-func getStreamingFirstByteTimeout() time.Duration {
-	if val := os.Getenv("STREAMING_FIRST_BYTE_TIMEOUT"); val != "" {
-		if sec, err := strconv.Atoi(val); err == nil && sec > 0 {
-			return time.Duration(sec) * time.Second
-		}
+func getStreamingFirstByteTimeout(info *common.RelayInfo) time.Duration {
+	if info == nil {
+		return 25 * time.Second
 	}
-	return 60 * time.Second
+	channelID := info.GetChannelID()
+	model := info.GetUpstreamModelName()
+	if model == "" {
+		model = info.GetOriginModelName()
+	}
+	return service.GetDynamicFirstByteTimeout(channelID, model)
 }
 
 func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http.Response, error) {
@@ -524,24 +525,52 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 	var attemptCtx context.Context
 	var cancelAttempt context.CancelFunc
 	var firstByteTimer *time.Timer
+	var firstByteTimeout time.Duration
 	if info != nil && info.IsStream && c != nil && c.Request != nil {
-		firstByteTimeout := getStreamingFirstByteTimeout()
+		channelID := info.GetChannelID()
+		model := info.GetUpstreamModelName()
+		if model == "" {
+			model = info.GetOriginModelName()
+		}
+		firstByteTimeout = getStreamingFirstByteTimeout(info)
+		p95, p95Count := service.GetChannelModelP95(channelID, model)
+		if p95Count >= 5 {
+			logger.LogInfo(c, fmt.Sprintf("stream first-byte dynamic timeout for channel %d, model %s: %v (P95=%v, samples=%d)", channelID, model, firstByteTimeout, p95, p95Count))
+		} else {
+			logger.LogInfo(c, fmt.Sprintf("stream first-byte dynamic timeout for channel %d, model %s: %v (cold-start baseline)", channelID, model, firstByteTimeout))
+		}
+
 		attemptCtx, cancelAttempt = context.WithCancel(c.Request.Context())
-		info.DisarmFirstByteTimer = func() {
-			if firstByteTimer != nil {
-				firstByteTimer.Stop()
+		attemptStartedAt := time.Now()
+
+		var timerMu sync.Mutex
+		var timerStopped bool
+		disarmTimer := func() {
+			timerMu.Lock()
+			defer timerMu.Unlock()
+			if !timerStopped {
+				timerStopped = true
+				if firstByteTimer != nil {
+					firstByteTimer.Stop()
+				}
+				// 仅在出字未超时的情况下记录有效出字延迟 (TTFT)
+				if attemptCtx != nil && attemptCtx.Err() == nil {
+					elapsed := time.Since(attemptStartedAt)
+					service.RecordTTFT(channelID, model, elapsed)
+				}
 			}
 		}
+
+		info.DisarmFirstByteTimer = disarmTimer
 		firstByteTimer = time.AfterFunc(firstByteTimeout, func() {
-			logger.LogWarn(c, fmt.Sprintf("upstream stream first-byte timeout after %v, canceling upstream attempt", firstByteTimeout))
+			timerMu.Lock()
+			defer timerMu.Unlock()
+			if timerStopped {
+				return
+			}
+			logger.LogWarn(c, fmt.Sprintf("upstream stream first-byte dynamic timeout after %v (channel %d, model %s), canceling attempt to trigger retry", firstByteTimeout, channelID, model))
 			cancelAttempt()
 		})
-		defer func() {
-			if firstByteTimer != nil {
-				firstByteTimer.Stop()
-			}
-			info.DisarmFirstByteTimer = nil
-		}()
 		req = req.WithContext(attemptCtx)
 	}
 
@@ -567,18 +596,26 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 
 	resp, err := relayClient.Do(req)
 	if err != nil {
+		if info != nil && info.DisarmFirstByteTimer != nil {
+			info.DisarmFirstByteTimer()
+			info.DisarmFirstByteTimer = nil
+		}
+		if attemptCtx != nil && attemptCtx.Err() != nil && (c == nil || c.Request == nil || c.Request.Context().Err() == nil) {
+			logger.LogError(c, fmt.Sprintf("upstream stream first-byte timeout after %v: %v", firstByteTimeout, err))
+			return nil, types.NewErrorWithStatusCode(fmt.Errorf("upstream stream first-byte timeout after %v", firstByteTimeout), types.ErrorCodeBadResponse, http.StatusGatewayTimeout)
+		}
 		if service.IsClientCanceled(c, err) {
 			logger.LogWarn(c, "client canceled request: "+err.Error())
 			return nil, types.NewErrorWithStatusCode(err, types.ErrorCodeDoRequestFailed, 499, types.ErrOptionWithSkipRetry(), types.ErrOptionWithHideErrMsg("client closed request"))
-		}
-		if attemptCtx != nil && attemptCtx.Err() != nil && c.Request.Context().Err() == nil {
-			logger.LogError(c, fmt.Sprintf("upstream stream first-byte timeout after 60s: %v", err))
-			return nil, types.NewErrorWithStatusCode(fmt.Errorf("upstream stream first-byte timeout after 60s"), types.ErrorCodeBadResponse, http.StatusGatewayTimeout)
 		}
 		logger.LogError(c, "do request failed: "+err.Error())
 		return nil, types.NewError(err, types.ErrorCodeDoRequestFailed, types.ErrOptionWithHideErrMsg("upstream error: do request failed"))
 	}
 	if resp == nil {
+		if info != nil && info.DisarmFirstByteTimer != nil {
+			info.DisarmFirstByteTimer()
+			info.DisarmFirstByteTimer = nil
+		}
 		return nil, errors.New("resp is nil")
 	}
 	if common2.DebugEnabled {

@@ -196,12 +196,19 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 		info.CountBillableToolCall(dto.BuildInCallFunctionCall, name)
 	}
 
-	if c.Writer != nil && !c.Writer.Written() && strings.TrimSpace(responseTextBuilder.String()) == "" && toolCount == 0 && len(streamFunctionCallNames) == 0 {
-		logger.LogWarn(c, fmt.Sprintf("upstream returned empty stream response before writing to client, req_id=%s, model=%s", c.GetString(common.RequestIdKey), model))
+	if !info.HasStreamContentSent() && strings.TrimSpace(responseTextBuilder.String()) == "" && toolCount == 0 && len(streamFunctionCallNames) == 0 {
+		info.ReceivedResponseCount = 0
+		statusCode := http.StatusBadGateway
+		errMsg := "upstream returned empty stream response"
+		if resp != nil && resp.Request != nil && resp.Request.Context().Err() != nil && (c == nil || c.Request == nil || c.Request.Context().Err() == nil) {
+			statusCode = http.StatusGatewayTimeout
+			errMsg = "upstream stream first-byte timeout"
+		}
+		logger.LogWarn(c, fmt.Sprintf("%s before writing to client, req_id=%s, model=%s", errMsg, c.GetString(common.RequestIdKey), model))
 		return nil, types.NewOpenAIError(
-			fmt.Errorf("upstream returned empty stream response"),
+			fmt.Errorf("%s", errMsg),
 			types.ErrorCodeEmptyResponse,
-			http.StatusBadGateway,
+			statusCode,
 		)
 	}
 	HandleFinalResponse(c, info, lastStreamData, responseId, createAt, model, systemFingerprint, usage, containStreamUsage)

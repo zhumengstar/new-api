@@ -249,6 +249,11 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			newAPIError = relayHandler(c, relayInfo)
 		}
 
+		if relayInfo.DisarmFirstByteTimer != nil {
+			relayInfo.DisarmFirstByteTimer()
+			relayInfo.DisarmFirstByteTimer = nil
+		}
+
 		if newAPIError == nil {
 			relayInfo.LastError = nil
 			service.RecordChannelControlRequestMetric(c.Request.Context(), relayInfo.TokenGroup, true, int64(len(c.GetStringSlice("use_channel"))))

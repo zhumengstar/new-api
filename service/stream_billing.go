@@ -24,14 +24,22 @@ func IsClientCanceled(c *gin.Context, err error) bool {
 		}
 	}
 	if err != nil {
+		var apiErr *types.NewAPIError
+		if errors.As(err, &apiErr) && apiErr != nil {
+			if apiErr.StatusCode == 499 {
+				return true
+			}
+			if apiErr.StatusCode == 504 || strings.Contains(strings.ToLower(apiErr.Error()), "first-byte timeout") {
+				return false
+			}
+		}
+		errStr := strings.ToLower(err.Error())
+		if strings.Contains(errStr, "first-byte timeout") {
+			return false
+		}
 		if errors.Is(err, context.Canceled) {
 			return true
 		}
-		var apiErr *types.NewAPIError
-		if errors.As(err, &apiErr) && apiErr != nil && apiErr.StatusCode == 499 {
-			return true
-		}
-		errStr := strings.ToLower(err.Error())
 		if strings.Contains(errStr, "context canceled") || strings.Contains(errStr, "client_gone") || strings.Contains(errStr, "client closed") || strings.Contains(errStr, "broken pipe") || strings.Contains(errStr, "connection reset by peer") {
 			return true
 		}
