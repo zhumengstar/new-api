@@ -496,7 +496,9 @@ func getStreamingFirstByteTimeout(info *common.RelayInfo) time.Duration {
 	if model == "" {
 		model = info.GetOriginModelName()
 	}
-	return service.GetDynamicFirstByteTimeout(channelID, model)
+	promptTokens := info.GetEstimatePromptTokens()
+	hasThinking := info.ReasoningEffort != "" || strings.Contains(strings.ToLower(model), "thinking")
+	return service.GetDynamicFirstByteTimeoutWithContext(channelID, model, promptTokens, hasThinking)
 }
 
 func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http.Response, error) {

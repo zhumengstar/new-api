@@ -483,6 +483,14 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) b
 	if isNonRetryableClientError(openaiErr) {
 		return false
 	}
+	if isFirstByteTimeoutError(openaiErr) {
+		firstByteRetryCount := c.GetInt("first_byte_retry_count")
+		if firstByteRetryCount >= 1 {
+			logger.LogWarn(c, "流式首字超时已达到单次请求最大重试限制 (1次切换)，停止继续重试避免客户端漫长等待")
+			return false
+		}
+		c.Set("first_byte_retry_count", firstByteRetryCount+1)
+	}
 	if isCapacityUnavailableError(openaiErr) || isChannelBalanceExhaustedError(openaiErr) || isRetryableUpstreamError(openaiErr) || isRetryableImageDecodingError(openaiErr) || relaycommon.IsClaudeUnavailablePrompt(openaiErr.Error()) {
 		return true
 	}
@@ -620,6 +628,16 @@ func shouldStopRetryAfterResponseStarted(c *gin.Context, info *relaycommon.Relay
 	}
 	// 非流式请求：如果已写入响应头或 Body，不能重试
 	return c != nil && c.Writer != nil && c.Writer.Written()
+}
+
+func isFirstByteTimeoutError(err *types.NewAPIError) bool {
+	if err == nil {
+		return false
+	}
+	if err.StatusCode == http.StatusGatewayTimeout {
+		return true
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "first-byte timeout")
 }
 
 func isHostLevelFailure(err *types.NewAPIError) bool {

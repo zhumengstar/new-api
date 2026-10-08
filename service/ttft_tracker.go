@@ -167,8 +167,13 @@ func GetModelGlobalP95(model string) (time.Duration, int) {
 	return 0, 0
 }
 
-// GetDynamicFirstByteTimeout 动态评估该渠道该模型的最晚出字超时时间
+// GetDynamicFirstByteTimeout 动态评估该渠道该模型的最晚出字超时时间（向后兼容）
 func GetDynamicFirstByteTimeout(channelID int, model string) time.Duration {
+	return GetDynamicFirstByteTimeoutWithContext(channelID, model, 0, false)
+}
+
+// GetDynamicFirstByteTimeoutWithContext 结合 Prompt Token 规模与思考模式，智能动态评估最晚出字超时时间
+func GetDynamicFirstByteTimeoutWithContext(channelID int, model string, promptTokens int, hasThinking bool) time.Duration {
 	// 1. 允许环境变量强制覆盖（优先级最高，便于运维应急）
 	if val := os.Getenv("STREAMING_FIRST_BYTE_TIMEOUT_OVERRIDE"); val != "" {
 		if sec, err := strconv.Atoi(val); err == nil && sec > 0 {
@@ -181,53 +186,61 @@ func GetDynamicFirstByteTimeout(channelID int, model string) time.Duration {
 		}
 	}
 
-	// 2. 根据模型类型确定护栏边界与默认冷启动基准
+	// 2. 根据模型类型以及 PromptTokens 阶梯规模确定护栏边界与默认冷启动基准
 	var (
 		minFloor       time.Duration
 		maxCeil        time.Duration
 		defaultTimeout time.Duration
 	)
 
-	if IsReasoningModel(model) {
-		// 深度推理/Claude/Opus/Pro 等：思考耗时较长，给予更充裕的边界（支持至 90s），绝不误杀正常长思考与高延迟
-		minFloor = 28 * time.Second
-		maxCeil = 90 * time.Second
-		defaultTimeout = 60 * time.Second
+	isReasoning := IsReasoningModel(model) || hasThinking
+
+	if promptTokens > 0 && promptTokens < 20000 && !hasThinking {
+		// 小请求 (<20k tokens 且非深度思考)：正常 3~10s 出首字，35~40s 不出字必属节点卡死或深度排队，快速换渠
+		minFloor = 18 * time.Second
+		maxCeil = 40 * time.Second
+		defaultTimeout = 35 * time.Second
+	} else if promptTokens >= 50000 {
+		// 超大上下文 (>=50k tokens)：留足 GPU Prefill 算力时间，绝不误杀正常运算
+		minFloor = 35 * time.Second
+		maxCeil = 85 * time.Second
+		defaultTimeout = 75 * time.Second
+	} else if isReasoning {
+		// 思考模式或中等上下文 (20k~50k)
+		minFloor = 25 * time.Second
+		maxCeil = 60 * time.Second
+		defaultTimeout = 50 * time.Second
 	} else if IsFastModel(model) {
-		// Flash/Mini/Haiku 等快模型：正常出字极快，超时护栏兼顾网络波动与快速换渠
 		minFloor = 10 * time.Second
 		maxCeil = 35 * time.Second
 		defaultTimeout = 18 * time.Second
 	} else {
-		// 普通通用模型（GPT-4o 等）
 		minFloor = 16 * time.Second
-		maxCeil = 60 * time.Second
+		maxCeil = 45 * time.Second
 		defaultTimeout = 35 * time.Second
 	}
 
-	// 若配置了 STREAMING_FIRST_BYTE_TIMEOUT，则动态上限至少允许到该配置值
+	// 若配置了 STREAMING_FIRST_BYTE_TIMEOUT，且当前请求为大请求时，允许上限延展至配置值
 	if val := os.Getenv("STREAMING_FIRST_BYTE_TIMEOUT"); val != "" {
 		if sec, err := strconv.Atoi(val); err == nil && sec > 0 {
 			cfgD := time.Duration(sec) * time.Second
-			if cfgD > maxCeil {
+			if promptTokens >= 20000 && cfgD > maxCeil {
 				maxCeil = cfgD
 			}
-			defaultTimeout = cfgD
 		}
 	}
 
 	// 3. 优先查本渠道该模型的 P95 统计
 	p95, count := GetChannelModelP95(channelID, model)
 	if count >= minSamplesForP95 && p95 > 0 {
-		// 动态公式：P95 * 1.6 + 3s 缓冲
-		calculated := time.Duration(float64(p95)*1.6) + 3*time.Second
+		calculated := time.Duration(float64(p95)*1.5) + 3*time.Second
 		return clampDuration(calculated, minFloor, maxCeil)
 	}
 
 	// 4. 若本渠道该模型样本不足（冷启动），回退查该模型全局跨渠道的 P95
 	globalP95, gCount := GetModelGlobalP95(model)
 	if gCount >= minSamplesForP95 && globalP95 > 0 {
-		calculated := time.Duration(float64(globalP95)*1.6) + 3*time.Second
+		calculated := time.Duration(float64(globalP95)*1.5) + 3*time.Second
 		return clampDuration(calculated, minFloor, maxCeil)
 	}
 
