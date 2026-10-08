@@ -189,15 +189,26 @@ func TestIsClientCanceled(t *testing.T) {
 		assert.True(t, IsClientCanceled(c, nil))
 	})
 
-	t.Run("Context canceled in error", func(t *testing.T) {
+	t.Run("Context canceled in error without gin context or with explicit 499", func(t *testing.T) {
+		assert.True(t, IsClientCanceled(nil, context.Canceled))
+		assert.True(t, IsClientCanceled(nil, fmt.Errorf("Post http://upstream: context canceled")))
+
 		w := httptest.NewRecorder()
 		c, _ := gin.CreateTestContext(w)
 		c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
 
-		assert.True(t, IsClientCanceled(c, context.Canceled))
-		assert.True(t, IsClientCanceled(c, fmt.Errorf("Post http://upstream: context canceled")))
 		assert.True(t, IsClientCanceled(c, types.NewErrorWithStatusCode(fmt.Errorf("client closed"), types.ErrorCodeDoRequestFailed, 499)))
+		assert.True(t, IsClientCanceled(c, fmt.Errorf("client closed request")))
 		assert.False(t, IsClientCanceled(c, fmt.Errorf("connection refused")))
+	})
+
+	t.Run("Upstream timeout with live client context must not be client canceled", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+
+		assert.False(t, IsClientCanceled(c, context.Canceled))
+		assert.False(t, IsClientCanceled(c, fmt.Errorf("Post http://upstream: context canceled")))
 	})
 }
 
@@ -316,7 +327,7 @@ func TestSettleInterruptedRequestIfNeeded(t *testing.T) {
 		assert.False(t, c.GetBool("partial_stream_settled"))
 	})
 
-	t.Run("Scenario 2: does NOT settle client canceled before first stream chunk (ReceivedResponseCount == 0, full refund)", func(t *testing.T) {
+	t.Run("Scenario 2: settles client canceled before first stream chunk by actual tokens (customer pays)", func(t *testing.T) {
 		w := httptest.NewRecorder()
 		c, _ := gin.CreateTestContext(w)
 		ctx, cancel := context.WithCancel(context.Background())
@@ -340,8 +351,8 @@ func TestSettleInterruptedRequestIfNeeded(t *testing.T) {
 
 		apiErr := types.NewErrorWithStatusCode(context.Canceled, types.ErrorCodeDoRequestFailed, 499)
 		ok := SettleInterruptedRequestIfNeeded(c, info, nil, apiErr)
-		assert.False(t, ok) // 严禁扣费，必须全额退款
-		assert.False(t, c.GetBool("partial_stream_settled"))
+		assert.True(t, ok) // 客户中断，由客户买单，按实际已消耗Prompt结算
+		assert.True(t, c.GetBool("partial_stream_settled"))
 	})
 }
 

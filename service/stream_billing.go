@@ -18,11 +18,13 @@ import (
 
 // IsClientCanceled 判断请求是否是由下游客户端断开连接或超时主动取消
 func IsClientCanceled(c *gin.Context, err error) bool {
+	// 1. 核心判定：下游客户端的 HTTP 连接已断开/取消（真正的客户中断）
 	if c != nil && c.Request != nil && c.Request.Context() != nil {
 		if errors.Is(c.Request.Context().Err(), context.Canceled) {
 			return true
 		}
 	}
+	// 2. 检查错误是否显式标记为客户端中断（例如 499 或客户端主动挂断/reset）
 	if err != nil {
 		var apiErr *types.NewAPIError
 		if errors.As(err, &apiErr) && apiErr != nil {
@@ -37,10 +39,21 @@ func IsClientCanceled(c *gin.Context, err error) bool {
 		if strings.Contains(errStr, "first-byte timeout") {
 			return false
 		}
+		if strings.Contains(errStr, "client_gone") || strings.Contains(errStr, "client closed") || strings.Contains(errStr, "broken pipe") || strings.Contains(errStr, "connection reset by peer") {
+			return true
+		}
+	}
+	// 3. 如果下游客户端仍然正常连接，上游的超时或连接中断绝不是客户中断，不能转嫁给客户
+	if c != nil && c.Request != nil && c.Request.Context() != nil && c.Request.Context().Err() == nil {
+		return false
+	}
+	// 4. 当缺少下游客户端上下文时（如部分离线或测试），回退到检查 context.Canceled
+	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			return true
 		}
-		if strings.Contains(errStr, "context canceled") || strings.Contains(errStr, "client_gone") || strings.Contains(errStr, "client closed") || strings.Contains(errStr, "broken pipe") || strings.Contains(errStr, "connection reset by peer") {
+		errStr := strings.ToLower(err.Error())
+		if strings.Contains(errStr, "context canceled") {
 			return true
 		}
 	}
@@ -87,11 +100,6 @@ func ShouldSettleClientCanceled(c *gin.Context, info *relaycommon.RelayInfo, err
 	if info.Billing != nil && info.Billing.IsSettled() {
 		return false
 	}
-	// 关键保护：若尚未接收到上游任何流式数据（首字未产生），用户未消费到任何有效内容，
-	// 严禁按输入 Prompt 强制扣费！必须放行让其退款（Refund），彻底杜绝 0 返回扣费！
-	if info.IsStream && info.ReceivedResponseCount == 0 && !info.HasStreamContentSent() {
-		return false
-	}
 	if info.StreamStatus != nil && info.StreamStatus.EndReason == relaycommon.StreamEndReasonClientGone {
 		return true
 	}
@@ -100,12 +108,6 @@ func ShouldSettleClientCanceled(c *gin.Context, info *relaycommon.RelayInfo, err
 
 // SettleInterruptedRequestIfNeeded 统一检查并结算因客户端断连或流式中途中断的请求
 func SettleInterruptedRequestIfNeeded(c *gin.Context, info *relaycommon.RelayInfo, usage any, apiErr *types.NewAPIError) bool {
-	// 如果是流式请求且尚未收到任何上游响应 chunk，严禁扣费
-	if info != nil && info.IsStream && info.ReceivedResponseCount == 0 && !info.HasStreamContentSent() {
-		if u, ok := usage.(*dto.Usage); !ok || u == nil || u.CompletionTokens == 0 {
-			return false
-		}
-	}
 	if ShouldSettleClientCanceled(c, info, apiErr) {
 		return SettleClientCanceled(c, info, usage, apiErr)
 	}
@@ -115,7 +117,7 @@ func SettleInterruptedRequestIfNeeded(c *gin.Context, info *relaycommon.RelayInf
 	return false
 }
 
-// settleInterruptedRequest 统一执行中断请求的扣费结算与日志记录
+// settleInterruptedRequest 统一执行中断请求的扣费结算与日志记录（客户中断由客户按实际消耗买单）
 func settleInterruptedRequest(c *gin.Context, info *relaycommon.RelayInfo, usage any, logMsg string, extraContent []string) bool {
 	if info == nil {
 		return false
@@ -135,13 +137,6 @@ func settleInterruptedRequest(c *gin.Context, info *relaycommon.RelayInfo, usage
 	}
 	if u == nil {
 		u = &dto.Usage{}
-	}
-
-	// 防御性保护：如果上游未输出任何 completion tokens 且未收到任何响应包，绝对不扣费
-	if info.IsStream && info.ReceivedResponseCount == 0 && !info.HasStreamContentSent() && u.CompletionTokens == 0 {
-		logger.LogInfo(c, fmt.Sprintf("客户端断开但在出字前未产生任何内容，跳过扣费执行全额退款: userId=%d, channelId=%d, model=%s",
-			info.UserId, info.ChannelId, info.OriginModelName))
-		return false
 	}
 
 	if u.PromptTokens == 0 {
