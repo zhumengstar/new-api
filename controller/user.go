@@ -769,7 +769,7 @@ func GetUserModels(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	groups := service.GetUserUsableGroups(user.Group)
+	groups := service.GetUserUsableGroupsWithSetting(user.GetSetting(), user.Group)
 	group := c.Query("group")
 	var groupsToQuery []string
 	switch {
@@ -779,7 +779,7 @@ func GetUserModels(c *gin.Context) {
 		}
 	case group == "auto":
 		if _, ok := groups[group]; ok {
-			groupsToQuery = service.GetUserAutoGroup(user.Group)
+			groupsToQuery = service.GetUserAutoGroupWithSetting(user.GetSetting(), user.Group)
 		}
 	default:
 		if _, ok := groups[group]; ok {
@@ -815,7 +815,7 @@ func InvalidatePerCallCatalogCache() {
 
 func GetPerCallModelPrices(c *gin.Context) {
 	perCallCatalogMutex.RLock()
-	if perCallCatalogCache != nil && time.Since(perCallCatalogCacheTime) < time.Minute {
+	if perCallCatalogCache != nil && time.Since(perCallCatalogCacheTime) < 5*time.Second {
 		cached := perCallCatalogCache
 		perCallCatalogMutex.RUnlock()
 		c.JSON(http.StatusOK, gin.H{"success": true, "data": cached})
@@ -890,12 +890,25 @@ func normalizeUserModelPriceRules(rules []dto.UserModelPriceRule, userGroup stri
 		return nil, err
 	}
 	modelsByGroup := make(map[string]map[string]struct{})
-	for _, item := range buildPerCallModelCatalog(model.GetPricing(), abilities) {
-		for _, group := range item.Groups {
+	allKnownModels := make(map[string]struct{})
+
+	// 1. Collect all models for each group from enabled abilities
+	for _, ability := range abilities {
+		if modelsByGroup[ability.Group] == nil {
+			modelsByGroup[ability.Group] = make(map[string]struct{})
+		}
+		modelsByGroup[ability.Group][ability.Model] = struct{}{}
+		allKnownModels[ability.Model] = struct{}{}
+	}
+
+	// 2. Supplement models from pricing
+	for _, item := range model.GetPricing() {
+		allKnownModels[item.ModelName] = struct{}{}
+		for _, group := range item.EnableGroup {
 			if modelsByGroup[group] == nil {
 				modelsByGroup[group] = make(map[string]struct{})
 			}
-			modelsByGroup[group][item.Model] = struct{}{}
+			modelsByGroup[group][item.ModelName] = struct{}{}
 		}
 	}
 
@@ -915,8 +928,15 @@ func normalizeUserModelPriceRules(rules []dto.UserModelPriceRule, userGroup stri
 		models := make([]string, 0, len(rawRule.Models))
 		for _, rawModelName := range rawRule.Models {
 			modelName := strings.TrimSpace(rawModelName)
-			if _, ok := modelsByGroup[group][modelName]; !ok {
-				return nil, fmt.Errorf("model %s is not billed per call in group %s", modelName, group)
+			if modelName == "" {
+				continue
+			}
+			groupModels, hasGroupModels := modelsByGroup[group]
+			_, modelInGroup := groupModels[modelName]
+			_, modelInAll := modelsByGroup["all"][modelName]
+			_, modelKnown := allKnownModels[modelName]
+			if hasGroupModels && len(groupModels) > 0 && !modelInGroup && !modelInAll && !modelKnown {
+				return nil, fmt.Errorf("model %s is not available in group %s", modelName, group)
 			}
 			key := group + "\x00" + modelName
 			if _, ok := seen[key]; ok {
@@ -940,6 +960,8 @@ func UpdateUser(c *gin.Context) {
 		UserGroupRatios     map[string]float64       `json:"user_group_ratios"`
 		UserModelPrices     map[string]float64       `json:"user_model_prices"`
 		UserModelPriceRules []dto.UserModelPriceRule `json:"user_model_price_rules"`
+		DisabledGroups      *[]string                `json:"disabled_groups"`
+		UserGroupChannels   map[string][]int         `json:"user_group_channels"`
 	}
 	err := common.DecodeJson(c.Request.Body, &request)
 	updatedUser := request.User
@@ -1009,8 +1031,51 @@ func UpdateUser(c *gin.Context) {
 		}
 		normalizedUserModelPriceRules = normalizedRules
 	}
-	if request.UserGroupRatios != nil || request.UserModelPriceRules != nil || request.UserModelPrices != nil {
+	if request.UserGroupRatios != nil || request.UserModelPriceRules != nil || request.UserModelPrices != nil || request.DisabledGroups != nil || request.UserGroupChannels != nil {
 		userSetting := originUser.GetSetting()
+		if request.UserGroupChannels != nil {
+			cleanChannels := make(map[string][]int)
+			for g, cids := range request.UserGroupChannels {
+				g = strings.TrimSpace(g)
+				if g == "" {
+					continue
+				}
+				// 过滤去重并保留有效正整数 ID
+				seen := make(map[int]struct{})
+				validIds := make([]int, 0, len(cids))
+				for _, cid := range cids {
+					if cid > 0 {
+						if _, ok := seen[cid]; !ok {
+							seen[cid] = struct{}{}
+							validIds = append(validIds, cid)
+						}
+					}
+				}
+				if len(validIds) > 0 {
+					cleanChannels[g] = validIds
+				}
+			}
+			if len(cleanChannels) == 0 {
+				userSetting.UserGroupChannels = nil
+			} else {
+				userSetting.UserGroupChannels = cleanChannels
+			}
+		}
+		if request.DisabledGroups != nil {
+			// 过滤去重 disabled_groups
+			seen := make(map[string]struct{}, len(*request.DisabledGroups))
+			cleanDisabled := make([]string, 0, len(*request.DisabledGroups))
+			for _, g := range *request.DisabledGroups {
+				g = strings.TrimSpace(g)
+				if g != "" {
+					if _, ok := seen[g]; !ok {
+						seen[g] = struct{}{}
+						cleanDisabled = append(cleanDisabled, g)
+					}
+				}
+			}
+			userSetting.DisabledGroups = cleanDisabled
+		}
 		if request.UserModelPriceRules != nil {
 			userSetting.UserModelPriceRules = normalizedUserModelPriceRules
 			userSetting.UserModelPrices = nil

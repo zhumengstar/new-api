@@ -959,6 +959,10 @@ func (info *RelayInfo) SetFirstResponseTime() {
 	if info.isFirstResponse {
 		info.FirstResponseTime = time.Now()
 		info.isFirstResponse = false
+		if info.DisarmFirstByteTimer != nil {
+			info.DisarmFirstByteTimer()
+			info.DisarmFirstByteTimer = nil
+		}
 	}
 }
 

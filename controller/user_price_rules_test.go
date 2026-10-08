@@ -198,4 +198,20 @@ func TestPublicGroupUsableInUserGroupRatios(t *testing.T) {
 	assert.NotContains(t, requestRatios, "unusable-group")
 }
 
+func TestDisabledGroupsExclusion(t *testing.T) {
+	userGroup := "default,vip,svip"
+	setting := dto.UserSetting{
+		DisabledGroups: []string{"vip"},
+	}
+
+	usable := service.GetUserUsableGroupsWithSetting(setting, userGroup)
+	assert.Contains(t, usable, "default")
+	assert.Contains(t, usable, "svip")
+	assert.NotContains(t, usable, "vip", "vip should be excluded from usable groups when disabled")
+
+	assert.True(t, service.GroupInUserUsableGroupsWithSetting(setting, userGroup, "default"))
+	assert.False(t, service.GroupInUserUsableGroupsWithSetting(setting, userGroup, "vip"))
+	assert.True(t, service.GroupInUserUsableGroupsWithSetting(setting, userGroup, "svip"))
+}
+
 

@@ -152,6 +152,8 @@ export interface UserFormData {
   group?: string // Comma-separated groups when updating user
   user_group_ratios?: Record<string, number>
   user_model_price_rules?: UserModelPriceRule[]
+  disabled_groups?: string[]
+  user_group_channels?: Record<string, number[]>
   remark?: string // Only used when updating user
   admin_permissions?: AdminPermissionMatrix
 }

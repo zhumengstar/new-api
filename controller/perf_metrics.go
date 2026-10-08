@@ -7,6 +7,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	perfmetrics "github.com/QuantumNous/new-api/pkg/perf_metrics"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 
@@ -28,10 +29,12 @@ func GetPerfMetricsSummary(c *gin.Context) {
 		targetGroups = append(lo.Keys(ratio_setting.GetGroupRatioCopy()), "auto")
 	} else {
 		var userGroup string
+		var userSetting dto.UserSetting
 		if userId := c.GetInt("id"); userId > 0 {
 			userGroup, _ = model.GetUserGroup(userId, false)
+			userSetting, _ = model.GetUserSetting(userId, false)
 		}
-		usableGroups := service.GetUserUsableGroups(userGroup)
+		usableGroups := service.GetUserUsableGroupsWithSetting(userSetting, userGroup)
 		targetGroups = append(lo.Keys(usableGroups), "auto")
 	}
 
@@ -72,10 +75,12 @@ func GetPerfMetrics(c *gin.Context) {
 	var usableGroup map[string]string
 	if !isAdmin {
 		var userGroup string
+		var userSetting dto.UserSetting
 		if userId := c.GetInt("id"); userId > 0 {
 			userGroup, _ = model.GetUserGroup(userId, false)
+			userSetting, _ = model.GetUserSetting(userId, false)
 		}
-		usableGroup = service.GetUserUsableGroups(userGroup)
+		usableGroup = service.GetUserUsableGroupsWithSetting(userSetting, userGroup)
 		if requestedGroup != "" && requestedGroup != "auto" {
 			if _, ok := usableGroup[requestedGroup]; !ok {
 				c.JSON(http.StatusOK, gin.H{

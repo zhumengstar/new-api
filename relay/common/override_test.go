@@ -1175,6 +1175,33 @@ func TestApplyParamOverridePruneObjectsByTypeString(t *testing.T) {
 	}`, string(out))
 }
 
+func TestApplyParamOverridePruneClaudeThinking(t *testing.T) {
+	input := []byte(`{
+		"model": "claude-opus-4-6",
+		"messages": [
+			{"role": "user", "content": "hi"},
+			{"role": "assistant", "content": [
+				{"type": "thinking", "thinking": "abc"},
+				{"type": "text", "text": "def"}
+			]}
+		]
+	}`)
+	override := map[string]any{
+		"operations": []any{
+			map[string]any{
+				"path":  "messages",
+				"mode":  "prune_objects",
+				"value": "thinking",
+			},
+		},
+	}
+	out, err := ApplyParamOverride(input, override, nil)
+	if err != nil {
+		t.Fatalf("ApplyParamOverride returned error: %v", err)
+	}
+	t.Logf("out: %s", string(out))
+}
+
 func TestApplyParamOverridePruneObjectsWhereAndPath(t *testing.T) {
 	input := []byte(`{
 		"a":{"items":[{"type":"redacted_thinking","id":1},{"type":"output_text","id":2}]},
@@ -2865,6 +2892,31 @@ func TestEnsureClaudeRequestCleanliness(t *testing.T) {
 		assert.NotContains(t, cleanedStr, "stream_options")
 		assert.NotContains(t, cleanedStr, "reasoning_effort")
 		assert.Contains(t, cleanedStr, `"content":"Thinking:"`)
+	})
+
+	t.Run("strip unsigned thinking blocks and invalid redacted_thinking", func(t *testing.T) {
+		inputJSON := `{
+			"model":"claude-opus-4-6",
+			"messages":[
+				{"role":"user","content":"Hi"},
+				{"role":"assistant","content":[
+					{"type":"thinking","thinking":"unsigned thought"},
+					{"type":"thinking","thinking":"valid thought","signature":"valid_sig_123"},
+					{"type":"redacted_thinking"},
+					{"type":"redacted_thinking","data":"valid_data_456"},
+					{"type":"text","text":"hello"}
+				]}
+			]
+		}`
+		cleanedBytes, err := EnsureClaudeRequestCleanliness([]byte(inputJSON))
+		require.NoError(t, err)
+		cleanedStr := string(cleanedBytes)
+		assert.NotContains(t, cleanedStr, "unsigned thought")
+		assert.Contains(t, cleanedStr, "valid thought")
+		assert.Contains(t, cleanedStr, "valid_sig_123")
+		assert.NotContains(t, cleanedStr, `{"type":"redacted_thinking"}`)
+		assert.Contains(t, cleanedStr, "valid_data_456")
+		assert.Contains(t, cleanedStr, `"text":"hello"`)
 	})
 }
 

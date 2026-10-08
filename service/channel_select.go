@@ -9,6 +9,7 @@ import (
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
+	kitdto "github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/gin-gonic/gin"
 )
 
@@ -71,7 +72,33 @@ func getRandomSatisfiedChannel(group string, param *RetryParam, priorityRetry in
 	if len(param.TriedChannelIds) > 0 {
 		priorityRetry = 0
 	}
-	return model.GetRandomSatisfiedChannelExcluding(group, param.ModelName, priorityRetry, filters, param.TriedChannelIds)
+	excludedChannels := param.TriedChannelIds
+	if param.Ctx != nil {
+		if userSetting, ok := common.GetContextKeyType[kitdto.UserSetting](param.Ctx, constant.ContextKeyUserSetting); ok {
+			if allowedIds, exists := userSetting.UserGroupChannels[group]; exists && len(allowedIds) > 0 {
+				allowedSet := make(map[int]struct{}, len(allowedIds))
+				for _, id := range allowedIds {
+					allowedSet[id] = struct{}{}
+				}
+				// 复制或者合并排除列表：不在 allowedSet 里的全部排除
+				mergedExcluded := make(map[int]bool)
+				for id, v := range excludedChannels {
+					if v {
+						mergedExcluded[id] = true
+					}
+				}
+				// 获取该分组下的所有候选渠道
+				candidates := model.GetGroupChannelIds(group)
+				for _, cid := range candidates {
+					if _, allowed := allowedSet[cid]; !allowed {
+						mergedExcluded[cid] = true
+					}
+				}
+				excludedChannels = mergedExcluded
+			}
+		}
+	}
+	return model.GetRandomSatisfiedChannelExcluding(group, param.ModelName, priorityRetry, filters, excludedChannels)
 }
 
 // CacheGetRandomSatisfiedChannel tries to get a random channel that satisfies the requirements.

@@ -126,7 +126,7 @@ func GetPricing(c *gin.Context) {
 
 	isAdmin := c.GetInt("role") >= common.RoleAdminUser
 	if !isAdmin {
-		usableGroup = service.GetUserUsableGroups(group)
+		usableGroup = service.GetUserUsableGroupsWithSetting(userSetting, group)
 		pricing = filterPricingByUsableGroups(pricing, usableGroup)
 		// check groupRatio contains usableGroup
 		for group := range ratio_setting.GetGroupRatioCopy() {

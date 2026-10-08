@@ -95,7 +95,7 @@ func RecordGeneratedImages(c *gin.Context, info *relaycommon.RelayInfo, images [
 }
 
 func upsertGeneratedImageTask(c *gin.Context, task *model.Midjourney) {
-	if task == nil {
+	if task == nil || model.DB == nil {
 		return
 	}
 

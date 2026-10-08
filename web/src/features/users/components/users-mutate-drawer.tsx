@@ -25,6 +25,8 @@ import {
   ChevronUp,
   ChevronsUpDown,
   Coins,
+  Eye,
+  EyeOff,
   Filter,
   Layers,
   Pencil,
@@ -51,6 +53,14 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Combobox } from '@/components/ui/combobox'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import {
   Popover,
   PopoverContent,
@@ -165,7 +175,7 @@ export function UsersMutateDrawer({
     queryKey: ['per-call-model-prices'],
     queryFn: async () => requireServerSuccess(await getPerCallModelPrices()),
     enabled: isRootUser,
-    staleTime: 5 * 60 * 1000,
+    staleTime: 15 * 1000,
   })
 
   const perCallModels = useMemo(
@@ -193,6 +203,10 @@ export function UsersMutateDrawer({
     'all' | 'per_call' | 'selected'
   >('all')
 
+  // Channel whitelist modal per group
+  const [channelModalGroup, setChannelModalGroup] = useState<string | null>(null)
+  const [channelSearchQuery, setChannelSearchQuery] = useState('')
+
   const [draftPriceGroup, setDraftPriceGroup] = useState('')
   const [draftPriceModels, setDraftPriceModels] = useState<string[]>([])
   const [draftModelPrice, setDraftModelPrice] = useState<string>('')
@@ -200,12 +214,29 @@ export function UsersMutateDrawer({
 
   const availableModelsForGroup = useMemo(() => {
     if (!draftPriceGroup) return []
-    return perCallModels.filter(
+    const metaModels: string[] = Array.isArray(groupMeta[draftPriceGroup]?.models)
+      ? groupMeta[draftPriceGroup].models
+      : []
+    const perCallItems = perCallModels.filter(
       (item) =>
         item.groups?.includes(draftPriceGroup) ||
         item.groups?.includes('all')
     )
-  }, [perCallModels, draftPriceGroup])
+    const perCallMap = new Map(perCallItems.map((item) => [item.model, item]))
+
+    const modelSet = new Set<string>([...metaModels, ...perCallItems.map((i) => i.model)])
+    const allModelNames = Array.from(modelSet).sort()
+
+    return allModelNames.map((modelName) => {
+      const perCall = perCallMap.get(modelName)
+      return {
+        model: modelName,
+        price: perCall?.price,
+        has_global_price: Boolean(perCall?.has_global_price),
+        is_per_call_default: Boolean(perCall),
+      }
+    })
+  }, [perCallModels, draftPriceGroup, groupMeta])
 
   const singleSelectedModelMeta = useMemo(() => {
     if (draftPriceModels.length !== 1) return null
@@ -587,6 +618,29 @@ export function UsersMutateDrawer({
                         .map((s) => s.trim())
                         .filter(Boolean)
                       const userGroupRatios = form.watch('user_group_ratios') || {}
+                      const disabledGroups = form.watch('disabled_groups') || []
+                      const userGroupChannels = form.watch('user_group_channels') || {}
+
+                      const handleUpdateGroupChannels = (group: string, channelIds: number[]) => {
+                        const current = { ...(form.getValues('user_group_channels') || {}) }
+                        if (!channelIds || channelIds.length === 0) {
+                          delete current[group]
+                        } else {
+                          current[group] = channelIds
+                        }
+                        form.setValue('user_group_channels', current)
+                      }
+
+                      const handleToggleDisableGroup = (group: string) => {
+                        const isCurrentlyDisabled = disabledGroups.includes(group)
+                        let nextDisabled: string[]
+                        if (isCurrentlyDisabled) {
+                          nextDisabled = disabledGroups.filter((g) => g !== group)
+                        } else {
+                          nextDisabled = Array.from(new Set([...disabledGroups, group]))
+                        }
+                        form.setValue('disabled_groups', nextDisabled)
+                      }
 
                       const handleToggleGroup = (group: string, checked: boolean) => {
                         const meta = groupMeta[group]
@@ -601,6 +655,13 @@ export function UsersMutateDrawer({
                             if (selectedGroupList.includes(group)) {
                               field.onChange(
                                 selectedGroupList.filter((g) => g !== group).join(',')
+                              )
+                            }
+                            // 移除该分组时同时移出 disabledGroups
+                            if (disabledGroups.includes(group)) {
+                              form.setValue(
+                                'disabled_groups',
+                                disabledGroups.filter((g) => g !== group)
                               )
                             }
                           }
@@ -620,6 +681,13 @@ export function UsersMutateDrawer({
                           }
                           delete nextRatios[group]
                           form.setValue('user_group_ratios', nextRatios)
+                          // 移除该分组时同时移出 disabledGroups
+                          if (disabledGroups.includes(group)) {
+                            form.setValue(
+                              'disabled_groups',
+                              disabledGroups.filter((g) => g !== group)
+                            )
+                          }
                         }
                         field.onChange(nextGroups.join(','))
                       }
@@ -876,7 +944,7 @@ export function UsersMutateDrawer({
                                                   {t('Public')}
                                                 </Badge>
                                               )}
-                                              {hasPerCall && (
+                                              {hasPerCall ? (
                                                 <Badge
                                                   variant='outline'
                                                   className='h-4 px-1 text-[10px] font-normal border-amber-300 text-amber-700 bg-amber-50 dark:border-amber-900/50 dark:text-amber-400 dark:bg-amber-950/40 shrink-0 flex items-center gap-0.5'
@@ -885,6 +953,20 @@ export function UsersMutateDrawer({
                                                   {t('{{count}} per-call models', {
                                                     count: perCallCount,
                                                   })}
+                                                </Badge>
+                                              ) : (meta?.models?.length || 0) > 0 ? (
+                                                <Badge
+                                                  variant='outline'
+                                                  className='h-4 px-1 text-[10px] font-normal border-border text-muted-foreground bg-muted/40 shrink-0'
+                                                >
+                                                  {(meta?.models?.length || 0)} {t('个模型')}
+                                                </Badge>
+                                              ) : (
+                                                <Badge
+                                                  variant='outline'
+                                                  className='h-4 px-1 text-[10px] font-normal border-rose-200 text-rose-500 bg-rose-50 dark:border-rose-950 dark:text-rose-400 dark:bg-rose-950/40 shrink-0'
+                                                >
+                                                  {t('无关联渠道')}
                                                 </Badge>
                                               )}
                                             </div>
@@ -951,11 +1033,17 @@ export function UsersMutateDrawer({
                                       meta?.desc,
                                       meta?.models
                                     )
+                                    const isDisabled = disabledGroups.includes(group)
 
                                     return (
                                       <div
                                         key={group}
-                                        className='flex items-center justify-between gap-3 px-3 py-2 hover:bg-muted/20 transition-colors'
+                                        className={cn(
+                                          'flex items-center justify-between gap-3 px-3 py-2 transition-colors',
+                                          isDisabled
+                                            ? 'bg-muted/40 hover:bg-muted/50 opacity-60'
+                                            : 'hover:bg-muted/20'
+                                        )}
                                       >
                                         <div className='flex items-center gap-2 min-w-0 flex-1'>
                                           <Badge
@@ -967,13 +1055,51 @@ export function UsersMutateDrawer({
                                           >
                                             {family.name.split(' / ')[0]}
                                           </Badge>
-                                          <span className='text-xs font-medium text-foreground truncate'>
+                                          <button
+                                            type='button'
+                                            onClick={() => {
+                                              setChannelModalGroup(group)
+                                              setChannelSearchQuery('')
+                                            }}
+                                            className={cn(
+                                              'text-xs font-medium text-foreground truncate hover:text-primary hover:underline underline-offset-2 flex items-center gap-1 cursor-pointer text-left transition-colors',
+                                              isDisabled && 'line-through text-muted-foreground'
+                                            )}
+                                            title={t('点击配置此分组下的允许渠道（默认全部允许）')}
+                                          >
                                             {group}
-                                          </span>
+                                            <SlidersHorizontal className='size-2.5 text-muted-foreground/70 shrink-0' />
+                                          </button>
+                                          {userGroupChannels[group] && userGroupChannels[group].length > 0 && (
+                                            <Badge
+                                              variant='outline'
+                                              className='h-4 px-1.5 text-[10px] border-primary/40 text-primary bg-primary/10 cursor-pointer hover:bg-primary/20 shrink-0 font-medium'
+                                              onClick={() => {
+                                                setChannelModalGroup(group)
+                                                setChannelSearchQuery('')
+                                              }}
+                                              title={t('点击修改限定渠道')}
+                                            >
+                                              {t('限定 {{count}} 渠道', {
+                                                count: userGroupChannels[group].length,
+                                              })}
+                                            </Badge>
+                                          )}
+                                          {isDisabled && (
+                                            <Badge
+                                              variant='outline'
+                                              className='h-4 px-1 text-[10px] border-zinc-400 text-zinc-600 bg-zinc-100 dark:border-zinc-700 dark:text-zinc-400 dark:bg-zinc-900/60'
+                                            >
+                                              {t('已置灰')}
+                                            </Badge>
+                                          )}
                                           {meta?.ratio !== undefined && (
                                             <Badge
                                               variant='outline'
-                                              className='h-4 px-1 text-[10px] font-mono border-blue-200 text-blue-600 bg-blue-50 dark:border-blue-900/50 dark:text-blue-400 dark:bg-blue-950/40'
+                                              className={cn(
+                                                'h-4 px-1 text-[10px] font-mono border-blue-200 text-blue-600 bg-blue-50 dark:border-blue-900/50 dark:text-blue-400 dark:bg-blue-950/40',
+                                                isDisabled && 'opacity-60 grayscale'
+                                              )}
                                             >
                                               {meta.ratio}x
                                             </Badge>
@@ -986,15 +1112,32 @@ export function UsersMutateDrawer({
                                               {t('Public')}
                                             </Badge>
                                           )}
-                                          {hasPerCall && (
+                                          {hasPerCall ? (
                                             <Badge
                                               variant='outline'
-                                              className='h-4 px-1 text-[10px] border-amber-300 text-amber-700 bg-amber-50 dark:border-amber-900/50 dark:text-amber-400 dark:bg-amber-950/40 flex items-center gap-0.5'
+                                              className={cn(
+                                                'h-4 px-1 text-[10px] border-amber-300 text-amber-700 bg-amber-50 dark:border-amber-900/50 dark:text-amber-400 dark:bg-amber-950/40 flex items-center gap-0.5',
+                                                isDisabled && 'opacity-60 grayscale'
+                                              )}
                                             >
                                               <Sparkles className='size-2.5' />
                                               {t('{{count}} per-call models', {
                                                 count: perCallCount,
                                               })}
+                                            </Badge>
+                                          ) : (meta?.models?.length || 0) > 0 ? (
+                                            <Badge
+                                              variant='outline'
+                                              className='h-4 px-1 text-[10px] border-border text-muted-foreground bg-muted/40'
+                                            >
+                                              {(meta?.models?.length || 0)} {t('个模型 (按量)')}
+                                            </Badge>
+                                          ) : (
+                                            <Badge
+                                              variant='outline'
+                                              className='h-4 px-1 text-[10px] border-rose-200 text-rose-500 bg-rose-50 dark:border-rose-950 dark:text-rose-400 dark:bg-rose-950/40'
+                                            >
+                                              {t('无关联渠道')}
                                             </Badge>
                                           )}
                                         </div>
@@ -1004,7 +1147,10 @@ export function UsersMutateDrawer({
                                             type='number'
                                             min='0'
                                             step='0.001'
-                                            className='h-7 w-20 px-1.5 text-xs font-mono text-right'
+                                            className={cn(
+                                              'h-7 w-20 px-1.5 text-xs font-mono text-right',
+                                              isDisabled && 'opacity-60'
+                                            )}
                                             placeholder={
                                               meta?.ratio !== undefined
                                                 ? `${meta.ratio}`
@@ -1019,6 +1165,25 @@ export function UsersMutateDrawer({
                                               handleRatioChange(group, e.target.value)
                                             }
                                           />
+                                          <Button
+                                            variant='ghost'
+                                            size='icon'
+                                            type='button'
+                                            className={cn(
+                                              'size-7 shrink-0 transition-colors',
+                                              isDisabled
+                                                ? 'text-amber-600 hover:text-amber-700 bg-amber-50 dark:bg-amber-950/40 hover:bg-amber-100'
+                                                : 'text-muted-foreground hover:text-foreground'
+                                            )}
+                                            title={isDisabled ? t('启用分组') : t('置灰禁用分组 (保留配置)')}
+                                            onClick={() => handleToggleDisableGroup(group)}
+                                          >
+                                            {isDisabled ? (
+                                              <EyeOff className='size-3.5' />
+                                            ) : (
+                                              <Eye className='size-3.5' />
+                                            )}
+                                          </Button>
                                           {!isPublic ? (
                                             <Button
                                               variant='ghost'
@@ -1091,7 +1256,7 @@ export function UsersMutateDrawer({
                             </Label>
                             {draftPriceGroup && (
                               <span className='text-[10px] text-muted-foreground font-mono'>
-                                {availableModelsForGroup.length} {t('个按次模型')}
+                                {availableModelsForGroup.length} {t('个可用模型')}
                               </span>
                             )}
                           </div>
@@ -1111,10 +1276,11 @@ export function UsersMutateDrawer({
                               className='w-auto min-w-[280px] max-w-[min(460px,calc(100vw-2rem))] p-1 shadow-lg'
                             >
                               <SelectGroup>
-                                {sortGroupsByFamilyAndRatio(Array.from(perCallGroups), {
+                                {sortGroupsByFamilyAndRatio(groupOptions, {
                                   groupMeta,
                                 }).map((group) => {
-                                  const count = perCallModelCountByGroup[group] || 0
+                                  const perCallCount = perCallModelCountByGroup[group] || 0
+                                  const totalModels = groupMeta[group]?.models?.length || 0
                                   const fam = inferGroupFamily(
                                     group,
                                     groupMeta[group]?.desc,
@@ -1142,7 +1308,9 @@ export function UsersMutateDrawer({
                                           </span>
                                         </div>
                                         <span className='inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-normal bg-muted text-muted-foreground shrink-0 border border-border/50'>
-                                          {count} {t('个按次模型')}
+                                          {perCallCount > 0
+                                            ? `${perCallCount} ${t('个按次模型')}`
+                                            : `${totalModels} ${t('个模型 (按量)')}`}
                                         </span>
                                       </div>
                                     </SelectItem>
@@ -1202,11 +1370,16 @@ export function UsersMutateDrawer({
                               description: (
                                 <Badge
                                   variant='outline'
-                                  className='h-4 px-1 text-[10px] font-mono text-muted-foreground bg-muted/40 border-border/60'
+                                  className={cn(
+                                    'h-4 px-1 text-[10px] font-mono border-border/60',
+                                    item.has_global_price
+                                      ? 'text-muted-foreground bg-muted/40'
+                                      : 'text-amber-600 bg-amber-50 dark:text-amber-400 dark:bg-amber-950/40 border-amber-200 dark:border-amber-900/50'
+                                  )}
                                 >
                                   {item.has_global_price
                                     ? `$${item.price}/${t('call')}`
-                                    : t('Default/call')}
+                                    : t('按量转按次')}
                                 </Badge>
                               ),
                             }))}
@@ -1216,7 +1389,7 @@ export function UsersMutateDrawer({
                               !draftPriceGroup
                                 ? t('Select group first')
                                 : availableModelsForGroup.length === 0
-                                  ? t('No per-call models available in this group')
+                                  ? t('No models available in this group')
                                   : t('Select one or more models')
                             }
                             className='min-h-9 text-xs bg-background w-full'
@@ -1601,6 +1774,224 @@ export function UsersMutateDrawer({
           onSuccess={refreshUserData}
         />
       )}
+
+      {/* Group Channel Whitelist Dialog */}
+      <Dialog
+        open={Boolean(channelModalGroup)}
+        onOpenChange={(isOpen) => {
+          if (!isOpen) {
+            setChannelModalGroup(null)
+            setChannelSearchQuery('')
+          }
+        }}
+      >
+        <DialogContent className='sm:max-w-md max-h-[85vh] flex flex-col p-4'>
+          <DialogHeader className='space-y-1.5'>
+            <DialogTitle className='flex items-center gap-2 text-base'>
+              <Layers className='size-4 text-primary' />
+              <span>
+                {t('限定渠道设置')}:{' '}
+                <span className='font-mono font-semibold text-primary'>
+                  {channelModalGroup}
+                </span>
+              </span>
+            </DialogTitle>
+            <DialogDescription className='text-xs text-muted-foreground leading-relaxed'>
+              {t(
+                '留空表示默认允许走该分组下的所有渠道；若勾选，则用户请求仅能在所选渠道中分流。支持选择启用和已禁用渠道。'
+              )}
+            </DialogDescription>
+          </DialogHeader>
+
+          {channelModalGroup && (() => {
+            const groupChannels: Array<{
+              id: number
+              name: string
+              status: number
+              type: number
+              priority: number
+              weight: number
+              response_time: number
+            }> = groupMeta[channelModalGroup]?.channels || []
+
+            const selectedChannels =
+              (form.watch('user_group_channels') || {})[channelModalGroup] || []
+
+            const filteredChannels = groupChannels.filter((c) => {
+              if (!channelSearchQuery.trim()) return true
+              const q = channelSearchQuery.toLowerCase()
+              return (
+                String(c.id).includes(q) ||
+                c.name.toLowerCase().includes(q)
+              )
+            })
+
+            const isAllSelected =
+              groupChannels.length > 0 &&
+              groupChannels.every((c) => selectedChannels.includes(c.id))
+
+            const handleToggleChannel = (channelId: number) => {
+              const current = [...selectedChannels]
+              const idx = current.indexOf(channelId)
+              if (idx >= 0) {
+                current.splice(idx, 1)
+              } else {
+                current.push(channelId)
+              }
+              const allChannelsMap = { ...(form.getValues('user_group_channels') || {}) }
+              if (current.length === 0) {
+                delete allChannelsMap[channelModalGroup]
+              } else {
+                allChannelsMap[channelModalGroup] = current.sort((a, b) => a - b)
+              }
+              form.setValue('user_group_channels', allChannelsMap)
+            }
+
+            const handleSelectAll = () => {
+              const allChannelsMap = { ...(form.getValues('user_group_channels') || {}) }
+              allChannelsMap[channelModalGroup] = groupChannels.map((c) => c.id).sort((a, b) => a - b)
+              form.setValue('user_group_channels', allChannelsMap)
+            }
+
+            const handleClearAll = () => {
+              const allChannelsMap = { ...(form.getValues('user_group_channels') || {}) }
+              delete allChannelsMap[channelModalGroup]
+              form.setValue('user_group_channels', allChannelsMap)
+            }
+
+            return (
+              <div className='flex flex-col gap-3 flex-1 min-h-0 pt-1'>
+                <div className='flex items-center gap-2'>
+                  <div className='relative flex-1'>
+                    <Search className='absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground' />
+                    <Input
+                      placeholder={t('搜索渠道 ID 或名称...')}
+                      value={channelSearchQuery}
+                      onChange={(e) => setChannelSearchQuery(e.target.value)}
+                      className='h-8 pl-8 text-xs'
+                    />
+                  </div>
+                  <div className='flex items-center gap-1.5 shrink-0'>
+                    <Button
+                      type='button'
+                      variant='outline'
+                      size='sm'
+                      className='h-8 px-2 text-xs'
+                      onClick={handleSelectAll}
+                      disabled={groupChannels.length === 0 || isAllSelected}
+                    >
+                      {t('全选')}
+                    </Button>
+                    <Button
+                      type='button'
+                      variant='ghost'
+                      size='sm'
+                      className='h-8 px-2 text-xs text-muted-foreground hover:text-foreground'
+                      onClick={handleClearAll}
+                      disabled={selectedChannels.length === 0}
+                    >
+                      {t('清空')}
+                    </Button>
+                  </div>
+                </div>
+
+                <div className='flex items-center justify-between text-xs text-muted-foreground px-1'>
+                  <span>
+                    {t('共 {{total}} 个渠道', { total: groupChannels.length })}
+                    {selectedChannels.length > 0 && (
+                      <span className='ml-2 font-medium text-primary'>
+                        (已勾选 {selectedChannels.length} 个)
+                      </span>
+                    )}
+                  </span>
+                  {selectedChannels.length === 0 && (
+                    <span className='text-[11px] text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 px-1.5 py-0.5 rounded'>
+                      {t('默认允许全部')}
+                    </span>
+                  )}
+                </div>
+
+                <div className='border rounded-lg divide-y overflow-y-auto max-h-[300px] bg-card/40'>
+                  {groupChannels.length === 0 ? (
+                    <div className='p-6 text-center text-xs text-muted-foreground'>
+                      {t('此分组暂无关联渠道')}
+                    </div>
+                  ) : filteredChannels.length === 0 ? (
+                    <div className='p-6 text-center text-xs text-muted-foreground'>
+                      {t('未找到匹配的渠道')}
+                    </div>
+                  ) : (
+                    filteredChannels.map((channel) => {
+                      const isChecked = selectedChannels.includes(channel.id)
+                      const isEnabled = channel.status === 1
+                      return (
+                        <div
+                          key={channel.id}
+                          onClick={() => handleToggleChannel(channel.id)}
+                          className={cn(
+                            'flex items-center gap-2.5 px-3 py-2 text-xs cursor-pointer select-none transition-colors hover:bg-muted/30',
+                            isChecked && 'bg-primary/5 font-medium'
+                          )}
+                        >
+                          <Checkbox
+                            checked={isChecked}
+                            onCheckedChange={() => handleToggleChannel(channel.id)}
+                            className='shrink-0'
+                          />
+                          <div className='flex items-center gap-2 min-w-0 flex-1'>
+                            <span className='font-mono font-semibold text-muted-foreground shrink-0'>
+                              #{channel.id}
+                            </span>
+                            <span className='truncate text-foreground'>
+                              {channel.name}
+                            </span>
+                          </div>
+                          <div className='flex items-center gap-1.5 shrink-0'>
+                            {isEnabled ? (
+                              <Badge
+                                variant='outline'
+                                className='h-4 px-1 text-[10px] border-emerald-300 text-emerald-600 bg-emerald-50 dark:border-emerald-900/50 dark:text-emerald-400 dark:bg-emerald-950/40'
+                              >
+                                {t('已启用')}
+                              </Badge>
+                            ) : (
+                              <Badge
+                                variant='outline'
+                                className='h-4 px-1 text-[10px] border-zinc-400 text-zinc-500 bg-zinc-100 dark:border-zinc-700 dark:text-zinc-400 dark:bg-zinc-900/50'
+                              >
+                                {t('已禁用')}
+                              </Badge>
+                            )}
+                            {channel.response_time > 0 && (
+                              <span className='text-[10px] text-muted-foreground font-mono'>
+                                {channel.response_time}ms
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      )
+                    })
+                  )}
+                </div>
+
+                <div className='flex justify-end pt-2'>
+                  <Button
+                    type='button'
+                    size='sm'
+                    className='h-8 px-4 text-xs'
+                    onClick={() => {
+                      setChannelModalGroup(null)
+                      setChannelSearchQuery('')
+                    }}
+                  >
+                    {t('完成')}
+                  </Button>
+                </div>
+              </div>
+            )
+          })()}
+        </DialogContent>
+      </Dialog>
     </>
   )
 }

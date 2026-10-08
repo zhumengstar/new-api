@@ -98,9 +98,16 @@ func OpenAIChatRequestToClaudeMessages(c context.Context, info convmeta.Meta, te
 	if err != nil {
 		return nil, reasoning.AsClientError(err)
 	}
+	if len(textRequest.THINKING) > 0 {
+		var rawThinking dto.Thinking
+		if err := kitutil.Unmarshal(textRequest.THINKING, &rawThinking); err == nil && rawThinking.Type != "" {
+			claudeRequest.Thinking = &rawThinking
+		}
+	}
 	if err := sharedclaude.ApplyReasoning(c, &claudeRequest, info, sourceReasoning, true); err != nil {
 		return nil, reasoning.AsClientError(err)
 	}
+
 	if claudeRequest.MaxTokens == nil {
 		if defaultMaxTokens, configured := opts.Claude.DefaultMaxTokensFor(claudeRequest.Model); configured {
 			value := uint(defaultMaxTokens)
@@ -328,6 +335,54 @@ func OpenAIChatRequestToClaudeMessages(c context.Context, info convmeta.Meta, te
 		claudeRequest.System = systemMessages
 	}
 
+	// 1. Prune trailing empty assistant messages to avoid upstream 400 rejection
+	for len(claudeMessages) > 0 {
+		lastMsg := claudeMessages[len(claudeMessages)-1]
+		if lastMsg.Role == "assistant" {
+			isEmpty := false
+			if lastMsg.Content == nil {
+				isEmpty = true
+			} else if str, ok := lastMsg.Content.(string); ok && (strings.TrimSpace(str) == "" || str == "...") {
+				isEmpty = true
+			} else if mediaList, ok := lastMsg.Content.([]dto.ClaudeMediaMessage); ok && len(mediaList) == 0 {
+				isEmpty = true
+			}
+			if isEmpty {
+				claudeMessages = claudeMessages[:len(claudeMessages)-1]
+				continue
+			}
+		}
+		break
+	}
+
+	if len(claudeMessages) == 0 {
+		claudeMessages = append(claudeMessages, placeholderUserMessage)
+	}
+
+	// 2. Adaptive Thinking & MaxTokens conflict resolution:
+	// Claude strictly requires max_tokens > thinking.budget_tokens.
+	// If budget_tokens >= max_tokens, automatically lift max_tokens so upstream won't reject with 400.
+	if claudeRequest.Thinking != nil && claudeRequest.Thinking.BudgetTokens != nil && *claudeRequest.Thinking.BudgetTokens > 0 {
+		budget := uint(*claudeRequest.Thinking.BudgetTokens)
+		if claudeRequest.MaxTokens == nil || *claudeRequest.MaxTokens <= budget {
+			raised := budget + 2048
+			claudeRequest.MaxTokens = &raised
+		}
+		// When thinking is enabled, sampling parameters (temperature, top_p, top_k) can trigger 400 on some upstreams
+		claudeRequest.Temperature = nil
+		claudeRequest.TopP = nil
+		claudeRequest.TopK = nil
+	}
+
+	// 3. Clean up empty tools and orphaned tool_choice
+	if claudeRequest.Tools == nil {
+		claudeRequest.ToolChoice = nil
+	} else if toolsList, ok := claudeRequest.Tools.([]any); ok && len(toolsList) == 0 {
+		claudeRequest.Tools = nil
+		claudeRequest.ToolChoice = nil
+	}
+
+
 	claudeRequest.Prompt = ""
 	claudeRequest.Messages = claudeMessages
 	// Checked last so every injection path (default hook, thinking adapter
@@ -337,3 +392,4 @@ func OpenAIChatRequestToClaudeMessages(c context.Context, info convmeta.Meta, te
 	}
 	return &claudeRequest, nil
 }
+

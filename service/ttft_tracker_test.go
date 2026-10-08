@@ -43,31 +43,31 @@ func TestDynamicFirstByteTimeout(t *testing.T) {
 	channelID := 999
 	fastModel := "gemini-1.5-flash"
 
-	// 1. 冷启动无样本时，快模型应返回 12s
+	// 1. 冷启动无样本时，快模型应返回 18s
 	timeout := GetDynamicFirstByteTimeout(channelID, fastModel)
-	assert.Equal(t, 12*time.Second, timeout)
+	assert.Equal(t, 18*time.Second, timeout)
 
 	// 2. 模拟该渠道该模型 10 次成功请求，出字时间在 1.5s 左右 (1500ms)
 	for i := 0; i < 10; i++ {
 		RecordTTFT(channelID, fastModel, 1500*time.Millisecond)
 	}
 
-	// 3. 计算 P95 = 1500ms，timeout = clamp(1500ms * 1.5 + 2s = 4.25s, minFloor: 5s, maxCeil: 22s) -> 5s
+	// 3. 计算 P95 = 1500ms，timeout = clamp(1500ms * 1.6 + 3s = 5.4s, minFloor: 10s, maxCeil: 28s) -> 10s
 	timeout = GetDynamicFirstByteTimeout(channelID, fastModel)
-	assert.Equal(t, 5*time.Second, timeout)
+	assert.Equal(t, 10*time.Second, timeout)
 
 	// 4. 测试慢模型推理
 	reasoningModel := "claude-opus-4-6"
 	channelID2 := 888
-	// 冷启动时思考模型 35s
+	// 冷启动时思考模型 40s
 	timeoutReasoning := GetDynamicFirstByteTimeout(channelID2, reasoningModel)
-	assert.Equal(t, 35*time.Second, timeoutReasoning)
+	assert.Equal(t, 40*time.Second, timeoutReasoning)
 
-	// 模拟该思考模型 P95 在 15s (15000ms)
+	// 模拟该思考模型 P95 在 20s (20000ms)
 	for i := 0; i < 10; i++ {
-		RecordTTFT(channelID2, reasoningModel, 15000*time.Millisecond)
+		RecordTTFT(channelID2, reasoningModel, 20000*time.Millisecond)
 	}
-	// calculated = 15s * 1.5 + 2s = 24.5s
+	// calculated = 20s * 1.6 + 3s = 35s
 	timeoutReasoning = GetDynamicFirstByteTimeout(channelID2, reasoningModel)
-	assert.Equal(t, 24500*time.Millisecond, timeoutReasoning)
+	assert.Equal(t, 35*time.Second, timeoutReasoning)
 }

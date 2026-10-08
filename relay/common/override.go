@@ -2917,6 +2917,18 @@ func cleanClaudeContentBlocks(blocks []any) ([]any, bool) {
 				modifiedAny = true
 				continue // 移除纯空白 text block
 			}
+		} else if bType == "thinking" {
+			sig, _ := block["signature"].(string)
+			if strings.TrimSpace(sig) == "" {
+				modifiedAny = true
+				continue // 移除缺少 signature 的历史思考块，防止 Vertex AI / Anthropic 报 400 signature: Field required
+			}
+		} else if bType == "redacted_thinking" {
+			data, _ := block["data"].(string)
+			if strings.TrimSpace(data) == "" {
+				modifiedAny = true
+				continue // 移除缺少 data 的 redacted_thinking 块
+			}
 		} else if bType == "tool_result" {
 			if trContent, has := block["content"]; has && trContent != nil {
 				switch tc := trContent.(type) {

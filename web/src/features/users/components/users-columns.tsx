@@ -31,6 +31,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import { cn } from '@/lib/utils'
 import { getCurrencyDisplay, formatQuotaWithCurrency } from '@/lib/currency'
 import { formatQuota } from '@/lib/format'
 import { useSystemConfigStore } from '@/stores/system-config-store'
@@ -41,6 +42,10 @@ import {
   USER_ROLES,
   isUserDeleted,
 } from '../constants'
+import {
+  parseUserDisabledGroups,
+  parseUserGroupChannels,
+} from '../lib/user-form'
 import type { User } from '../types'
 import { DataTableRowActions } from './data-table-row-actions'
 import { UserQuotaCell } from './user-quota-cell'
@@ -323,6 +328,8 @@ export function useUsersColumns(): ColumnDef<User>[] {
       cell: ({ row }) => {
         const rawGroup = (row.getValue('group') as string) || ''
         const effectiveRatios = row.original.effective_group_ratios
+        const disabledGroups = new Set(parseUserDisabledGroups(row.original.setting))
+        const groupChannels = parseUserGroupChannels(row.original.setting)
         const groups = (
           effectiveRatios && Object.keys(effectiveRatios).length > 0
             ? Object.keys(effectiveRatios)
@@ -336,13 +343,50 @@ export function useUsersColumns(): ColumnDef<User>[] {
           <div className='flex flex-wrap items-center gap-1.5 py-1'>
             {groups.map((group) => {
               const ratio = effectiveRatios?.[group]
+              const isDisabled = disabledGroups.has(group)
+              const whitelistedCount = groupChannels[group]?.length || 0
+              const badge = (
+                <div key={group} className='inline-flex items-center gap-1'>
+                  <GroupBadge
+                    group={group}
+                    ratio={ratio}
+                    className={cn(
+                      'font-normal text-xs transition-opacity',
+                      isDisabled && 'opacity-40 line-through grayscale border-dashed'
+                    )}
+                  />
+                  {whitelistedCount > 0 && !isDisabled && (
+                    <Tooltip>
+                      <TooltipTrigger render={<span className='inline-flex cursor-help' />}>
+                        <span className='font-mono text-[10px] text-primary bg-primary/10 border border-primary/30 rounded px-1 leading-4'>
+                          {whitelistedCount}渠
+                        </span>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p className='text-xs'>
+                          {t('此分组已绑定限定渠道: {{count}} 个', { count: whitelistedCount })}
+                        </p>
+                      </TooltipContent>
+                    </Tooltip>
+                  )}
+                </div>
+              )
+
+              if (!isDisabled) {
+                return badge
+              }
+
               return (
-                <GroupBadge
-                  key={group}
-                  group={group}
-                  ratio={ratio}
-                  className='font-normal text-xs'
-                />
+                <Tooltip key={group}>
+                  <TooltipTrigger render={<span className='inline-flex cursor-help' />}>
+                    {badge}
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p className='text-xs'>
+                      {t('此分组已对该用户置灰禁用，权限已暂停')}
+                    </p>
+                  </TooltipContent>
+                </Tooltip>
               )
             })}
           </div>

@@ -102,7 +102,8 @@ func channelModelKey(channelID int, model string) string {
 func IsReasoningModel(model string) bool {
 	m := cleanModelKey(model)
 	reasoningKeywords := []string{
-		"o1", "o3", "r1", "reasoning", "opus", "thinking", "gemini-2.5-pro",
+		"o1", "o3", "r1", "reasoning", "opus", "thinking", "thought",
+		"gemini-2.5-pro", "gemini-3.1-pro", "gemini-pro", "claude",
 		"deepseek-reasoner", "qwq", "kimi-k1.5",
 	}
 	for _, kw := range reasoningKeywords {
@@ -183,27 +184,27 @@ func GetDynamicFirstByteTimeout(channelID int, model string) time.Duration {
 	)
 
 	if IsReasoningModel(model) {
-		// 深度推理/Opus 等：思考耗时较长，给予较宽容的边界，但绝不超过 55s（留出客户端 60s 断开前的切流时间）
-		minFloor = 15 * time.Second
-		maxCeil = 52 * time.Second
-		defaultTimeout = 35 * time.Second
+		// 深度推理/Claude/Opus/Pro 等：思考耗时较长，给予更充裕的边界，绝不在 15~20s 误杀正常推理
+		minFloor = 28 * time.Second
+		maxCeil = 68 * time.Second
+		defaultTimeout = 40 * time.Second
 	} else if IsFastModel(model) {
-		// Flash/Mini/Haiku 等快模型：正常出字极快，超时护栏需灵敏迅速截断并换渠
-		minFloor = 5 * time.Second
-		maxCeil = 22 * time.Second
-		defaultTimeout = 12 * time.Second
+		// Flash/Mini/Haiku 等快模型：正常出字极快，超时护栏兼顾网络波动与快速换渠
+		minFloor = 10 * time.Second
+		maxCeil = 28 * time.Second
+		defaultTimeout = 18 * time.Second
 	} else {
-		// 普通通用模型（GPT-4o、Sonnet 等）
-		minFloor = 8 * time.Second
-		maxCeil = 38 * time.Second
-		defaultTimeout = 22 * time.Second
+		// 普通通用模型（GPT-4o 等）
+		minFloor = 16 * time.Second
+		maxCeil = 45 * time.Second
+		defaultTimeout = 28 * time.Second
 	}
 
 	// 3. 优先查本渠道该模型的 P95 统计
 	p95, count := GetChannelModelP95(channelID, model)
 	if count >= minSamplesForP95 && p95 > 0 {
-		// 动态公式：P95 * 1.5 + 2s 缓冲
-		calculated := time.Duration(float64(p95)*1.5) + 2*time.Second
+		// 动态公式：P95 * 1.6 + 3s 缓冲
+		calculated := time.Duration(float64(p95)*1.6) + 3*time.Second
 		return clampDuration(calculated, minFloor, maxCeil)
 	}
 

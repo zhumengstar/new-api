@@ -38,8 +38,8 @@ func GetUserGroups(c *gin.Context) {
 	userGroup := ""
 	userId := c.GetInt("id")
 	userGroup, _ = model.GetUserGroup(userId, false)
-	userUsableGroups := service.GetUserUsableGroups(userGroup)
 	userSetting, _ := model.GetUserSetting(userId, false)
+	userUsableGroups := service.GetUserUsableGroupsWithSetting(userSetting, userGroup)
 	for groupName, _ := range ratio_setting.GetGroupRatioCopy() {
 		// UserUsableGroups contains the groups that the user can use
 		if desc, ok := userUsableGroups[groupName]; ok {
@@ -72,6 +72,10 @@ func GetGroupDetails(c *gin.Context) {
 	if groupModelsMap == nil {
 		groupModelsMap = make(map[string][]string)
 	}
+	groupChannelsMap, _ := model.GetGroupChannelsMap()
+	if groupChannelsMap == nil {
+		groupChannelsMap = make(map[string][]model.ChannelGroupItem)
+	}
 	groupMeta := make(map[string]map[string]any, len(groupRatios))
 	for groupName, ratio := range groupRatios {
 		groupNames = append(groupNames, groupName)
@@ -80,12 +84,17 @@ func GetGroupDetails(c *gin.Context) {
 		if models == nil {
 			models = []string{}
 		}
+		channels := groupChannelsMap[groupName]
+		if channels == nil {
+			channels = []model.ChannelGroupItem{}
+		}
 		groupMeta[groupName] = map[string]any{
 			"ratio":       ratio,
 			"admin_ratio": service.GetUserGroupRatioForUser(userId, userGroup, groupName),
 			"is_public":   isPublic,
 			"desc":        setting.GetUsableGroupDescription(groupName),
 			"models":      models,
+			"channels":    channels,
 		}
 	}
 	c.JSON(http.StatusOK, gin.H{

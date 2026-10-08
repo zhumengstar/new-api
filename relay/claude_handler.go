@@ -155,6 +155,9 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 		if repaired, repErr := relaycommon.EnsureClaudeToolIDs(jsonData); repErr == nil && len(repaired) > 0 {
 			jsonData = repaired
 		}
+		if cleaned, cerr := relaycommon.EnsureClaudeRequestCleanliness(jsonData); cerr == nil && len(cleaned) > 0 {
+			jsonData = cleaned
+		}
 
 		logger.LogDebug(c, "requestBody: %s", jsonData)
 		body, closer, err := relaycommon.NewOutboundJSONBody(jsonData)

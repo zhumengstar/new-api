@@ -53,6 +53,10 @@ func JoinUserGroupsWithDefault(groups []string) string {
 }
 
 func GetUserUsableGroups(userGroup string) map[string]string {
+	return GetUserUsableGroupsWithSetting(dto.UserSetting{}, userGroup)
+}
+
+func GetUserUsableGroupsWithSetting(userSetting dto.UserSetting, userGroup string) map[string]string {
 	groupsCopy := setting.GetUserUsableGroupsCopy()
 	for _, singleUserGroup := range ParseUserGroups(userGroup) {
 		specialSettings, b := ratio_setting.GetGroupRatioSetting().GroupSpecialUsableGroup.Get(singleUserGroup)
@@ -78,27 +82,43 @@ func GetUserUsableGroups(userGroup string) map[string]string {
 			groupsCopy[singleUserGroup] = "用户分组"
 		}
 	}
+	// 剔除用户被置灰/禁用的分组
+	for _, disabledGroup := range userSetting.DisabledGroups {
+		delete(groupsCopy, disabledGroup)
+	}
 	return groupsCopy
 }
 
 func GroupInUserUsableGroups(userGroup, groupName string) bool {
-	_, ok := GetUserUsableGroups(userGroup)[groupName]
+	return GroupInUserUsableGroupsWithSetting(dto.UserSetting{}, userGroup, groupName)
+}
+
+func GroupInUserUsableGroupsWithSetting(userSetting dto.UserSetting, userGroup, groupName string) bool {
+	_, ok := GetUserUsableGroupsWithSetting(userSetting, userGroup)[groupName]
 	return ok
 }
 
 func IsUserSelectableGroup(userGroup, groupName string) bool {
+	return IsUserSelectableGroupWithSetting(dto.UserSetting{}, userGroup, groupName)
+}
+
+func IsUserSelectableGroupWithSetting(userSetting dto.UserSetting, userGroup, groupName string) bool {
 	if groupName == "" || groupName == "auto" {
 		return false
 	}
-	return GroupInUserUsableGroups(userGroup, groupName) && ratio_setting.ContainsGroupRatio(groupName)
+	return GroupInUserUsableGroupsWithSetting(userSetting, userGroup, groupName) && ratio_setting.ContainsGroupRatio(groupName)
 }
 
 // GetUserAutoGroup 根据用户分组获取自动分组设置
 func GetUserAutoGroup(userGroup string) []string {
+	return GetUserAutoGroupWithSetting(dto.UserSetting{}, userGroup)
+}
+
+func GetUserAutoGroupWithSetting(userSetting dto.UserSetting, userGroup string) []string {
 	autoGroups := make([]string, 0)
 	seen := make(map[string]struct{})
 	for _, group := range setting.GetAutoGroups() {
-		if !IsUserSelectableGroup(userGroup, group) {
+		if !IsUserSelectableGroupWithSetting(userSetting, userGroup, group) {
 			continue
 		}
 		if _, ok := seen[group]; ok {
@@ -113,11 +133,15 @@ func GetUserAutoGroup(userGroup string) []string {
 // FilterUserTokenAutoGroups applies current permissions before the current
 // per-token limit. It intentionally does not fall back to the global Auto list.
 func FilterUserTokenAutoGroups(userGroup string, groups []string) []string {
+	return FilterUserTokenAutoGroupsWithSetting(dto.UserSetting{}, userGroup, groups)
+}
+
+func FilterUserTokenAutoGroupsWithSetting(userSetting dto.UserSetting, userGroup string, groups []string) []string {
 	maxCount := setting.GetMaxTokenAutoGroups()
 	filtered := make([]string, 0, min(len(groups), maxCount))
 	seen := make(map[string]struct{})
 	for _, group := range groups {
-		if !IsUserSelectableGroup(userGroup, group) {
+		if !IsUserSelectableGroupWithSetting(userSetting, userGroup, group) {
 			continue
 		}
 		if _, ok := seen[group]; ok {
@@ -136,15 +160,16 @@ func FilterUserTokenAutoGroups(userGroup string, groups []string) []string {
 // The absence of the context value means that the token inherits the complete
 // global Auto list; a present (even empty) value is an explicit token snapshot.
 func GetRequestAutoGroups(c *gin.Context, userGroup string) []string {
+	userSetting, _ := common.GetContextKeyType[dto.UserSetting](c, constant.ContextKeyUserSetting)
 	value, ok := common.GetContextKey(c, constant.ContextKeyTokenAutoGroups)
 	if !ok {
-		return GetUserAutoGroup(userGroup)
+		return GetUserAutoGroupWithSetting(userSetting, userGroup)
 	}
 	groups, ok := value.([]string)
 	if !ok {
 		return []string{}
 	}
-	return FilterUserTokenAutoGroups(userGroup, groups)
+	return FilterUserTokenAutoGroupsWithSetting(userSetting, userGroup, groups)
 }
 
 // GetGroupsEnabledModels 按 groups 顺序获取各分组启用的模型并去重

@@ -48,6 +48,8 @@ export const userFormSchema = z.object({
   group: z.string().optional(),
   user_group_ratios: z.record(z.string(), z.number().min(0)).optional(),
   user_model_price_rules: z.array(userModelPriceRuleSchema).optional(),
+  disabled_groups: z.array(z.string()).optional(),
+  user_group_channels: z.record(z.string(), z.array(z.number())).optional(),
   remark: z.string().optional(),
   admin_permissions: z
     .record(z.string(), z.record(z.string(), z.boolean()))
@@ -69,6 +71,8 @@ export const USER_FORM_DEFAULT_VALUES: UserFormValues = {
   group: DEFAULT_GROUP,
   user_group_ratios: {},
   user_model_price_rules: [],
+  disabled_groups: [],
+  user_group_channels: {},
   remark: '',
   // Filled against the backend catalog at render time; see UsersMutateDrawer.
   admin_permissions: {},
@@ -77,6 +81,49 @@ export const USER_FORM_DEFAULT_VALUES: UserFormValues = {
 // ============================================================================
 // Helper Parsers
 // ============================================================================
+
+export function parseUserGroupChannels(
+  setting?: string
+): Record<string, number[]> {
+  if (!setting) return {}
+  try {
+    const parsed = typeof setting === 'string' ? JSON.parse(setting) : setting
+    const source = parsed?.user_group_channels || {}
+    const result: Record<string, number[]> = {}
+    for (const [k, v] of Object.entries(source)) {
+      if (k && Array.isArray(v)) {
+        const ids = v
+          .map((id: any) => Number(id))
+          .filter((id: number) => Number.isInteger(id) && id > 0)
+        if (ids.length > 0) {
+          result[k] = ids
+        }
+      }
+    }
+    return result
+  } catch {
+    return {}
+  }
+}
+
+export function parseUserDisabledGroups(setting?: string): string[] {
+  if (!setting) return []
+  try {
+    const parsed = typeof setting === 'string' ? JSON.parse(setting) : setting
+    if (Array.isArray(parsed?.disabled_groups)) {
+      return Array.from(
+        new Set(
+          parsed.disabled_groups
+            .map((g: any) => String(g || '').trim())
+            .filter(Boolean)
+        )
+      )
+    }
+    return []
+  } catch {
+    return []
+  }
+}
 
 export function parseUserGroupRatios(setting?: string): Record<string, number> {
   if (!setting) return {}
@@ -177,6 +224,8 @@ export function transformFormDataToPayload(
     payload.group = data.group
     payload.user_group_ratios = data.user_group_ratios
     payload.user_model_price_rules = data.user_model_price_rules
+    payload.disabled_groups = data.disabled_groups
+    payload.user_group_channels = data.user_group_channels
     payload.remark = data.remark || undefined
     payload.id = userId
   }
@@ -196,6 +245,8 @@ export function transformUserToFormDefaults(user: User): UserFormValues {
     .filter(Boolean)
   const groupRatios = parseUserGroupRatios(user.setting)
   const priceRules = parseUserModelPriceRules(user.setting, groups[0] || 'default')
+  const disabledGroups = parseUserDisabledGroups(user.setting)
+  const groupChannels = parseUserGroupChannels(user.setting)
 
   return {
     username: user.username,
@@ -206,6 +257,8 @@ export function transformUserToFormDefaults(user: User): UserFormValues {
     group: user.group || DEFAULT_GROUP,
     user_group_ratios: groupRatios,
     user_model_price_rules: priceRules,
+    disabled_groups: disabledGroups,
+    user_group_channels: groupChannels,
     remark: user.remark || '',
     admin_permissions: user.admin_permissions ?? {},
   }

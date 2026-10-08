@@ -25,6 +25,8 @@ type UserSetting struct {
 	UserGroupRatios                  map[string]float64   `json:"user_group_ratios,omitempty"`                    // 用户专属分组倍率
 	UserModelPrices                  map[string]float64   `json:"user_model_prices,omitempty"`                    // 用户专属按次模型价格
 	UserModelPriceRules              []UserModelPriceRule `json:"user_model_price_rules,omitempty"`               // 用户按分组设置的专属按次模型价格
+	DisabledGroups                   []string             `json:"disabled_groups,omitempty"`                      // 用户被置灰/禁用的分组列表
+	UserGroupChannels                map[string][]int     `json:"user_group_channels,omitempty"`                  // 用户按分组限定的渠道ID列表
 }
 
 var (
