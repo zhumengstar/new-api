@@ -59,9 +59,9 @@ func TestDynamicFirstByteTimeout(t *testing.T) {
 	// 4. 测试慢模型推理
 	reasoningModel := "claude-opus-4-6"
 	channelID2 := 888
-	// 冷启动时思考模型 40s
+	// 冷启动时思考模型 60s
 	timeoutReasoning := GetDynamicFirstByteTimeout(channelID2, reasoningModel)
-	assert.Equal(t, 40*time.Second, timeoutReasoning)
+	assert.Equal(t, 60*time.Second, timeoutReasoning)
 
 	// 模拟该思考模型 P95 在 20s (20000ms)
 	for i := 0; i < 10; i++ {
@@ -70,4 +70,9 @@ func TestDynamicFirstByteTimeout(t *testing.T) {
 	// calculated = 20s * 1.6 + 3s = 35s
 	timeoutReasoning = GetDynamicFirstByteTimeout(channelID2, reasoningModel)
 	assert.Equal(t, 35*time.Second, timeoutReasoning)
+
+	// 5. 测试环境变量强制覆盖 90s
+	t.Setenv("STREAMING_FIRST_BYTE_TIMEOUT_OVERRIDE", "90")
+	assert.Equal(t, 90*time.Second, GetDynamicFirstByteTimeout(channelID2, reasoningModel))
+	assert.Equal(t, 90*time.Second, GetDynamicFirstByteTimeout(channelID, fastModel))
 }

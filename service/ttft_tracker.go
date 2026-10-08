@@ -175,6 +175,11 @@ func GetDynamicFirstByteTimeout(channelID int, model string) time.Duration {
 			return time.Duration(sec) * time.Second
 		}
 	}
+	if val := os.Getenv("UPSTREAM_TIMEOUT"); val != "" {
+		if sec, err := strconv.Atoi(val); err == nil && sec > 0 {
+			return time.Duration(sec) * time.Second
+		}
+	}
 
 	// 2. 根据模型类型确定护栏边界与默认冷启动基准
 	var (
@@ -184,20 +189,31 @@ func GetDynamicFirstByteTimeout(channelID int, model string) time.Duration {
 	)
 
 	if IsReasoningModel(model) {
-		// 深度推理/Claude/Opus/Pro 等：思考耗时较长，给予更充裕的边界，绝不在 15~20s 误杀正常推理
+		// 深度推理/Claude/Opus/Pro 等：思考耗时较长，给予更充裕的边界（支持至 90s），绝不误杀正常长思考与高延迟
 		minFloor = 28 * time.Second
-		maxCeil = 68 * time.Second
-		defaultTimeout = 40 * time.Second
+		maxCeil = 90 * time.Second
+		defaultTimeout = 60 * time.Second
 	} else if IsFastModel(model) {
 		// Flash/Mini/Haiku 等快模型：正常出字极快，超时护栏兼顾网络波动与快速换渠
 		minFloor = 10 * time.Second
-		maxCeil = 28 * time.Second
+		maxCeil = 35 * time.Second
 		defaultTimeout = 18 * time.Second
 	} else {
 		// 普通通用模型（GPT-4o 等）
 		minFloor = 16 * time.Second
-		maxCeil = 45 * time.Second
-		defaultTimeout = 28 * time.Second
+		maxCeil = 60 * time.Second
+		defaultTimeout = 35 * time.Second
+	}
+
+	// 若配置了 STREAMING_FIRST_BYTE_TIMEOUT，则动态上限至少允许到该配置值
+	if val := os.Getenv("STREAMING_FIRST_BYTE_TIMEOUT"); val != "" {
+		if sec, err := strconv.Atoi(val); err == nil && sec > 0 {
+			cfgD := time.Duration(sec) * time.Second
+			if cfgD > maxCeil {
+				maxCeil = cfgD
+			}
+			defaultTimeout = cfgD
+		}
 	}
 
 	// 3. 优先查本渠道该模型的 P95 统计
@@ -213,13 +229,6 @@ func GetDynamicFirstByteTimeout(channelID int, model string) time.Duration {
 	if gCount >= minSamplesForP95 && globalP95 > 0 {
 		calculated := time.Duration(float64(globalP95)*1.6) + 3*time.Second
 		return clampDuration(calculated, minFloor, maxCeil)
-	}
-
-	// 5. 若无足够样本，兼容检查通用配置 STREAMING_FIRST_BYTE_TIMEOUT 或默认值
-	if val := os.Getenv("STREAMING_FIRST_BYTE_TIMEOUT"); val != "" {
-		if sec, err := strconv.Atoi(val); err == nil && sec > 0 {
-			return clampDuration(time.Duration(sec)*time.Second, minFloor, maxCeil)
-		}
 	}
 
 	return defaultTimeout
