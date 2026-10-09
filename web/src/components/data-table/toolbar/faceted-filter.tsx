@@ -130,6 +130,39 @@ function DataTableFacetedFilterInner<TData, TValue>({
     onOpenChange(false)
   }
 
+  const [searchQuery, setSearchQuery] = React.useState('')
+
+  const nonAllOptions = React.useMemo(() => {
+    return options.filter((opt) => opt.value !== 'all')
+  }, [options])
+
+  const filteredOptions = React.useMemo(() => {
+    const q = searchQuery.trim().toLowerCase()
+    if (!q) return nonAllOptions
+    return nonAllOptions.filter((opt) => {
+      const labelMatch = opt.label?.toLowerCase().includes(q)
+      const valMatch = opt.value?.toLowerCase().includes(q)
+      return labelMatch || valMatch
+    })
+  }, [nonAllOptions, searchQuery])
+
+  const allFilteredSelected =
+    filteredOptions.length > 0 &&
+    filteredOptions.every((opt) => selectedValues.has(opt.value))
+
+  const handleToggleSelectFiltered = (e: React.MouseEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    const nextSelected = new Set(selectedValues)
+    if (allFilteredSelected) {
+      filteredOptions.forEach((opt) => nextSelected.delete(opt.value))
+    } else {
+      filteredOptions.forEach((opt) => nextSelected.add(opt.value))
+    }
+    const result = Array.from(nextSelected)
+    column?.setFilterValue(result.length ? result : undefined)
+  }
+
   const groupedOptions = React.useMemo(() => {
     const hasAnyGroup = options.some((opt) => Boolean(opt.group))
     if (!hasAnyGroup) {
@@ -221,10 +254,8 @@ function DataTableFacetedFilterInner<TData, TValue>({
         {icon}
         <span
           className={cn(
-            'min-w-0 truncate whitespace-nowrap',
-            renderOptionActions
-              ? 'max-w-[min(280px,calc(100vw-7rem))] flex-none'
-              : 'flex-1'
+            'min-w-0 flex-1 break-all whitespace-normal leading-tight text-left',
+            renderOptionActions && 'pe-2'
           )}
           title={t(option.label)}
         >
@@ -285,11 +316,60 @@ function DataTableFacetedFilterInner<TData, TValue>({
       </PopoverTrigger>
       {open && (
         <PopoverContent
-          className='w-max min-w-[260px] max-w-[min(420px,calc(100vw-2rem))] p-0'
+          className='w-max min-w-[320px] max-w-[min(560px,calc(100vw-2rem))] p-0'
           align='start'
         >
         <Command>
-          <CommandInput placeholder={title} />
+          <CommandInput
+            placeholder={title}
+            value={searchQuery}
+            onValueChange={setSearchQuery}
+          />
+          {!singleSelect && (
+            <div className='flex items-center justify-between border-b px-2.5 py-1.5 text-xs text-muted-foreground bg-muted/30'>
+              <span className='truncate'>
+                {searchQuery.trim()
+                  ? `${t('Matched')}: ${filteredOptions.length}`
+                  : `${t('Total')}: ${nonAllOptions.length}`}
+                {selectedValues.size > 0 && (
+                  <span className='ms-1 text-primary font-medium'>
+                    ({t('Selected')}: {selectedValues.size})
+                  </span>
+                )}
+              </span>
+              <div className='flex items-center gap-1 shrink-0'>
+                <Button
+                  type='button'
+                  variant='ghost'
+                  size='sm'
+                  className='h-6 px-1.5 text-xs hover:text-foreground'
+                  disabled={filteredOptions.length === 0}
+                  onClick={handleToggleSelectFiltered}
+                >
+                  {allFilteredSelected
+                    ? t('Deselect All')
+                    : searchQuery.trim()
+                    ? t('Select Matches')
+                    : t('Select All')}
+                </Button>
+                {selectedValues.size > 0 && (
+                  <Button
+                    type='button'
+                    variant='ghost'
+                    size='sm'
+                    className='h-6 px-1.5 text-xs hover:text-foreground'
+                    onClick={(e) => {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      handleClear()
+                    }}
+                  >
+                    {t('Clear')}
+                  </Button>
+                )}
+              </div>
+            </div>
+          )}
           <CommandList>
             <CommandEmpty>{t('No results found.')}</CommandEmpty>
             {groupedOptions.map((g, idx) => (

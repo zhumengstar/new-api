@@ -185,10 +185,10 @@ function ChannelCardComponent({
           </div>
         </div>
 
-        {/* Last row: groups span the full width, showing every group (no label) */}
+        {/* Last row: groups span the full width, showing every group arranged in vertical column */}
         <div className='min-w-0'>
           {groups.length > 0 ? (
-            <div className='-ml-1.5 flex flex-wrap gap-1'>
+            <div className='flex flex-col items-start gap-1.5'>
               {groups.map((g) => (
                 <GroupBadge
                   key={g}
@@ -196,6 +196,8 @@ function ChannelCardComponent({
                   label={sensitiveVisible ? undefined : SENSITIVE_MASK}
                   ratio={groupRatio[g]}
                   size='sm'
+                  containerClassName='max-w-full'
+                  className='max-w-none whitespace-normal break-words text-left'
                 />
               ))}
             </div>

@@ -1636,18 +1636,23 @@ export function useChannelsColumns(
             parseGroupsList(group),
             groupRatio
           )
+          if (groupArray.length === 0) {
+            return <span className='text-muted-foreground text-xs'>-</span>
+          }
           return (
-            <BadgeListCell
-              items={groupArray.map((g) => (
+            <div className='flex flex-col items-start gap-1 py-1 min-w-0 max-w-full'>
+              {groupArray.map((g) => (
                 <GroupBadge
                   key={g}
                   group={g}
                   label={sensitiveVisible ? undefined : SENSITIVE_MASK}
                   ratio={groupRatio[g]}
                   size='sm'
+                  containerClassName='max-w-full'
+                  className='max-w-none whitespace-normal break-words text-left'
                 />
               ))}
-            />
+            </div>
           )
         },
         filterFn: (row, id, value) => {
@@ -1658,7 +1663,7 @@ export function useChannelsColumns(
           const groupArray = parseGroupsList(group)
           return groupArray.some((g) => value.includes(g))
         },
-        size: 150,
+        size: 170,
         enableSorting: false,
       },
 
