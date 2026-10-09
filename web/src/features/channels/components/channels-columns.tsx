@@ -106,6 +106,87 @@ import {
 } from './dialogs/codex-usage-dialog'
 import { NumericSpinnerInput } from './numeric-spinner-input'
 
+const SENSITIVE_MASK = '••••'
+
+const DEFAULT_CHANNEL_BASE_URLS: Record<number, string> = {
+  1: 'api.openai.com',
+  2: 'oa.api2d.net',
+  4: 'localhost:11434',
+  5: 'api.openai-sb.com',
+  6: 'api.openaimax.com',
+  7: 'api.ohmygpt.com',
+  9: 'api.caipacity.com',
+  10: 'api.aiproxy.io',
+  12: 'api.api2gpt.com',
+  13: 'api.aigc2d.com',
+  14: 'api.anthropic.com',
+  15: 'aip.baidubce.com',
+  16: 'open.bigmodel.cn',
+  17: 'dashscope.aliyuncs.com',
+  19: 'api.360.cn',
+  20: 'openrouter.ai',
+  21: 'api.aiproxy.io',
+  22: 'fastgpt.run',
+  23: 'hunyuan.tencentcloudapi.com',
+  24: 'generativelanguage.googleapis.com',
+  25: 'api.moonshot.cn',
+  26: 'open.bigmodel.cn',
+  27: 'api.perplexity.ai',
+  31: 'api.lingyiwanwu.com',
+  34: 'api.cohere.ai',
+  35: 'api.minimax.chat',
+  37: 'api.dify.ai',
+  38: 'api.jina.ai',
+  39: 'api.cloudflare.com',
+  40: 'api.siliconflow.cn',
+  42: 'api.mistral.ai',
+  43: 'api.deepseek.com',
+  44: 'api.moka.ai',
+  45: 'ark.cn-beijing.volces.com',
+  46: 'qianfan.baidubce.com',
+  48: 'api.x.ai',
+  49: 'api.coze.cn',
+  50: 'api.klingai.com',
+  51: 'visual.volcengineapi.com',
+  52: 'api.vidu.cn',
+  53: 'llm.submodel.ai',
+  54: 'ark.cn-beijing.volces.com',
+  55: 'api.openai.com',
+  56: 'api.replicate.com',
+  57: 'chatgpt.com',
+}
+
+export function getChannelHostOrAddress(channel: Channel): string | null {
+  const baseUrl = channel.base_url?.trim()
+  if (baseUrl) {
+    try {
+      const url = baseUrl.includes('://') ? new URL(baseUrl) : new URL(`http://${baseUrl}`)
+      if (url.host) return url.host
+    } catch {
+      const match = baseUrl.match(/^(?:https?:\/\/)?([^\/\s?#]+)/i)
+      if (match && match[1]) return match[1]
+    }
+  }
+
+  const name = channel.name?.trim()
+  if (name) {
+    const urlMatch = name.match(/https?:\/\/([^\/\s,;]+)/i)
+    if (urlMatch && urlMatch[1]) {
+      return urlMatch[1]
+    }
+    const ipMatch = name.match(/\b(?:\d{1,3}\.){3}\d{1,3}(?::\d+)?\b/)
+    if (ipMatch && ipMatch[0]) {
+      return ipMatch[0]
+    }
+  }
+
+  if (channel.type && DEFAULT_CHANNEL_BASE_URLS[channel.type]) {
+    return DEFAULT_CHANNEL_BASE_URLS[channel.type]
+  }
+
+  return null
+}
+
 function parseIonetMeta(otherInfo: string | null | undefined): null | {
   source?: string
   deployment_id?: string
@@ -675,7 +756,6 @@ function TagWeightCell({ channel }: { channel: TagRow }) {
  * notation (e.g. "$28万"); the precise value stays available in the tooltip.
  */
 const MAX_INLINE_BALANCE_CHARS = 8
-const SENSITIVE_MASK = '••••'
 
 /**
  * Used quota is independent from the site balance, so it keeps its own column
@@ -1132,10 +1212,11 @@ export function useChannelsColumns(
           const settings = parseChannelSettings(channel.setting)
           const isPassThrough = settings.pass_through_body_enabled === true
           const hasParamOverride = Boolean(channel.param_override?.trim())
+          const hostOrAddress = getChannelHostOrAddress(channel)
 
           return (
             <div className='flex max-w-full min-w-0 items-center gap-2'>
-              <div className='flex max-w-full min-w-0 flex-col gap-1'>
+              <div className='flex max-w-full min-w-0 flex-col gap-0.5'>
                 <div className='flex max-w-full min-w-0 items-center gap-1.5'>
                   <NameCell
                     channel={channel}
@@ -1173,6 +1254,14 @@ export function useChannelsColumns(
                   )}
                   <UpstreamUpdateTags channel={channel} />
                 </div>
+                {hostOrAddress && (
+                  <div
+                    className='text-muted-foreground/80 hover:text-foreground font-mono text-[11px] leading-tight select-all truncate'
+                    title={sensitiveVisible ? hostOrAddress : undefined}
+                  >
+                    {sensitiveVisible ? hostOrAddress : SENSITIVE_MASK}
+                  </div>
+                )}
                 {channel.remark && (
                   <TooltipProvider delay={200}>
                     <Tooltip>

@@ -3340,6 +3340,7 @@ export function ChannelMutateDrawer({
                       <MultiSelect
                         options={groupOptions}
                         selected={field.value}
+                        allowCreate={true}
                         onChange={(nextGroups) => {
                           field.onChange(nextGroups)
                           const nextFirst = nextGroups[0]

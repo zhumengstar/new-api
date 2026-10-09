@@ -245,7 +245,28 @@ func ApplyChannelGroupFilter(query *gorm.DB, group string) *gorm.DB {
 	if group == "" {
 		return query
 	}
-	return query.Where(channelGroupFilterCondition(), channelGroupFilterPattern(group))
+	parts := strings.Split(group, ",")
+	var conditions []string
+	var args []any
+	likeOp := mainLikeOp()
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p == "" || strings.EqualFold(p, "all") || strings.EqualFold(p, "null") {
+			continue
+		}
+		escaped := strings.NewReplacer(
+			"!", "!!",
+			"%", "!%",
+			"_", "!_",
+		).Replace(p)
+		// 支持多选和模糊搜索：分组名称包含该关键词即可
+		conditions = append(conditions, fmt.Sprintf("%s %s ? ESCAPE '!'", commonGroupCol, likeOp))
+		args = append(args, "%"+escaped+"%")
+	}
+	if len(conditions) == 0 {
+		return query
+	}
+	return query.Where("("+strings.Join(conditions, " OR ")+")", args...)
 }
 
 // Value implements driver.Valuer interface
@@ -963,9 +984,9 @@ func SearchChannels(keyword string, group string, model string, idSort bool, sor
 
 	// 构造WHERE子句
 	likeOp := mainLikeOp()
-	whereClause := fmt.Sprintf("(id = ? OR name %s ? OR %s = ? OR %s %s ?) AND %s %s ?",
-		likeOp, commonKeyCol, baseURLCol, likeOp, modelsCol, likeOp)
-	args := []any{common.String2Int(keyword), "%" + keyword + "%", keyword, "%" + keyword + "%", "%" + model + "%"}
+	whereClause := fmt.Sprintf("(id = ? OR name %s ? OR %s = ? OR %s %s ? OR %s %s ?) AND %s %s ?",
+		likeOp, commonKeyCol, baseURLCol, likeOp, commonGroupCol, likeOp, modelsCol, likeOp)
+	args := []any{common.String2Int(keyword), "%" + keyword + "%", keyword, "%" + keyword + "%", "%" + keyword + "%", "%" + model + "%"}
 	baseQuery = ApplyChannelGroupFilter(baseQuery.Where(whereClause, args...), group)
 
 	// 执行查询
@@ -1607,9 +1628,9 @@ func SearchTags(keyword string, group string, model string, idSort bool) ([]*str
 
 	// 构造WHERE子句
 	likeOp := mainLikeOp()
-	whereClause := fmt.Sprintf("(id = ? OR name %s ? OR %s = ? OR %s %s ?) AND %s %s ?",
-		likeOp, commonKeyCol, baseURLCol, likeOp, modelsCol, likeOp)
-	args := []any{common.String2Int(keyword), "%" + keyword + "%", keyword, "%" + keyword + "%", "%" + model + "%"}
+	whereClause := fmt.Sprintf("(id = ? OR name %s ? OR %s = ? OR %s %s ? OR %s %s ?) AND %s %s ?",
+		likeOp, commonKeyCol, baseURLCol, likeOp, commonGroupCol, likeOp, modelsCol, likeOp)
+	args := []any{common.String2Int(keyword), "%" + keyword + "%", keyword, "%" + keyword + "%", "%" + keyword + "%", "%" + model + "%"}
 	baseQuery = ApplyChannelGroupFilter(baseQuery.Where(whereClause, args...), group)
 
 	subQuery := baseQuery.

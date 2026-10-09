@@ -369,6 +369,10 @@ export function ChannelsTable() {
   )
   const groupFilter =
     (columnFilters.find((f) => f.id === 'group')?.value as string[]) || []
+  const resolvedGroupFilter = useMemo(() => {
+    const valid = groupFilter.filter((g) => g && g !== 'all')
+    return valid.length > 0 ? valid.join(',') : undefined
+  }, [groupFilter])
   const modelTypeFilter = useMemo(
     () =>
       (columnFilters.find((f) => f.id === 'model_type')?.value as string[]) ||
@@ -542,10 +546,7 @@ export function ChannelsTable() {
     queryKey: channelsQueryKeys.list({
       keyword: globalFilter,
       model: modelFilter,
-      group:
-        groupFilter.length > 0 && !groupFilter.includes('all')
-          ? groupFilter[0]
-          : undefined,
+      group: resolvedGroupFilter,
       status:
         statusFilter.length > 0 && !statusFilter.includes('all')
           ? statusFilter[0]
@@ -574,10 +575,7 @@ export function ChannelsTable() {
           await searchChannels({
             keyword: globalFilter,
             model: modelFilter,
-            group:
-              groupFilter.length > 0 && !groupFilter.includes('all')
-                ? groupFilter[0]
-                : undefined,
+            group: resolvedGroupFilter,
             status:
               statusFilter.length > 0 && !statusFilter.includes('all')
                 ? statusFilter[0]
@@ -604,10 +602,7 @@ export function ChannelsTable() {
       } else {
         return requireServerSuccess(
           await getChannels({
-            group:
-              groupFilter.length > 0 && !groupFilter.includes('all')
-                ? groupFilter[0]
-                : undefined,
+            group: resolvedGroupFilter,
             status:
               statusFilter.length > 0 && !statusFilter.includes('all')
                 ? statusFilter[0]
@@ -994,7 +989,6 @@ export function ChannelsTable() {
             columnId: 'group',
             title: t('Group'),
             options: groupFilterOptions,
-            singleSelect: true,
             renderOptionActions: (option) => {
               if (option.value === 'all') return null
               const enabled = groupAdaptiveState.get(option.value) ?? false
