@@ -63,9 +63,17 @@ func GeminiResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *h
 	}
 
 	if !strings.Contains(common.GetContextKeyString(c, constant.ContextKeyAdminRejectReason), "gemini_block_reason=") {
-		for _, candidate := range geminiResponse.Candidates {
-			if candidate.FinishReason != nil && *candidate.FinishReason == "SAFETY" {
-				common.SetContextKey(c, constant.ContextKeyAdminRejectReason, "gemini_block_reason=SAFETY")
+		for i := range geminiResponse.Candidates {
+			candidate := &geminiResponse.Candidates[i]
+			if candidate.FinishReason != nil && IsGeminiBlockReason(*candidate.FinishReason) {
+				reason := *candidate.FinishReason
+				common.SetContextKey(c, constant.ContextKeyAdminRejectReason, fmt.Sprintf("gemini_block_reason=%s", reason))
+				if len(candidate.Content.Parts) == 0 {
+					candidate.Content.Role = "model"
+					candidate.Content.Parts = []dto.GeminiPart{
+						{Text: FormatGeminiBlockRefusalText(reason, candidate.FinishMessage)},
+					}
+				}
 				break
 			}
 		}

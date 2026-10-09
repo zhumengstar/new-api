@@ -36,14 +36,48 @@ func GeminiTextGenerationHandler(c *gin.Context, info *relaycommon.RelayInfo, re
 	}
 	countGeminiBillableFunctionCalls(info, &geminiResponse)
 
-	if len(geminiResponse.Candidates) == 0 {
-		if geminiResponse.PromptFeedback != nil && geminiResponse.PromptFeedback.BlockReason != nil {
-			blockReason := *geminiResponse.PromptFeedback.BlockReason
-			common.SetContextKey(c, constant.ContextKeyAdminRejectReason, fmt.Sprintf("gemini_block_reason=%s", blockReason))
-			service.IOCopyBytesGracefully(c, resp, responseBody)
+	isSafetyBlock := false
+	var blockReason string
+	var finishMsg *string
 
+	if geminiResponse.PromptFeedback != nil && geminiResponse.PromptFeedback.BlockReason != nil && IsGeminiBlockReason(*geminiResponse.PromptFeedback.BlockReason) {
+		isSafetyBlock = true
+		blockReason = *geminiResponse.PromptFeedback.BlockReason
+		common.SetContextKey(c, constant.ContextKeyAdminRejectReason, fmt.Sprintf("gemini_block_reason=%s", blockReason))
+	} else {
+		for _, cand := range geminiResponse.Candidates {
+			if cand.FinishReason != nil && IsGeminiBlockReason(*cand.FinishReason) {
+				isSafetyBlock = true
+				blockReason = *cand.FinishReason
+				finishMsg = cand.FinishMessage
+				common.SetContextKey(c, constant.ContextKeyAdminRejectReason, fmt.Sprintf("gemini_block_reason=%s", blockReason))
+				break
+			}
+		}
+	}
+
+	if len(geminiResponse.Candidates) == 0 {
+		if isSafetyBlock {
+			refusalText := FormatGeminiBlockRefusalText(blockReason, finishMsg)
+			safetyReason := blockReason
+			geminiResponse.Candidates = []dto.GeminiChatCandidate{
+				{
+					Content: dto.GeminiChatContent{
+						Role: "model",
+						Parts: []dto.GeminiPart{
+							{Text: refusalText},
+						},
+					},
+					FinishReason: &safetyReason,
+				},
+			}
+			newBody, errMarshal := common.Marshal(&geminiResponse)
+			if errMarshal == nil {
+				responseBody = newBody
+			}
 			usage := buildUsageFromGeminiResponse(c, info, &geminiResponse)
 			zeroBillingUsageCompletion(&usage)
+			service.IOCopyBytesGracefully(c, resp, responseBody)
 			return &usage, nil
 		}
 		common.SetContextKey(c, constant.ContextKeyAdminRejectReason, "gemini_empty_candidates")
@@ -51,22 +85,29 @@ func GeminiTextGenerationHandler(c *gin.Context, info *relaycommon.RelayInfo, re
 		return nil, nil
 	}
 
-	// 计算使用量（优先上游 UsageMetadata，缺失时本地估算并保留 Gemini 计费语义）
-	usage := buildUsageFromGeminiResponse(c, info, &geminiResponse)
-
-	isSafetyBlock := false
-	if geminiResponse.PromptFeedback != nil && geminiResponse.PromptFeedback.BlockReason != nil {
-		isSafetyBlock = true
-		common.SetContextKey(c, constant.ContextKeyAdminRejectReason, fmt.Sprintf("gemini_block_reason=%s", *geminiResponse.PromptFeedback.BlockReason))
-	} else {
-		for _, cand := range geminiResponse.Candidates {
-			if cand.FinishReason != nil && *cand.FinishReason == "SAFETY" {
-				isSafetyBlock = true
-				common.SetContextKey(c, constant.ContextKeyAdminRejectReason, "gemini_block_reason=SAFETY")
-				break
+	// 如果命中审查且 content 为空，回填明确拒绝文本，拒绝白屏空回
+	if isSafetyBlock {
+		modified := false
+		for i := range geminiResponse.Candidates {
+			cand := &geminiResponse.Candidates[i]
+			if len(cand.Content.Parts) == 0 && cand.FinishReason != nil && IsGeminiBlockReason(*cand.FinishReason) {
+				cand.Content.Role = "model"
+				cand.Content.Parts = []dto.GeminiPart{
+					{Text: FormatGeminiBlockRefusalText(*cand.FinishReason, cand.FinishMessage)},
+				}
+				modified = true
+			}
+		}
+		if modified {
+			newBody, errMarshal := common.Marshal(&geminiResponse)
+			if errMarshal == nil {
+				responseBody = newBody
 			}
 		}
 	}
+
+	// 计算使用量（优先上游 UsageMetadata，缺失时本地估算并保留 Gemini 计费语义）
+	usage := buildUsageFromGeminiResponse(c, info, &geminiResponse)
 	if isSafetyBlock {
 		zeroBillingUsageCompletion(&usage)
 	}

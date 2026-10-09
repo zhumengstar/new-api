@@ -234,8 +234,8 @@ func geminiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 				*usage = mappedUsage
 				hasBillableUsageMetadata = true
 			}
-			refusalText := fmt.Sprintf("抱歉，由于触发了 Google Gemini 内容安全审查策略 (%s)，请求已被拦截，无法生成回答。请调整您的提示词后重试。", blockReason)
-			safetyReason := "SAFETY"
+			refusalText := FormatGeminiBlockRefusalText(blockReason, nil)
+			safetyReason := blockReason
 			syntheticResp := &dto.GeminiChatResponse{
 				Candidates: []dto.GeminiChatCandidate{
 					{
@@ -259,9 +259,17 @@ func geminiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 		countGeminiBillableFunctionCalls(info, &geminiResponse)
 
 		if !strings.Contains(common.GetContextKeyString(c, constant.ContextKeyAdminRejectReason), "gemini_block_reason=") {
-			for _, candidate := range geminiResponse.Candidates {
-				if candidate.FinishReason != nil && *candidate.FinishReason == "SAFETY" {
-					common.SetContextKey(c, constant.ContextKeyAdminRejectReason, "gemini_block_reason=SAFETY")
+			for i := range geminiResponse.Candidates {
+				candidate := &geminiResponse.Candidates[i]
+				if candidate.FinishReason != nil && IsGeminiBlockReason(*candidate.FinishReason) {
+					reason := *candidate.FinishReason
+					common.SetContextKey(c, constant.ContextKeyAdminRejectReason, fmt.Sprintf("gemini_block_reason=%s", reason))
+					if len(candidate.Content.Parts) == 0 {
+						candidate.Content.Role = "model"
+						candidate.Content.Parts = []dto.GeminiPart{
+							{Text: FormatGeminiBlockRefusalText(reason, candidate.FinishMessage)},
+						}
+					}
 					break
 				}
 			}
@@ -524,9 +532,17 @@ func GeminiChatHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.R
 		}
 	}
 	if !strings.Contains(common.GetContextKeyString(c, constant.ContextKeyAdminRejectReason), "gemini_block_reason=") {
-		for _, candidate := range geminiResponse.Candidates {
-			if candidate.FinishReason != nil && *candidate.FinishReason == "SAFETY" {
-				common.SetContextKey(c, constant.ContextKeyAdminRejectReason, "gemini_block_reason=SAFETY")
+		for i := range geminiResponse.Candidates {
+			candidate := &geminiResponse.Candidates[i]
+			if candidate.FinishReason != nil && IsGeminiBlockReason(*candidate.FinishReason) {
+				reason := *candidate.FinishReason
+				common.SetContextKey(c, constant.ContextKeyAdminRejectReason, fmt.Sprintf("gemini_block_reason=%s", reason))
+				if len(candidate.Content.Parts) == 0 {
+					candidate.Content.Role = "model"
+					candidate.Content.Parts = []dto.GeminiPart{
+						{Text: FormatGeminiBlockRefusalText(reason, candidate.FinishMessage)},
+					}
+				}
 				break
 			}
 		}

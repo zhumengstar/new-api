@@ -727,7 +727,7 @@ func TestGeminiStreamHandler_ProhibitedContent_GracefulStream(t *testing.T) {
 		called = true
 		require.Len(t, r.Candidates, 1)
 		require.Contains(t, r.Candidates[0].Content.Parts[0].Text, "PROHIBITED_CONTENT")
-		require.Equal(t, "SAFETY", *r.Candidates[0].FinishReason)
+		require.Equal(t, "PROHIBITED_CONTENT", *r.Candidates[0].FinishReason)
 		return true
 	})
 	require.Nil(t, newApiErr)
@@ -868,6 +868,35 @@ func TestGeminiSafetyBlockBillsPromptTokensAcrossHandlers(t *testing.T) {
 		require.Equal(t, 0, usage.BillingUsage.GeminiUsageMetadata.CandidatesTokenCount)
 		require.Equal(t, 68, usage.BillingUsage.GeminiUsageMetadata.PromptTokenCount)
 		require.Equal(t, "gemini_block_reason=SAFETY", common.GetContextKeyString(c, constant.ContextKeyAdminRejectReason))
+	})
+
+	t.Run("native_generateContent_candidate_prohibited_content_empty_parts", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1beta/models/gemini-3-flash:generateContent", nil)
+
+		info := &relaycommon.RelayInfo{
+			OriginModelName: "gemini-3-flash",
+			ChannelMeta: &relaycommon.ChannelMeta{
+				UpstreamModelName: "gemini-3-flash",
+			},
+		}
+
+		respBody := `{"candidates":[{"finishReason":"PROHIBITED_CONTENT","finishMessage":"User prompt or response flagged"}],"usageMetadata":{"promptTokenCount":42,"candidatesTokenCount":10,"totalTokenCount":52}}`
+		resp := &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(bytes.NewReader([]byte(respBody))),
+		}
+
+		usage, newApiErr := GeminiTextGenerationHandler(c, info, resp)
+		require.Nil(t, newApiErr)
+		require.NotNil(t, usage)
+		require.Equal(t, 42, usage.PromptTokens)
+		require.Equal(t, 0, usage.CompletionTokens)
+		require.Equal(t, 42, usage.TotalTokens)
+		require.Contains(t, w.Body.String(), "PROHIBITED_CONTENT")
+		require.Contains(t, w.Body.String(), "User prompt or response flagged")
+		require.Equal(t, "gemini_block_reason=PROHIBITED_CONTENT", common.GetContextKeyString(c, constant.ContextKeyAdminRejectReason))
 	})
 }
 

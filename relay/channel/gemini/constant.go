@@ -1,5 +1,10 @@
 package gemini
 
+import (
+	"fmt"
+	"strings"
+)
+
 var ModelList = []string{
 	// stable version
 	"gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash",
@@ -42,3 +47,23 @@ var SafetySettingList = []string{
 }
 
 var ChannelName = "google gemini"
+
+func IsGeminiBlockReason(reason string) bool {
+	switch strings.ToUpper(strings.TrimSpace(reason)) {
+	case "SAFETY", "PROHIBITED_CONTENT", "RECITATION", "BLOCKLIST", "SPII", "OTHER":
+		return true
+	default:
+		return false
+	}
+}
+
+func FormatGeminiBlockRefusalText(reason string, finishMessage *string) string {
+	msg := ""
+	if finishMessage != nil && strings.TrimSpace(*finishMessage) != "" {
+		msg = strings.TrimSpace(*finishMessage)
+	}
+	if msg != "" {
+		return fmt.Sprintf("抱歉，由于触发了 Google 内容安全审查策略 (%s)，模型未生成回答：%s", reason, msg)
+	}
+	return fmt.Sprintf("抱歉，由于触发了 Google Gemini 内容安全审查策略 (%s)，请求已被拦截，无法生成回答。请调整您的提示词后重试。", reason)
+}
