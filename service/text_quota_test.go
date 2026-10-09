@@ -1593,4 +1593,84 @@ func TestPostTextConsumeQuota_Scenario5_FallbackOnMissingOrZeroUsage(t *testing.
 	})
 }
 
+func TestPostTextConsumeQuota_CCAntiGravityGroup(t *testing.T) {
+	t.Run("cc反重力按量 group merges cache tokens and strips all cache fields from log other", func(t *testing.T) {
+		ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+		relayInfo := &relaycommon.RelayInfo{
+			ChannelMeta: &relaycommon.ChannelMeta{
+				ChannelId: 1,
+			},
+			OriginModelName: "claude-3-5-sonnet-20241022",
+			StartTime:       time.Now().Add(-2 * time.Second),
+			UsingGroup:      "cc反重力按量",
+			TieredBillingSnapshot: &billingexpr.BillingSnapshot{
+				BillingMode: "tiered_expr",
+				ExprString:  `tier("standard", p * 3 + c * 15 + cr * 3 + cc * 3.75)`,
+				GroupRatio:  1.0,
+			},
+		}
+		relayInfo.PriceData.GroupRatioInfo.GroupRatio = 1.0
+		relayInfo.PriceData.ModelRatio = 1.0
+		relayInfo.PriceData.CompletionRatio = 1.0
+
+		usage := &dto.Usage{
+			PromptTokens:     100,
+			CompletionTokens: 200,
+			TotalTokens:      300,
+			UsageSemantic:    "anthropic",
+			PromptTokensDetails: dto.InputTokenDetails{
+				CachedTokens:         500,
+				CachedCreationTokens: 300,
+			},
+		}
+
+		var extraContent []string
+		PostTextConsumeQuota(ctx, relayInfo, usage, extraContent)
+
+		// 验证 calculateTextQuotaSummary 结果中：PromptTokens 合并了 100 + 500 + 300 = 900
+		summary := calculateTextQuotaSummary(ctx, relayInfo, usage)
+		assert.Equal(t, 900, summary.PromptTokens)
+		assert.Equal(t, 200, summary.CompletionTokens)
+		assert.Equal(t, 0, summary.CacheTokens)
+		assert.Equal(t, 0, summary.CacheCreationTokens)
+
+		// 验证阶梯表达式剥离了 cr 和 cc
+		cleaned := cleanExprForNoCache(relayInfo.TieredBillingSnapshot.ExprString)
+		assert.Equal(t, `tier("standard", p * 3 + c * 15)`, cleaned)
+	})
+
+	t.Run("non-cc group preserves cache tokens and ratios", func(t *testing.T) {
+		ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+		relayInfo := &relaycommon.RelayInfo{
+			ChannelMeta: &relaycommon.ChannelMeta{
+				ChannelId: 1,
+			},
+			OriginModelName: "claude-3-5-sonnet-20241022",
+			StartTime:       time.Now().Add(-2 * time.Second),
+			UsingGroup:      "default",
+		}
+		relayInfo.PriceData.GroupRatioInfo.GroupRatio = 1.0
+		relayInfo.PriceData.ModelRatio = 1.0
+		relayInfo.PriceData.CompletionRatio = 1.0
+		relayInfo.PriceData.CacheRatio = 0.1
+
+		usage := &dto.Usage{
+			PromptTokens:     100,
+			CompletionTokens: 200,
+			TotalTokens:      300,
+			UsageSemantic:    "anthropic",
+			PromptTokensDetails: dto.InputTokenDetails{
+				CachedTokens:         500,
+				CachedCreationTokens: 300,
+			},
+		}
+
+		summary := calculateTextQuotaSummary(ctx, relayInfo, usage)
+		assert.Equal(t, 100, summary.PromptTokens)
+		assert.Equal(t, 500, summary.CacheTokens)
+		assert.Equal(t, 300, summary.CacheCreationTokens)
+	})
+}
+
+
 

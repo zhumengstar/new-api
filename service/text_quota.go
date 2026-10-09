@@ -1,8 +1,10 @@
 package service
 
 import (
+	"encoding/base64"
 	"fmt"
 	"math"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -226,6 +228,22 @@ func composeTieredTextQuota(relayInfo *relaycommon.RelayInfo, summary textQuotaS
 	return total
 }
 
+func isCCAntiGravityGroup(relayInfo *relaycommon.RelayInfo) bool {
+	if relayInfo == nil {
+		return false
+	}
+	return relayInfo.UsingGroup == "cc反重力按量" || relayInfo.UserGroup == "cc反重力按量"
+}
+
+var reCacheTerms = regexp.MustCompile(`\s*\+\s*(cr|cc|cc1h)\s*\*\s*[\d\.]+(?:e[+-]?\d+)?(?:\s*/\s*[\d\.]+(?:e[+-]?\d+)?)?`)
+
+func cleanExprForNoCache(expr string) string {
+	if expr == "" {
+		return expr
+	}
+	return reCacheTerms.ReplaceAllString(expr, "")
+}
+
 // calculateTextQuotaSummary expects a usage already remapped by
 // effectiveBillingUsage; PostTextConsumeQuota performs that remap once and shares
 // the result with tiered billing, affinity observation and logging.
@@ -279,6 +297,21 @@ func calculateTextQuotaSummary(ctx *gin.Context, relayInfo *relaycommon.RelayInf
 			}
 		}
 		summary.PromptTokens -= summary.CacheCreationTokens
+	}
+
+	if isCCAntiGravityGroup(relayInfo) {
+		// cc反重力按量组：只计算输入输出，且日志不展示缓存读写，费用也只记录输入输出
+		// 将所有缓存输入完整合并入 PromptTokens，清零所有缓存 Token
+		if summary.IsClaudeUsageSemantic {
+			summary.PromptTokens = summary.PromptTokens + summary.CacheTokens + summary.CacheCreationTokens
+		} else if summary.PromptTokens < summary.CacheTokens+summary.CacheCreationTokens {
+			summary.PromptTokens = summary.PromptTokens + summary.CacheTokens + summary.CacheCreationTokens
+		}
+		summary.CacheTokens = 0
+		summary.CacheCreationTokens = 0
+		summary.CacheCreationTokens5m = 0
+		summary.CacheCreationTokens1h = 0
+		summary.TotalTokens = summary.PromptTokens + summary.CompletionTokens
 	}
 
 	dPromptTokens := decimal.NewFromInt(int64(summary.PromptTokens))
@@ -448,6 +481,14 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 			tieredUsedVars = billingexpr.UsedVarsByHash(snap.ExprString, snap.ExprHash)
 		}
 		tieredTokens = BuildTieredTokenParams(billingUsage, summary.IsClaudeUsageSemantic, tieredUsedVars)
+		if isCCAntiGravityGroup(relayInfo) {
+			tieredTokens.P = float64(summary.PromptTokens)
+			tieredTokens.Len = float64(summary.PromptTokens)
+			tieredTokens.CR = 0
+			tieredTokens.CC = 0
+			tieredTokens.CC1h = 0
+			tieredTokens.ImgCR = 0
+		}
 		tieredOk, tieredQuota, tieredRes := TryTieredSettle(relayInfo, tieredTokens)
 		if tieredOk {
 			tieredBillingApplied = true
@@ -565,6 +606,29 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 	}
 
 	attachQuotaSaturation(ctx, relayInfo, other)
+
+	if isCCAntiGravityGroup(relayInfo) && other != nil {
+		other.DeletePublic("cache_tokens")
+		other.DeletePublic("cache_ratio")
+		other.DeletePublic("cache_creation_tokens")
+		other.DeletePublic("cache_creation_ratio")
+		other.DeletePublic("cache_creation_tokens_5m")
+		other.DeletePublic("cache_creation_ratio_5m")
+		other.DeletePublic("cache_creation_tokens_1h")
+		other.DeletePublic("cache_creation_ratio_1h")
+		other.DeletePublic("cache_write_tokens")
+		other.DeletePublic("image_cache_tokens")
+		other.DeletePublic("input_tokens_total")
+		if tieredBillingApplied && tieredResult != nil {
+			other.SetPublic("billing_tokens", map[string]float64{
+				"p": tieredTokens.P, "c": tieredTokens.C, "len": tieredTokens.Len,
+			})
+			if snap != nil && snap.ExprString != "" {
+				cleanedExpr := cleanExprForNoCache(snap.ExprString)
+				other.SetPublic("expr_b64", base64.StdEncoding.EncodeToString([]byte(cleanedExpr)))
+			}
+		}
+	}
 
 	model.RecordConsumeLog(ctx, relayInfo.UserId, model.RecordConsumeLogParams{
 		ChannelId:        relayInfo.ChannelId,
