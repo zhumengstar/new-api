@@ -2920,5 +2920,97 @@ func TestEnsureClaudeRequestCleanliness(t *testing.T) {
 	})
 }
 
+func TestEnsureClaudeRequestCleanliness_TrailingAssistant(t *testing.T) {
+	t.Run("empty string trailing assistant is stripped", func(t *testing.T) {
+		input := `{"model":"claude-opus-4-6","messages":[{"role":"user","content":"hello"},{"role":"assistant","content":""}]}`
+		cleaned, err := EnsureClaudeRequestCleanliness([]byte(input))
+		require.NoError(t, err)
+		str := string(cleaned)
+		assert.Contains(t, str, `"role":"user"`)
+		assert.NotContains(t, str, `"role":"assistant"`)
+	})
+
+	t.Run("whitespace string trailing assistant is stripped", func(t *testing.T) {
+		input := `{"model":"claude-opus-4-6","messages":[{"role":"user","content":"hello"},{"role":"assistant","content":"   \n  "}]}`
+		cleaned, err := EnsureClaudeRequestCleanliness([]byte(input))
+		require.NoError(t, err)
+		str := string(cleaned)
+		assert.Contains(t, str, `"role":"user"`)
+		assert.NotContains(t, str, `"role":"assistant"`)
+	})
+
+	t.Run("placeholder dot trailing assistant is stripped", func(t *testing.T) {
+		input := `{"model":"claude-opus-4-6","messages":[{"role":"user","content":"hello"},{"role":"assistant","content":"."}]}`
+		cleaned, err := EnsureClaudeRequestCleanliness([]byte(input))
+		require.NoError(t, err)
+		str := string(cleaned)
+		assert.Contains(t, str, `"role":"user"`)
+		assert.NotContains(t, str, `"role":"assistant"`)
+	})
+
+	t.Run("empty text block array trailing assistant is stripped", func(t *testing.T) {
+		input := `{"model":"claude-opus-4-6","messages":[{"role":"user","content":"hello"},{"role":"assistant","content":[{"type":"text","text":""}]}]}`
+		cleaned, err := EnsureClaudeRequestCleanliness([]byte(input))
+		require.NoError(t, err)
+		str := string(cleaned)
+		assert.Contains(t, str, `"role":"user"`)
+		assert.NotContains(t, str, `"role":"assistant"`)
+	})
+
+	t.Run("multiple trailing empty assistants are all stripped", func(t *testing.T) {
+		input := `{"model":"claude-opus-4-6","messages":[{"role":"user","content":"hello"},{"role":"assistant","content":""},{"role":"assistant","content":"."}]}`
+		cleaned, err := EnsureClaudeRequestCleanliness([]byte(input))
+		require.NoError(t, err)
+		str := string(cleaned)
+		assert.Contains(t, str, `"role":"user"`)
+		assert.NotContains(t, str, `"role":"assistant"`)
+	})
+
+	t.Run("valid trailing assistant text is preserved and whitespace right-trimmed", func(t *testing.T) {
+		input := `{"model":"claude-opus-4-6","messages":[{"role":"user","content":"hello"},{"role":"assistant","content":"Here is the answer:   "}]}`
+		cleaned, err := EnsureClaudeRequestCleanliness([]byte(input))
+		require.NoError(t, err)
+		str := string(cleaned)
+		assert.Contains(t, str, `"content":"Here is the answer:"`)
+		assert.Contains(t, str, `"role":"assistant"`)
+	})
+}
+
+func TestStripTrailingAssistantFromRawJSON(t *testing.T) {
+	t.Run("strips non-empty assistant from end", func(t *testing.T) {
+		input := `{"model":"claude-opus-4-6","messages":[{"role":"user","content":"hello"},{"role":"assistant","content":"{"}]}`
+		repaired, modified := StripTrailingAssistantFromRawJSON([]byte(input))
+		assert.True(t, modified)
+		str := string(repaired)
+		assert.Contains(t, str, `"role":"user"`)
+		assert.NotContains(t, str, `"role":"assistant"`)
+	})
+
+	t.Run("no change if ends with user", func(t *testing.T) {
+		input := `{"model":"claude-opus-4-6","messages":[{"role":"user","content":"hello"}]}`
+		_, modified := StripTrailingAssistantFromRawJSON([]byte(input))
+		assert.False(t, modified)
+	})
+
+	t.Run("all assistant messages stripped falls back to user", func(t *testing.T) {
+		input := `{"model":"claude-opus-4-6","messages":[{"role":"assistant","content":"first"}]}`
+		repaired, modified := StripTrailingAssistantFromRawJSON([]byte(input))
+		assert.True(t, modified)
+		str := string(repaired)
+		assert.Contains(t, str, `"role":"user"`)
+		assert.NotContains(t, str, `"first"`)
+	})
+}
+
+func TestPrefillAndSizeLimitErrorDetectors(t *testing.T) {
+	prefillErr := `{"type":"error","error":{"type":"invalid_request_error","message":"This model does not support assistant message prefill. The conversation must end with a user message."}}`
+	assert.True(t, IsAssistantPrefillUnsupportedError(prefillErr))
+	assert.False(t, IsAssistantPrefillUnsupportedError("some other error"))
+
+	sizeErr := `The message size (30547917 bytes) exceeds 30.000MB limit.`
+	assert.True(t, IsMessageSizeExceededError(sizeErr))
+	assert.False(t, IsMessageSizeExceededError("Rate limit exceeded"))
+}
+
 
 

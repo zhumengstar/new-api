@@ -51,6 +51,55 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 		}
 	}
 
+	// 前置清洗：剔除末尾空内容或占位符 assistant 消息，确保以 user 结尾，杜绝上游拒绝 prefill
+	for len(request.Messages) > 0 {
+		lastIdx := len(request.Messages) - 1
+		if strings.ToLower(strings.TrimSpace(request.Messages[lastIdx].Role)) == "assistant" {
+			isEmptyOrPlaceholder := false
+			if request.Messages[lastIdx].IsStringContent() {
+				trimmed := strings.TrimSpace(request.Messages[lastIdx].GetStringContent())
+				if trimmed == "" || trimmed == "." || trimmed == "..." || trimmed == "。" {
+					isEmptyOrPlaceholder = true
+				}
+			} else {
+				parsed, pErr := request.Messages[lastIdx].ParseContent()
+				if pErr != nil || len(parsed) == 0 {
+					isEmptyOrPlaceholder = true
+				} else {
+					allEmpty := true
+					for _, block := range parsed {
+						if block.Type == "text" && block.Text != nil {
+							t := strings.TrimSpace(*block.Text)
+							if t != "" && t != "." && t != "..." {
+								allEmpty = false
+								break
+							}
+						} else {
+							allEmpty = false
+							break
+						}
+					}
+					if allEmpty {
+						isEmptyOrPlaceholder = true
+					}
+				}
+			}
+			if isEmptyOrPlaceholder {
+				request.Messages = request.Messages[:lastIdx]
+				continue
+			}
+		}
+		break
+	}
+	if len(request.Messages) == 0 {
+		request.Messages = []dto.ClaudeMessage{
+			{
+				Role:    "user",
+				Content: "...",
+			},
+		}
+	}
+
 	clientIsStream := claudeReq.Stream != nil && *claudeReq.Stream
 	info.IsStream = clientIsStream
 
@@ -160,6 +209,7 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 		}
 
 		logger.LogDebug(c, "requestBody: %s", jsonData)
+		c.Set(common.KeyRequestBody, jsonData)
 		body, closer, err := relaycommon.NewOutboundJSONBody(jsonData)
 		if err != nil {
 			return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
@@ -311,6 +361,110 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 						}
 						newAPIError = service.RelayErrorHandler(c.Request.Context(), retryHttpResp, false)
 						service.ResetStatusCode(newAPIError, statusCodeMappingStr)
+					}
+				}
+			}
+
+			// 只要出现不支持 assistant prefill 报错，则剔除末尾 assistant 消息并立即重试！
+			if !c.GetBool("claude_prefill_retried") && relaycommon.IsAssistantPrefillUnsupportedError(newAPIError.Error()) {
+				c.Set("claude_prefill_retried", true)
+				if request != nil && len(request.Messages) > 0 {
+					for len(request.Messages) > 0 && strings.ToLower(strings.TrimSpace(request.Messages[len(request.Messages)-1].Role)) == "assistant" {
+						request.Messages = request.Messages[:len(request.Messages)-1]
+					}
+					if len(request.Messages) == 0 {
+						request.Messages = []dto.ClaudeMessage{
+							{Role: "user", Content: "..."},
+						}
+					}
+				}
+
+				rawBytes, _ := relaycommon.GetPrunedRequestBody(c, info)
+				if len(rawBytes) == 0 {
+					if storage, sErr := common.GetBodyStorage(c); sErr == nil {
+						rawBytes, _ = storage.Bytes()
+					}
+				}
+				if len(rawBytes) == 0 && request != nil {
+					rawBytes, _ = common.Marshal(request)
+				}
+				repaired, repOk := relaycommon.StripTrailingAssistantFromRawJSON(rawBytes)
+				if !repOk {
+					repaired = rawBytes
+				}
+				if cleaned, cerr := relaycommon.EnsureClaudeRequestCleanliness(repaired); cerr == nil && len(cleaned) > 0 {
+					repaired = cleaned
+				}
+				if len(info.ParamOverride) > 0 {
+					if overridden, oerr := relaycommon.ApplyParamOverrideWithRelayInfo(repaired, info); oerr == nil && len(overridden) > 0 {
+						repaired = overridden
+					}
+				}
+				logger.LogWarn(c, fmt.Sprintf("收到 Claude 上游不支持 assistant prefill 报错 (%s)，已自动剥离末尾 assistant 消息，正在立即重试...", newAPIError.Error()))
+				_ = relaycommon.UpdatePrunedRequestBody(c, info)
+				newBody, closer, bErr := relaycommon.NewOutboundJSONBody(repaired)
+				if bErr == nil {
+					defer closer.Close()
+					retryResp, rErr := adaptor.DoRequest(c, info, newBody)
+					if rErr == nil && retryResp != nil {
+						retryHttpResp := retryResp.(*http.Response)
+						if retryHttpResp.StatusCode == http.StatusOK {
+							logger.LogInfo(c, "Claude 剔除尾部 prefill assistant 就地自愈重试成功，已拿到上游 200 OK 响应")
+							usage, resErr := adaptor.DoResponse(c, retryHttpResp, info)
+							if resErr != nil {
+								service.ResetStatusCode(resErr, statusCodeMappingStr)
+								service.SettleInterruptedRequestIfNeeded(c, info, usage, resErr)
+								return resErr
+							}
+							service.PostTextConsumeQuota(c, info, usage.(*dto.Usage), nil)
+							return nil
+						}
+						newAPIError = service.RelayErrorHandler(c.Request.Context(), retryHttpResp, false)
+						service.ResetStatusCode(newAPIError, statusCodeMappingStr)
+					}
+				}
+			}
+
+			// 只要出现单包体积超限（如 Vertex 30MB 限制）报错，则自动滑动裁剪历史对话并立即重试！
+			if !c.GetBool("claude_size_limit_retried") && relaycommon.IsMessageSizeExceededError(newAPIError.Error()) {
+				c.Set("claude_size_limit_retried", true)
+				if relaycommon.AutoPruneClaudeRequest(c, info, request, 0) {
+					logger.LogWarn(c, fmt.Sprintf("收到 Claude 上游单包体积超限报错 (%s)，已自动滑动裁剪历史对话并立即重试...", newAPIError.Error()))
+					newJsonData, mErr := common.Marshal(request)
+					if mErr == nil {
+						if repaired, repErr := relaycommon.EnsureClaudeToolIDs(newJsonData); repErr == nil && len(repaired) > 0 {
+							newJsonData = repaired
+						}
+						if cleaned, cerr := relaycommon.EnsureClaudeRequestCleanliness(newJsonData); cerr == nil && len(cleaned) > 0 {
+							newJsonData = cleaned
+						}
+						if len(info.ParamOverride) > 0 {
+							if overridden, oerr := relaycommon.ApplyParamOverrideWithRelayInfo(newJsonData, info); oerr == nil && len(overridden) > 0 {
+								newJsonData = overridden
+							}
+						}
+						_ = relaycommon.UpdatePrunedRequestBody(c, info)
+						newBody, closer, bErr := relaycommon.NewOutboundJSONBody(newJsonData)
+						if bErr == nil {
+							defer closer.Close()
+							retryResp, rErr := adaptor.DoRequest(c, info, newBody)
+							if rErr == nil && retryResp != nil {
+								retryHttpResp := retryResp.(*http.Response)
+								if retryHttpResp.StatusCode == http.StatusOK {
+									logger.LogInfo(c, "Claude 单包体积超限就地滑动裁剪重试成功，已拿到上游 200 OK 响应")
+									usage, resErr := adaptor.DoResponse(c, retryHttpResp, info)
+									if resErr != nil {
+										service.ResetStatusCode(resErr, statusCodeMappingStr)
+										service.SettleInterruptedRequestIfNeeded(c, info, usage, resErr)
+										return resErr
+									}
+									service.PostTextConsumeQuota(c, info, usage.(*dto.Usage), nil)
+									return nil
+								}
+								newAPIError = service.RelayErrorHandler(c.Request.Context(), retryHttpResp, false)
+								service.ResetStatusCode(newAPIError, statusCodeMappingStr)
+							}
+						}
 					}
 				}
 			}

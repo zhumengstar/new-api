@@ -2743,6 +2743,21 @@ func IsClaudeWhitespaceTextError(errStr string) bool {
 		strings.Contains(lower, "top_p must be greater than or equal to 0.95")
 }
 
+// IsAssistantPrefillUnsupportedError 检测是否为上游（如 Vertex AI / 新规范 Claude）返回的不支持末尾 assistant prefill 报错
+func IsAssistantPrefillUnsupportedError(errStr string) bool {
+	lower := strings.ToLower(errStr)
+	return strings.Contains(lower, "does not support assistant message prefill") ||
+		strings.Contains(lower, "must end with a user message")
+}
+
+// IsMessageSizeExceededError 检测是否为单包体积超过上游限制报错（如 Vertex 30MB 限制）
+func IsMessageSizeExceededError(errStr string) bool {
+	lower := strings.ToLower(errStr)
+	return strings.Contains(lower, "exceeds 30.000mb limit") ||
+		strings.Contains(lower, "exceeds 30mb limit") ||
+		(strings.Contains(lower, "message size") && strings.Contains(lower, "exceeds"))
+}
+
 // EnsureClaudeRequestCleanliness 清洗 Claude 请求中的空白 text block、空内容、空白 system 以及 thinking 模式下的 top_p 冲突，
 // 防止上游 Claude / Vertex 返回 400 "messages: text content blocks must contain non-whitespace text"
 // 或 "top_p must be greater than or equal to 0.95 or unset when thinking is enabled"。
@@ -2822,41 +2837,80 @@ func EnsureClaudeRequestCleanliness(data []byte) ([]byte, error) {
 					cleanedMessages = append(cleanedMessages, msgMap)
 				}
 			}
-			// 3. 清洗最后一条 assistant 消息的尾部空白（Anthropic 官方强规范：final assistant content cannot end with trailing whitespace）
-			if len(cleanedMessages) > 0 {
+			// 3. 严格清洗并修剪末尾的 assistant 消息：
+			// 对于空内容、纯空白或占位符（如 "."、"..."）的末尾 assistant 消息，直接剔除（pop），确保对话合法以 user 消息结尾，
+			// 杜绝 Google Vertex AI 报 "This model does not support assistant message prefill. The conversation must end with a user message."
+			for len(cleanedMessages) > 0 {
 				lastIdx := len(cleanedMessages) - 1
-				if lastMsg, ok := cleanedMessages[lastIdx].(map[string]any); ok {
-					if strings.ToLower(fmt.Sprintf("%v", lastMsg["role"])) == "assistant" {
-						if cStr, isStr := lastMsg["content"].(string); isStr {
-							trimmed := strings.TrimRightFunc(cStr, unicode.IsSpace)
-							if trimmed == "" {
-								trimmed = "."
-							}
-							if trimmed != cStr {
-								lastMsg["content"] = trimmed
-								dirty = true
-							}
-						} else if cBlocks, isBlocks := lastMsg["content"].([]any); isBlocks && len(cBlocks) > 0 {
-							for bIdx := len(cBlocks) - 1; bIdx >= 0; bIdx-- {
-								if bMap, bOk := cBlocks[bIdx].(map[string]any); bOk {
-									if strings.ToLower(fmt.Sprintf("%v", bMap["type"])) == "text" {
-										if tVal, hasT := bMap["text"].(string); hasT {
-											trimmed := strings.TrimRightFunc(tVal, unicode.IsSpace)
-											if trimmed == "" {
-												trimmed = "."
-											}
-											if trimmed != tVal {
-												bMap["text"] = trimmed
-												dirty = true
-											}
+				lastMsg, ok := cleanedMessages[lastIdx].(map[string]any)
+				if !ok {
+					break
+				}
+				role := strings.ToLower(strings.TrimSpace(fmt.Sprintf("%v", lastMsg["role"])))
+				if role != "assistant" {
+					break
+				}
+
+				isEmptyOrPlaceholder := false
+				content := lastMsg["content"]
+				if content == nil {
+					isEmptyOrPlaceholder = true
+				} else if cStr, isStr := content.(string); isStr {
+					trimmed := strings.TrimSpace(cStr)
+					if trimmed == "" || trimmed == "." || trimmed == "..." || trimmed == "。" {
+						isEmptyOrPlaceholder = true
+					} else {
+						trimmedRight := strings.TrimRightFunc(cStr, unicode.IsSpace)
+						if trimmedRight != cStr {
+							lastMsg["content"] = trimmedRight
+							dirty = true
+						}
+					}
+				} else if cBlocks, isBlocks := content.([]any); isBlocks {
+					if len(cBlocks) == 0 {
+						isEmptyOrPlaceholder = true
+					} else {
+						allEmpty := true
+						for bIdx := len(cBlocks) - 1; bIdx >= 0; bIdx-- {
+							if bMap, bOk := cBlocks[bIdx].(map[string]any); bOk {
+								bType := strings.ToLower(strings.TrimSpace(fmt.Sprintf("%v", bMap["type"])))
+								if bType == "text" {
+									tVal, _ := bMap["text"].(string)
+									trimmed := strings.TrimSpace(tVal)
+									if trimmed != "" && trimmed != "." && trimmed != "..." {
+										allEmpty = false
+										trimmedRight := strings.TrimRightFunc(tVal, unicode.IsSpace)
+										if trimmedRight != tVal {
+											bMap["text"] = trimmedRight
+											dirty = true
 										}
-										break
 									}
+								} else {
+									allEmpty = false
 								}
 							}
 						}
+						if allEmpty {
+							isEmptyOrPlaceholder = true
+						}
 					}
 				}
+
+				if isEmptyOrPlaceholder {
+					cleanedMessages = cleanedMessages[:lastIdx]
+					dirty = true
+					continue
+				}
+
+				break
+			}
+
+			if len(cleanedMessages) == 0 {
+				cleanedMessages = append(cleanedMessages, map[string]any{
+					"role":    "user",
+					"content": "...",
+				})
+				dirty = true
 			}
 
 			rootMap["messages"] = cleanedMessages
@@ -2972,6 +3026,60 @@ func cleanClaudeContentBlocks(blocks []any) ([]any, bool) {
 		result = append(result, block)
 	}
 	return result, modifiedAny
+}
+
+// StripTrailingAssistantFromRawJSON 无论内容如何，直接强行剥离 messages 末尾的所有 assistant 消息，确保以 user 消息结尾
+func StripTrailingAssistantFromRawJSON(data []byte) ([]byte, bool) {
+	if len(data) == 0 {
+		return data, false
+	}
+	var root any
+	if err := common.UnmarshalJsonStr(string(data), &root); err != nil {
+		return data, false
+	}
+	rootMap, ok := root.(map[string]any)
+	if !ok {
+		return data, false
+	}
+	msgVal, exists := rootMap["messages"]
+	if !exists || msgVal == nil {
+		return data, false
+	}
+	messages, ok := msgVal.([]any)
+	if !ok || len(messages) == 0 {
+		return data, false
+	}
+
+	modified := false
+	for len(messages) > 0 {
+		lastIdx := len(messages) - 1
+		if msgMap, mOk := messages[lastIdx].(map[string]any); mOk {
+			role := strings.ToLower(strings.TrimSpace(fmt.Sprintf("%v", msgMap["role"])))
+			if role == "assistant" {
+				messages = messages[:lastIdx]
+				modified = true
+				continue
+			}
+		}
+		break
+	}
+
+	if !modified {
+		return data, false
+	}
+
+	if len(messages) == 0 {
+		messages = append(messages, map[string]any{
+			"role":    "user",
+			"content": "...",
+		})
+	}
+	rootMap["messages"] = messages
+	repairedBytes, err := common.Marshal(rootMap)
+	if err != nil {
+		return data, false
+	}
+	return repairedBytes, true
 }
 
 
