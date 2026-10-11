@@ -16,6 +16,8 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/model_setting"
+	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
 
 	"github.com/gin-gonic/gin"
 )
@@ -80,6 +82,104 @@ func patchClaudeMessageDeltaUsageData(data string, usage *dto.ClaudeUsage) strin
 	return relayconvert.PatchClaudeMessageDeltaUsageData(data, usage)
 }
 
+func stripClaudeMessageStartCacheData(data string) string {
+	if data == "" {
+		return data
+	}
+	usage := gjson.Get(data, "message.usage")
+	if !usage.Exists() {
+		return data
+	}
+
+	inputTokens := usage.Get("input_tokens").Int()
+	cacheRead := usage.Get("cache_read_input_tokens").Int()
+	cacheCreation := usage.Get("cache_creation_input_tokens").Int()
+	hasCacheCreationObj := usage.Get("cache_creation").Exists()
+
+	if cacheRead == 0 && cacheCreation == 0 && !hasCacheCreationObj {
+		return data
+	}
+
+	totalInput := inputTokens + cacheRead + cacheCreation
+	patched, err := sjson.Set(data, "message.usage.input_tokens", totalInput)
+	if err != nil {
+		return data
+	}
+	patched, _ = sjson.Set(patched, "message.usage.cache_read_input_tokens", 0)
+	patched, _ = sjson.Set(patched, "message.usage.cache_creation_input_tokens", 0)
+	if hasCacheCreationObj {
+		patched, _ = sjson.Delete(patched, "message.usage.cache_creation")
+	}
+	return patched
+}
+
+func stripClaudeMessageDeltaCacheData(data string) string {
+	if data == "" {
+		return data
+	}
+	usage := gjson.Get(data, "usage")
+	if !usage.Exists() {
+		return data
+	}
+
+	inputExists := usage.Get("input_tokens").Exists()
+	inputTokens := usage.Get("input_tokens").Int()
+	cacheRead := usage.Get("cache_read_input_tokens").Int()
+	cacheCreation := usage.Get("cache_creation_input_tokens").Int()
+	hasCacheCreationObj := usage.Get("cache_creation").Exists()
+
+	if cacheRead == 0 && cacheCreation == 0 && !hasCacheCreationObj {
+		return data
+	}
+
+	patched := data
+	if inputExists {
+		totalInput := inputTokens + cacheRead + cacheCreation
+		var err error
+		patched, err = sjson.Set(patched, "usage.input_tokens", totalInput)
+		if err != nil {
+			return data
+		}
+	}
+	patched, _ = sjson.Set(patched, "usage.cache_read_input_tokens", 0)
+	patched, _ = sjson.Set(patched, "usage.cache_creation_input_tokens", 0)
+	if hasCacheCreationObj {
+		patched, _ = sjson.Delete(patched, "usage.cache_creation")
+	}
+	return patched
+}
+
+func stripClaudeResponseCacheBytes(data []byte) []byte {
+	if len(data) == 0 {
+		return data
+	}
+	usage := gjson.GetBytes(data, "usage")
+	if !usage.Exists() {
+		return data
+	}
+
+	inputTokens := usage.Get("input_tokens").Int()
+	cacheRead := usage.Get("cache_read_input_tokens").Int()
+	cacheCreation := usage.Get("cache_creation_input_tokens").Int()
+	hasCacheCreationObj := usage.Get("cache_creation").Exists()
+
+	if cacheRead == 0 && cacheCreation == 0 && !hasCacheCreationObj {
+		return data
+	}
+
+	totalInput := inputTokens + cacheRead + cacheCreation
+	patched, err := sjson.SetBytes(data, "usage.input_tokens", totalInput)
+	if err != nil {
+		return data
+	}
+	patched, _ = sjson.SetBytes(patched, "usage.cache_read_input_tokens", 0)
+	patched, _ = sjson.SetBytes(patched, "usage.cache_creation_input_tokens", 0)
+	if hasCacheCreationObj {
+		patched, _ = sjson.DeleteBytes(patched, "usage.cache_creation")
+	}
+	return patched
+}
+
 func FormatClaudeResponseInfo(claudeResponse *dto.ClaudeResponse, oaiResponse *dto.ChatCompletionsStreamResponse, claudeInfo *ClaudeResponseInfo) bool {
 	return relayconvert.FormatClaudeResponseInfo(claudeResponse, oaiResponse, claudeInfo)
 }
@@ -101,18 +201,44 @@ func HandleStreamResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 		maybeMarkClaudeRefusal(c, *claudeResponse.Delta.StopReason)
 	}
 	if info.RelayFormat == types.RelayFormatClaude {
+		stripCache := service.IsCCAntiGravityGroup(info)
+		if stripCache {
+			if claudeResponse.Type == "message_start" {
+				data = stripClaudeMessageStartCacheData(data)
+				if claudeResponse.Message != nil && claudeResponse.Message.Usage != nil {
+					u := claudeResponse.Message.Usage
+					u.InputTokens += u.CacheReadInputTokens + u.CacheCreationInputTokens
+					u.CacheReadInputTokens = 0
+					u.CacheCreationInputTokens = 0
+					u.CacheCreation = nil
+				}
+			} else if claudeResponse.Type == "message_delta" {
+				if !shouldSkipClaudeMessageDeltaUsagePatch(info) {
+					data = patchClaudeMessageDeltaUsageData(data, buildMessageDeltaPatchUsage(&claudeResponse, claudeInfo))
+				}
+				data = stripClaudeMessageDeltaCacheData(data)
+				if claudeResponse.Usage != nil {
+					u := claudeResponse.Usage
+					if u.InputTokens > 0 || u.CacheReadInputTokens > 0 || u.CacheCreationInputTokens > 0 {
+						u.InputTokens += u.CacheReadInputTokens + u.CacheCreationInputTokens
+					}
+					u.CacheReadInputTokens = 0
+					u.CacheCreationInputTokens = 0
+					u.CacheCreation = nil
+				}
+			}
+		} else {
+			if claudeResponse.Type == "message_delta" && !shouldSkipClaudeMessageDeltaUsagePatch(info) {
+				data = patchClaudeMessageDeltaUsageData(data, buildMessageDeltaPatchUsage(&claudeResponse, claudeInfo))
+			}
+		}
+
 		FormatClaudeResponseInfo(&claudeResponse, nil, claudeInfo)
 
 		if claudeResponse.Type == "message_start" {
 			// message_start, 获取usage
-			if claudeResponse.Message != nil {
+			if claudeResponse.Message != nil && info.ChannelMeta != nil {
 				info.UpstreamModelName = claudeResponse.Message.Model
-			}
-		} else if claudeResponse.Type == "message_delta" {
-			// 确保 message_delta 的 usage 包含完整的 input_tokens 和 cache 相关字段
-			// 解决 AWS Bedrock 等上游返回的 message_delta 缺少这些字段的问题
-			if !shouldSkipClaudeMessageDeltaUsagePatch(info) {
-				data = patchClaudeMessageDeltaUsageData(data, buildMessageDeltaPatchUsage(&claudeResponse, claudeInfo))
 			}
 		}
 		countClaudeStreamBillableTools(c, info, &claudeResponse)
@@ -273,6 +399,9 @@ func HandleStreamFinalResponse(c *gin.Context, info *relaycommon.RelayInfo, clau
 	} else if info.RelayFormat == types.RelayFormatOpenAI {
 		if info.ShouldIncludeUsage {
 			openAIUsage := buildOpenAIStyleUsageFromClaudeUsage(claudeInfo.Usage)
+			if service.IsCCAntiGravityGroup(info) {
+				openAIUsage.PromptTokensDetails.CachedTokens = 0
+			}
 			response := helper.GenerateFinalUsageResponse(claudeInfo.ResponseId, claudeInfo.Created, info.UpstreamModelName, openAIUsage)
 			err := helper.ObjectData(c, response)
 			if err != nil {
@@ -308,6 +437,22 @@ func sendNonStreamResponseFromClaude(c *gin.Context, info *relaycommon.RelayInfo
 		c.Set("claude_web_search_requests", claudeResp.Usage.ServerToolUse.WebSearchRequests)
 	}
 
+	if service.IsCCAntiGravityGroup(info) {
+		if claudeResp.Usage != nil {
+			claudeResp.Usage.InputTokens += claudeResp.Usage.CacheReadInputTokens + claudeResp.Usage.CacheCreationInputTokens
+			claudeResp.Usage.CacheReadInputTokens = 0
+			claudeResp.Usage.CacheCreationInputTokens = 0
+			claudeResp.Usage.CacheCreation = nil
+		}
+		if claudeInfo.Usage != nil {
+			claudeInfo.Usage.PromptTokens += claudeInfo.Usage.PromptTokensDetails.CachedTokens + claudeInfo.Usage.PromptTokensDetails.CachedCreationTokens
+			claudeInfo.Usage.PromptTokensDetails.CachedTokens = 0
+			claudeInfo.Usage.PromptTokensDetails.CachedCreationTokens = 0
+			claudeInfo.Usage.ClaudeCacheCreation5mTokens = 0
+			claudeInfo.Usage.ClaudeCacheCreation1hTokens = 0
+		}
+	}
+
 	switch info.RelayFormat {
 	case types.RelayFormatClaude:
 		c.JSON(http.StatusOK, claudeResp)
@@ -316,6 +461,9 @@ func sendNonStreamResponseFromClaude(c *gin.Context, info *relaycommon.RelayInfo
 		openaiResponse := ResponseClaude2OpenAI(claudeResp)
 		if claudeInfo.Usage != nil {
 			openaiResponse.Usage = buildOpenAIStyleUsageFromClaudeUsage(claudeInfo.Usage)
+			if service.IsCCAntiGravityGroup(info) {
+				openaiResponse.Usage.PromptTokensDetails.CachedTokens = 0
+			}
 		}
 		c.JSON(http.StatusOK, openaiResponse)
 		return nil
@@ -471,6 +619,12 @@ func HandleClaudeResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 		claudeInfo.Usage = &dto.Usage{}
 	}
 	if claudeResponse.Usage != nil {
+		if service.IsCCAntiGravityGroup(info) {
+			claudeResponse.Usage.InputTokens += claudeResponse.Usage.CacheReadInputTokens + claudeResponse.Usage.CacheCreationInputTokens
+			claudeResponse.Usage.CacheReadInputTokens = 0
+			claudeResponse.Usage.CacheCreationInputTokens = 0
+			claudeResponse.Usage.CacheCreation = nil
+		}
 		claudeInfo.Usage.PromptTokens = claudeResponse.Usage.InputTokens
 		claudeInfo.Usage.CompletionTokens = claudeResponse.Usage.OutputTokens
 		claudeInfo.Usage.TotalTokens = claudeResponse.Usage.InputTokens + claudeResponse.Usage.OutputTokens
@@ -489,6 +643,9 @@ func HandleClaudeResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 	case types.RelayFormatOpenAI:
 		openaiResponse := ResponseClaude2OpenAI(&claudeResponse)
 		openaiResponse.Usage = buildOpenAIStyleUsageFromClaudeUsage(claudeInfo.Usage)
+		if service.IsCCAntiGravityGroup(info) {
+			openaiResponse.Usage.PromptTokensDetails.CachedTokens = 0
+		}
 		responseData, err = common.Marshal(openaiResponse)
 		if err != nil {
 			return types.NewError(err, types.ErrorCodeBadResponseBody)
@@ -510,7 +667,11 @@ func HandleClaudeResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 			return types.NewError(err, types.ErrorCodeBadResponseBody)
 		}
 	case types.RelayFormatClaude:
-		responseData = data
+		if service.IsCCAntiGravityGroup(info) {
+			responseData = stripClaudeResponseCacheBytes(data)
+		} else {
+			responseData = data
+		}
 	case types.RelayFormatGemini:
 		{
 			convertResult, convertErr := service.ConvertResponse(c, info, types.RelayFormatGemini, &claudeResponse)

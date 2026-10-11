@@ -91,6 +91,8 @@ type ChannelOtherSettings struct {
 	// rejection. Empty follows the default allow policy. Accepted values:
 	// "", "allow", "safe", "strict".
 	ToolLossPolicy string `json:"tool_loss_policy,omitempty"`
+	// StripClaudeResponseCache 抹平返回给下游客户端的 Claude 缓存统计字段（如按量无缓存策略）
+	StripClaudeResponseCache bool `json:"strip_claude_response_cache,omitempty"`
 }
 
 func (s *ChannelOtherSettings) IsOpenRouterEnterprise() bool {

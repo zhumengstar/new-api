@@ -228,11 +228,25 @@ func composeTieredTextQuota(relayInfo *relaycommon.RelayInfo, summary textQuotaS
 	return total
 }
 
-func isCCAntiGravityGroup(relayInfo *relaycommon.RelayInfo) bool {
+func isAntiGravityGroupName(group string) bool {
+	if group == "" {
+		return false
+	}
+	return group == "cc反重力按量" || strings.Contains(group, "反重力按量")
+}
+
+func IsCCAntiGravityGroup(relayInfo *relaycommon.RelayInfo) bool {
 	if relayInfo == nil {
 		return false
 	}
-	return relayInfo.UsingGroup == "cc反重力按量" || relayInfo.UserGroup == "cc反重力按量"
+	if relayInfo.ChannelMeta != nil && relayInfo.ChannelOtherSettings.StripClaudeResponseCache {
+		return true
+	}
+	return isAntiGravityGroupName(relayInfo.UsingGroup) || isAntiGravityGroupName(relayInfo.UserGroup)
+}
+
+func isCCAntiGravityGroup(relayInfo *relaycommon.RelayInfo) bool {
+	return IsCCAntiGravityGroup(relayInfo)
 }
 
 var reCacheTerms = regexp.MustCompile(`\s*\+\s*(cr|cc|cc1h)\s*\*\s*[\d\.]+(?:e[+-]?\d+)?(?:\s*/\s*[\d\.]+(?:e[+-]?\d+)?)?`)
